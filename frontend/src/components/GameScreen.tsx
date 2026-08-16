@@ -45,7 +45,7 @@ export default function GameScreen() {
       {/* 顶栏：标题 + 场景信息 + 角色名 */}
       <header className="h-11 bg-white border-b border-gray-200 flex items-center justify-between px-4 flex-shrink-0 gap-4">
         <div className="flex items-center gap-3">
-          <h1 className="text-indigo-600 font-semibold text-xs tracking-wide shrink-0">D&D 跑团</h1>
+          <h1 className="text-indigo-600 font-semibold text-xs tracking-wide shrink-0">TRPG 跑团</h1>
         </div>
 
         {/* 场景信息 */}

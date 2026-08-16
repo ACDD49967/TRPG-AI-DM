@@ -545,7 +545,7 @@ export default function StartScreen(){
     <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-white flex items-center justify-center p-4">
       <div className="w-full max-w-2xl max-h-screen overflow-y-auto">
         <div className="text-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">D&D 跑团</h1>
+          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">TRPG 跑团</h1>
           <p className="text-gray-500 text-sm mt-1">单人冒险 · 智能主持</p>
           <button onClick={()=>setShowRulebook(true)} className="mt-2 text-xs text-indigo-500 hover:text-indigo-700 underline underline-offset-2">打开玩家说明书</button>
         </div>
