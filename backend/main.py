@@ -116,6 +116,7 @@ async def generate_world(request: WorldGenRequest):
             extra_attributes=request.extra_attributes,
             target_score=75,
             max_revisions=1,
+            thinking_strength=request.thinking_strength,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"世界生成失败: {e}") from e
@@ -226,6 +227,7 @@ async def generate_world_stream(request: WorldGenRequest):
                     target_score=75,
                     max_revisions=1,
                     progress_callback=progress,
+                    thinking_strength=request.thinking_strength,
                 )
                 queue.put_nowait({"type": "__complete__", "data": (outline_text, score, history, world_state)})
             except Exception as e:
@@ -337,6 +339,7 @@ async def import_scenario(
     api_key: str | None = Form(None),
     model_name: str | None = Form(None),
     base_url: str | None = Form(None),
+    thinking_strength: str = Form("medium"),
 ):
     """上传剧本文件（pdf/txt/docx/doc/md）→ 按所选切分器切分 → 生成并保存新剧本。
 
@@ -408,6 +411,7 @@ async def import_scenario(
             splitter=splitter,
             target_score=75,
             max_revisions=1,
+            thinking_strength=thinking_strength,
         )
         return result
     except Exception as e:
@@ -1114,7 +1118,8 @@ async def generate_character(request: GenerateAttributesRequest):
         last_err = None
         text = ""
         for attempt in range(1, 3):
-            current_max_tokens = 3000 if attempt == 1 else 6000
+            base_max_tokens = 2000 if request.thinking_strength == "low" else (3000 if request.thinking_strength == "medium" else 5000)
+            current_max_tokens = base_max_tokens if attempt == 1 else base_max_tokens * 2
             try:
                 resp = await client.chat.completions.create(
                     model=model,
@@ -1434,6 +1439,7 @@ async def create_new_game(request: NewGameRequest):
         )
         if request.base_url:
             s.base_url = request.base_url
+        s.thinking_strength = request.thinking_strength
 
         # 长短记忆：精简模式保留 5 轮，深度模式保留 10 轮，超出部分触发摘要压缩
         s.memory.max_active_turns = 5 if request.play_mode == "lite" else 10

@@ -177,12 +177,15 @@ EXTRACT_STATE_PROMPT = """请从以下TRPG冒险大纲中提取关键的结构�
 # ═══════════════════════════════════════════════════════════════
 
 async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
-               max_tokens: int = 4000, temp: float = 0.85, timeout: float = 90.0) -> str:
+               max_tokens: int = 4000, temp: float = 0.85, timeout: float = 90.0,
+               thinking_strength: str = "medium") -> str:
     """单次LLM调用，带超时保护与重试；第二次自动提高 max_tokens 以兼容推理模型。"""
     import asyncio
+    mult = 1.8 if thinking_strength == "high" else (0.6 if thinking_strength == "low" else 1.0)
+    max_tokens = min(8000, int(max_tokens * mult))
     last_err = None
     for attempt in range(1, 3):
-        current_max_tokens = max_tokens if attempt == 1 else max(max_tokens * 2, 8000)
+        current_max_tokens = max_tokens if attempt == 1 else min(max(max_tokens * 2, 8000), 8000)
         try:
             resp = await asyncio.wait_for(
                 client.chat.completions.create(
@@ -299,6 +302,7 @@ async def build_world(
     custom_skills: list[str] | None = None,
     extra_attributes: dict | None = None,
     progress_callback=None,
+    thinking_strength: str = "medium",
 ) -> tuple[str, int, list, WorldState]:
     """多Agent分层生成世界大纲→自评→修订→提取世界状态。
 
@@ -332,7 +336,7 @@ async def build_world(
     step1 = await _llm(client, model,
         "你是一位获奖奇幻小说家。创作深刻、独特的世界观。",
         _with_knowledge(STEP1_CONFLICT.format(player_input=pi, reference=ref), "世界观 冲突 势力 阵营 魔法 社会", game_system),
-        max_tokens=3000, temp=0.9, timeout=60)
+        max_tokens=3000, temp=0.9, timeout=60, thinking_strength=thinking_strength)
     if not step1:
         raise RuntimeError("世界生成失败：模型调用多次超时，请检查模型/网络后重试")
 
@@ -342,7 +346,7 @@ async def build_world(
     step2 = await _llm(client, model,
         "你是一位TRPG冒险设计师。设计引人入胜的三幕结构。",
         _with_knowledge(STEP2_PLOT.format(world_context=step1), "三幕结构 剧情节点 转折 结局", game_system),
-        max_tokens=4000, temp=0.85, timeout=90)
+        max_tokens=4000, temp=0.85, timeout=90, thinking_strength=thinking_strength)
     if not step2:
         step2 = "主线采用经典三幕结构：第一幕引入冲突，第二幕遭遇转折与背叛，第三幕迎来高潮与结局。具体情节建议结合世界观继续细化。"
 
@@ -352,7 +356,7 @@ async def build_world(
     step3 = await _llm(client, model,
         "你是一位角色设计大师。创造有深度的NPC网络。",
         _with_knowledge(STEP3_NPC.format(world_context=step1, plot_context=step2), "NPC 反派 动机 支线 关系", game_system),
-        max_tokens=3500, temp=0.9, timeout=90)
+        max_tokens=3500, temp=0.9, timeout=90, thinking_strength=thinking_strength)
     if not step3:
         step3 = "关键NPC网络：围绕核心冲突设置至少五名角色，包含盟友、对手与隐藏敌意的中立者，并安排两条与主线隐性关联的支线。"
 
@@ -362,7 +366,7 @@ async def build_world(
     step4 = await _llm(client, model,
         "你是一位TRPG遭遇设计师。设计挑战与秘密。",
         _with_knowledge(STEP4_ENCOUNTERS.format(world_context=step1, plot_context=step2, npc_context=step3), "遭遇 战斗 陷阱 魔法物品 秘密", game_system),
-        max_tokens=3500, temp=0.85, timeout=90)
+        max_tokens=3500, temp=0.85, timeout=90, thinking_strength=thinking_strength)
     if not step4:
         step4 = "遭遇与隐藏内容：设计五场类型各异的遭遇（战斗、社交、探索、陷阱），三处秘密区域，以及一件带有背景故事的独特宝物。"
 
@@ -373,7 +377,7 @@ async def build_world(
     merge_result = await _llm(client, model,
         "你是一位TRPG模组主编。诚实评分，合理打分，不要过分苛刻。",
         MERGE_PROMPT.format(step1=step1, step2=step2, step3=step3, step4=step4),
-        max_tokens=5000, temp=0.4, timeout=90)
+        max_tokens=5000, temp=0.4, timeout=90, thinking_strength=thinking_strength)
 
     try:
         scored = _extract_json(merge_result)
@@ -404,7 +408,7 @@ async def build_world(
                     "issues": scored.get("issues", []),
                     "suggestions": scored.get("suggestions", []),
                 }, ensure_ascii=False)),
-            max_tokens=6000, temp=0.5, timeout=120)
+            max_tokens=6000, temp=0.5, timeout=120, thinking_strength=thinking_strength)
 
         try:
             rev_data = _extract_json(rev_result)
@@ -420,7 +424,7 @@ async def build_world(
         rescore = await _llm(client, model,
             "你是一位公平的TRPG模组评委。诚实评价，不过分苛刻也不故意放水。",
             f"新大纲:\n{outline[:4000]}\n\n请输出JSON: {{\"total_score\":数字(0-100)}}",
-            max_tokens=1200, temp=0.3, timeout=60)
+            max_tokens=1200, temp=0.3, timeout=60, thinking_strength=thinking_strength)
         try:
             rescore_data = _extract_json(rescore)
             new_score = rescore_data.get("total_score", score)
@@ -453,7 +457,7 @@ async def build_world(
         extract_result = await _llm(client, model,
             "你是一位数据分析师。从文本中提取结构化信息。只返回JSON。",
             EXTRACT_STATE_PROMPT.format(outline=outline[:16000]),
-            max_tokens=4000, temp=0.3, timeout=90)
+            max_tokens=4000, temp=0.3, timeout=90, thinking_strength=thinking_strength)
         state_data = _extract_json(extract_result)
 
         for n in state_data.get("npcs", []):

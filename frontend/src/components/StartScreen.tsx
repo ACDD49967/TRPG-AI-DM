@@ -127,6 +127,9 @@ export default function StartScreen(){
   const [modelFetchBusy,setModelFetchBusy]=useState(false);
   const [modelFetchErr,setModelFetchErr]=useState('');
   const [modelInputMode,setModelInputMode]=useState<'select'|'manual'>('manual');
+  const [thinkingStrength,setThinkingStrength]=useState<'low'|'medium'|'high'>(()=>{try{const v=JSON.parse(localStorage.getItem('dnd_thinking')||'\"medium\"');return v==='low'||v==='high'?v:'medium';}catch{return 'medium';}});
+  const [endpointPresets,setEndpointPresets]=useState<Array<{name:string;baseUrl:string}>>(()=>{try{return JSON.parse(localStorage.getItem('dnd_endpoints')||'[]')}catch{return[]}});
+  const [endpointName,setEndpointName]=useState('');
   const [scenarioMode,setScenarioMode]=useState<'existing'|'split'|'generate'>('generate');
   const [username,setUsername]=useState(cfg.username);
   const [charName,setCharName]=useState('');
@@ -236,11 +239,21 @@ export default function StartScreen(){
 
   // 自动保持配置（每次关键字段变化）
   useEffect(()=>{saveConfig({apiKey,modelName,baseUrl,username});},[apiKey,modelName,baseUrl,username]);
+  useEffect(()=>{localStorage.setItem('dnd_thinking', JSON.stringify(thinkingStrength));},[thinkingStrength]);
+  useEffect(()=>{localStorage.setItem('dnd_endpoints', JSON.stringify(endpointPresets));},[endpointPresets]);
 
-  const applyProvider=(p:'openai'|'deepseek'|'custom')=>{
+  const applyProvider=(p:'openai'|'custom')=>{
     setProvider(p);
     if(p==='openai')setBaseUrl('https://api.openai.com/v1');
-    else if(p==='deepseek')setBaseUrl('https://api.deepseek.com/v1');
+  };
+  const saveEndpointPreset=()=>{
+    const name=endpointName.trim();
+    if(!name||!baseUrl.trim())return;
+    setEndpointPresets([...endpointPresets.filter(e=>e.name!==name),{name,baseUrl:baseUrl.trim()}]);
+    setEndpointName('');
+  };
+  const deleteEndpointPreset=(name:string)=>{
+    setEndpointPresets(endpointPresets.filter(e=>e.name!==name));
   };
 
   const fetchModels=async()=>{
@@ -325,6 +338,7 @@ export default function StartScreen(){
         api_key:apiKey||undefined,
         model_name:modelName||undefined,
         base_url:baseUrl||undefined,
+        thinking_strength:thinkingStrength,
       };
       if(backstoryOnly)body.attributes=isCoc?cocAttrs:attrs;
       else if(backstoryText.trim())body.backstory=backstoryText.trim();
@@ -353,6 +367,7 @@ export default function StartScreen(){
         game_system:gameSystem,custom_rules:customRules||undefined,
         custom_classes:customClasses,custom_skills:customSkills,extra_attributes:extraAttributes,
         api_key:apiKey||undefined,model_name:modelName||undefined,base_url:baseUrl||undefined,
+        thinking_strength:thinkingStrength,
       })});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'生成失败');}
       const reader=r.body?.getReader();
@@ -454,6 +469,7 @@ export default function StartScreen(){
       fd.append('api_key',apiKey||'');
       fd.append('model_name',modelName||'');
       fd.append('base_url',baseUrl||'');
+      fd.append('thinking_strength',thinkingStrength);
       const r=await fetch('/api/scenarios/import',{method:'POST',body:fd});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'导入失败');}
       const d=await r.json();
@@ -731,6 +747,7 @@ export default function StartScreen(){
         race_traits:isDnd?rc.traits:undefined,
         class_proficiencies:isDnd?cc.profs:undefined,
         api_key:apiKey||undefined,model_name:modelName||undefined,base_url:baseUrl||undefined,
+        thinking_strength:thinkingStrength,
         backstory:aiGen?.backstory||undefined,world_context:scenarioText||undefined,
         world_outline:worldOutline||undefined,world_state_json:worldStateJson||undefined,
         reference_script:referenceScript||undefined,scenario_id:scenarioId||undefined,
@@ -765,14 +782,23 @@ export default function StartScreen(){
 
         {/* API 连接设置：放在选择剧本前，突出且必须 */}
         <div className="card p-4 mb-4 space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <p className="text-xs font-bold text-gray-800">API 连接</p>
-            <div className="flex gap-1">
-              {(['openai','deepseek','custom'] as const).map(p=>(
-                <button key={p} onClick={()=>applyProvider(p)} className={`text-[10px] px-2.5 py-1 rounded-lg border transition-colors ${provider===p?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
-                  {p==='openai'?'OpenAI':p==='deepseek'?'DeepSeek':'自定义'}
-                </button>
-              ))}
+            <div className="flex items-center gap-1">
+              <button onClick={()=>applyProvider('openai')} className={`text-[10px] px-2.5 py-1 rounded-lg border transition-colors ${provider==='openai'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-500 hover:border-gray-300'}`}>OpenAI 默认</button>
+              <select
+                value=""
+                onChange={e=>{
+                  const name=e.target.value;
+                  if(!name)return;
+                  const p=endpointPresets.find(x=>x.name===name);
+                  if(p)setBaseUrl(p.baseUrl);
+                }}
+                className="input-field text-xs py-1 px-2 w-36"
+              >
+                <option value="">已保存链接...</option>
+                {endpointPresets.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
+              </select>
             </div>
           </div>
           <div>
@@ -781,8 +807,22 @@ export default function StartScreen(){
           </div>
           <div className="grid gap-2">
             <div>
-              <label className="block text-[10px] text-gray-500 mb-1">API 地址</label>
-              <input value={baseUrl} onChange={e=>{setBaseUrl(e.target.value); if(!e.target.value.includes('deepseek')&&!e.target.value.includes('openai'))setProvider('custom');}} placeholder="https://api.openai.com/v1" className="input-field font-mono text-xs" />
+              <label className="block text-[10px] text-gray-500 mb-1">API 地址（OpenAI 兼容格式）</label>
+              <input value={baseUrl} onChange={e=>{setBaseUrl(e.target.value); if(!e.target.value.includes('openai'))setProvider('custom');}} placeholder="https://api.openai.com/v1" className="input-field font-mono text-xs" />
+            </div>
+            <div className="flex gap-1">
+              <input value={endpointName} onChange={e=>setEndpointName(e.target.value)} placeholder="给当前链接命名并保存" className="input-field font-mono text-xs flex-1" />
+              <button onClick={saveEndpointPreset} className="btn-secondary text-xs px-2 whitespace-nowrap">保存</button>
+              {endpointPresets.length>0 && (
+                <select
+                  value=""
+                  onChange={e=>{ if(e.target.value) deleteEndpointPreset(e.target.value); }}
+                  className="input-field text-xs py-1 px-2 w-24"
+                >
+                  <option value="">删除...</option>
+                  {endpointPresets.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
+                </select>
+              )}
             </div>
             <div>
               <label className="block text-[10px] text-gray-500 mb-1">API Key</label>
@@ -844,6 +884,20 @@ export default function StartScreen(){
               </div>
             </div>
           </button>
+        </div>
+
+        {/* 思维强度 */}
+        <div className="mb-4">
+          <p className="text-[10px] text-gray-500 mb-1">思维强度（影响推理深度与 token 消耗）</p>
+          <div className="grid grid-cols-3 gap-1.5">
+            {(['low','medium','high'] as const).map(v=>(
+              <button key={v} onClick={()=>setThinkingStrength(v)} className={`p-2 rounded-lg border text-xs transition-all ${
+                thinkingStrength===v?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+              }`}>
+                {v==='low'?'轻量':v==='medium'?'标准':'深度思考'}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex gap-1 mb-5">

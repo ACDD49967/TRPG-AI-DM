@@ -1283,6 +1283,16 @@ def _play_mode(s: GameSessionState) -> str:
     return mode if mode in ("lite", "deep") else "deep"
 
 
+def _thinking_params(s: GameSessionState) -> tuple[float, float]:
+    """返回 (max_tokens倍率, 温度修正)，用于“思维强度”调节。"""
+    ts = getattr(s, "thinking_strength", "medium")
+    if ts == "low":
+        return 0.6, -0.15
+    if ts == "high":
+        return 1.8, 0.08
+    return 1.0, 0.0
+
+
 def _game_system(s: GameSessionState) -> str:
     """返回当前规则系统：dnd5e / dnd4e / coc / custom。"""
     system = (s.character_info or {}).get("game_system", "dnd5e")
@@ -1318,9 +1328,13 @@ def _mode_instructions(s: GameSessionState) -> str:
 
 
 async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2048, temperature: float | None = None):
+    mult, tdelta = _thinking_params(state)
+    max_tokens = min(8000, int(max_tokens * mult))
+    temp = (temperature if temperature is not None else settings.TEMPERATURE) + tdelta
+    temp = max(0.0, min(1.5, temp))
     stream = await client.chat.completions.create(
         model=model, messages=messages, tools=tools,
-        max_tokens=max_tokens, temperature=temperature if temperature is not None else settings.TEMPERATURE, stream=True,
+        max_tokens=max_tokens, temperature=temp, stream=True,
     )
     content = ""; tc_map = {}
     had_tool_call = False  # P0-2修复：追踪工具调用边界
@@ -1488,7 +1502,10 @@ async def generate_opening_scene(state: GameSessionState) -> str:
     prompt += _mode_instructions(state)
     prompt += build_system_rule_block(_game_system(state), state.character_info.get("custom_rules", ""))
     system_role = "你是克苏鲁的呼唤守密人（Keeper），负责营造神秘、恐怖与调查氛围。" if _game_system(state) == "coc" else "你是世界级D&D地下城主。"
-    max_tokens = 1500 if _play_mode(state) == "lite" else min(3000, skill.max_tokens)
+    mult, tdelta = _thinking_params(state)
+    max_tokens = int((1500 if _play_mode(state) == "lite" else min(3000, skill.max_tokens)) * mult)
+    max_tokens = min(8000, max_tokens)
+    temp = max(0.0, min(1.5, skill.temperature + tdelta))
     full = ""
     last_err = None
     for attempt in range(1, 3):
@@ -1496,7 +1513,7 @@ async def generate_opening_scene(state: GameSessionState) -> str:
         try:
             stream = await client.chat.completions.create(
                 model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],
-                max_tokens=current_max_tokens, temperature=skill.temperature, stream=True,
+                max_tokens=current_max_tokens, temperature=temp, stream=True,
             )
             full = ""
             async for chunk in stream:

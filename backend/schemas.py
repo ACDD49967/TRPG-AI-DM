@@ -20,7 +20,8 @@ class NewGameRequest(BaseModel):
     class_proficiencies: list[str] | None = None  # 职业熟练项
     api_key: str | None = None                 # 玩家自备的API Key（覆盖环境变量）
     model_name: str | None = None              # 玩家指定的模型（覆盖默认值）
-    base_url: str | None = None                # API 地址（默认 DeepSeek）
+    base_url: str | None = None                # API 地址（默认 OpenAI 兼容）
+    thinking_strength: str = Field(default="medium", pattern="^(low|medium|high)$")
     backstory: str | None = None               # AI 生成的背景故事
     world_context: str | None = None           # 玩家提供的剧本/世界设定
     world_outline: str | None = None           # AI生成的完整世界大纲
@@ -69,6 +70,7 @@ class GenerateAttributesRequest(BaseModel):
     api_key: str | None = None
     model_name: str | None = None
     base_url: str | None = None
+    thinking_strength: str = Field(default="medium", pattern="^(low|medium|high)$")
 
 
 class ActionRequest(BaseModel):
@@ -92,6 +94,7 @@ class WorldGenRequest(BaseModel):
     api_key: str | None = None
     model_name: str | None = None
     base_url: str | None = None
+    thinking_strength: str = Field(default="medium", pattern="^(low|medium|high)$")
 
 
 # ── 响应模型 ──────────────────────────────────────────────

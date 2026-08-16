@@ -27,6 +27,7 @@ class GameSessionState:
     api_key: str | None = None
     model_name: str | None = None
     base_url: str | None = None
+    thinking_strength: str = "medium"
 
     # 事件流 —— 通过 asyncio.Queue 跨协程传递 SSE 事件
     event_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
