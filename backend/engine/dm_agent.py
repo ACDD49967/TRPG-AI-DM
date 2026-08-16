@@ -644,6 +644,7 @@ def build_character_info(state: GameSessionState) -> str:
 
 
 def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None = None) -> str:
+    lite = _play_mode(state) == "lite"
     char_info = build_character_info(state)
     mem = state.memory.build_context()
     ws = getattr(state, 'world_state', None)
@@ -652,23 +653,29 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     outline = state.character_info.get("world_outline", "")
     world = state.character_info.get("world_context", "")
     scenario_summary = state.character_info.get("scenario_summary", "")
-    summary_block = f"## 剧本总结\n{scenario_summary[:600]}" if scenario_summary else ""
+    summary_limit = 300 if lite else 600
+    outline_limit = 800 if lite else 2000
+    world_state_limit = 500 if lite else 100000
+
+    summary_block = f"## 剧本总结\n{scenario_summary[:summary_limit]}" if scenario_summary else ""
     if world_state_text:
-        wc = f"{summary_block}\n## 世界状态\n{world_state_text}" if summary_block else f"## 世界状态\n{world_state_text}"
+        wc = f"{summary_block}\n## 世界状态\n{world_state_text[:world_state_limit]}" if summary_block else f"## 世界状态\n{world_state_text[:world_state_limit]}"
     elif outline:
-        wc = f"{summary_block}\n## 冒险大纲\n{outline[:2000]}" if summary_block else f"## 冒险大纲\n{outline[:2000]}"
+        wc = f"{summary_block}\n## 冒险大纲\n{outline[:outline_limit]}" if summary_block else f"## 冒险大纲\n{outline[:outline_limit]}"
     elif world:
-        wc = f"{summary_block}\n## 剧本\n{world}" if summary_block else f"## 剧本\n{world}"
+        wc = f"{summary_block}\n## 剧本\n{world[:outline_limit]}" if summary_block else f"## 剧本\n{world[:outline_limit]}"
     else:
         wc = summary_block
 
     wsc = ws.to_context_compact() if ws else ""
+    if lite:
+        wsc = wsc[:500]
 
     # 角色背景——用于AI生成符合角色身份的决策建议
     backstory = state.character_info.get("backstory", "")
     backstory_block = ""
     if backstory:
-        backstory_block = f"\n## 角色背景（决策建议须参考此背景——建议的行动应符合角色的出身、性格和动机）\n{backstory[:500]}"
+        backstory_block = f"\n## 角色背景（决策建议须参考此背景——建议的行动应符合角色的出身、性格和动机）\n{backstory[:200 if lite else 500]}"
 
     # 固定规则前缀：所有静态规则放在前面，动态上下文统一追加到末尾，
     # 这样同一会话/模式的 system prompt 前缀保持稳定，更容易命中 LLM prompt cache。
@@ -687,6 +694,8 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
 
     # 动态上下文统一放在静态规则之后
     mem_text = mem if mem.strip() else "冒险刚启。篝火刚点起来，第一颗骰子还在你的掌心。"
+    if lite:
+        mem_text = mem_text[:800]
     sp += f"\n\n## 当前角色\n{char_info}"
     sp += f"\n\n## 数值含义速查\n{build_stat_glossary(_game_system(state))}"
     sp += backstory_block
@@ -697,8 +706,8 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
         sp += f"\n\n## 世界状态精简\n{wsc}"
     if retrieved_chunks:
         sp += "\n\n## 检索到的设定/规则细节（按需使用，优先于你的记忆）\n"
-        for item in retrieved_chunks[:5]:
-            sp += f"\n- [{item.get('title','')}]({item.get('source','')}) {item.get('text','')[:600]}"
+        for item in retrieved_chunks[:3 if lite else 5]:
+            sp += f"\n- [{item.get('title','')}]({item.get('source','')}) {item.get('text','')[:300 if lite else 600]}"
     return sp
 
 
@@ -1174,16 +1183,18 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
     # P0-1修复（双保险）：确保WorldState始终存在，即使create_new_game漏初始化
     if getattr(state, 'world_state', None) is None:
         state.world_state = WorldState(session_id=state.session_id)
+    lite = _play_mode(state) == "lite"
     client = _client(state); model = _model(state)
     retrieved = get_knowledge_base().retrieve(
         player_input,
         system=_game_system(state),
-        top_k=5,
+        top_k=3 if lite else 5,
     )
     sp = build_system_prompt(state, retrieved_chunks=retrieved)
 
     messages = [{"role":"system","content":sp}]
-    for t in state.memory.turns[-state.memory.max_active_turns:]:
+    active_turns = state.memory.turns[-3 if lite else -state.memory.max_active_turns:]
+    for t in active_turns:
         messages.append({"role":"user","content":t.player_input})
         if t.dm_response: messages.append({"role":"assistant","content":t.dm_response})
     messages.append({"role":"user","content":player_input})
@@ -1230,9 +1241,10 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
             if text and not text.endswith('\n'):
                 text += '\n'
 
-            # 工具调用数过载保护——如果本轮已调用超过5个工具，停止
+            # 工具调用数过载保护——精简模式限制更严格
+            tool_limit = 3 if lite else 5
             tool_count = sum(1 for m in messages if m["role"] == "tool")
-            if tool_count >= 5:
+            if tool_count >= tool_limit:
                 break
 
         # 反八股过滤
@@ -1255,15 +1267,18 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
 
 
 async def generate_opening_scene(state: GameSessionState) -> str:
+    lite = _play_mode(state) == "lite"
     client = _client(state); model = _model(state)
     ci = build_character_info(state)
     bs = state.character_info.get("backstory", "")
     wc = state.character_info.get("world_outline", "")
     scenario_summary = state.character_info.get("scenario_summary", "")
+    summary_limit = 300 if lite else 600
+    outline_limit = 800 if lite else 1600
     if scenario_summary:
-        wc = f"## 剧本总结\n{scenario_summary[:600]}\n\n## 冒险大纲\n{wc[:1600]}" if wc else f"## 剧本总结\n{scenario_summary[:600]}"
+        wc = f"## 剧本总结\n{scenario_summary[:summary_limit]}\n\n## 冒险大纲\n{wc[:outline_limit]}" if wc else f"## 剧本总结\n{scenario_summary[:summary_limit]}"
     opening_template = COC_OPENING_PROMPT if _game_system(state) == "coc" else OPENING_PROMPT
-    prompt = opening_template.format(character_info=ci, backstory=bs or "暂无", world_context=wc[:2000] if wc else "暂无")
+    prompt = opening_template.format(character_info=ci, backstory=(bs or "暂无")[:200 if lite else 500], world_context=wc[:2000] if wc else "暂无")
     prompt += _mode_instructions(state)
     prompt += build_system_rule_block(_game_system(state), state.character_info.get("custom_rules", ""))
     system_role = "你是克苏鲁的呼唤守密人（Keeper），负责营造神秘、恐怖与调查氛围。" if _game_system(state) == "coc" else "你是世界级D&D地下城主。"
