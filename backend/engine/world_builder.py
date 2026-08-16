@@ -158,7 +158,7 @@ EXTRACT_STATE_PROMPT = """请从以下TRPG冒险大纲中提取关键的结构�
 ## 要求
 提取以下JSON结构：
 
-1. npcs: 所有具名NPC，每个包含 name, race, role, location, attitude(初始态度), personality, motivation, secret(如有), relation_to_plot
+1. npcs: 所有具名NPC，每个包含 name, race, role, location, attitude(初始态度), personality, motivation, secret(如有), relation_to_plot, level(1-20整数), ac(护甲等级), hp(生命值), max_hp(最大生命值), attributes(属性对象，如 {"str":10,"dex":14,"con":12,"int":11,"wis":13,"cha":9}，COC用 {"str":50,"con":60,"dex":40,"int":70,"pow":55,"cha":45,"siz":60,"edu":65}), skills(技能数组，如 ["侦查","潜行"]), traits(特性/动作数组，如 ["多才多艺","借机攻击"])
 2. plot_flags: 关键剧情节点，每个包含 key(旗标名), status(默认"未触发"), description
 3. locations: 关键地点，每个包含 name, description, secrets(如有)
 4. world_rules: 这个世界独特的规则（魔法限制、社会规则等）
@@ -462,6 +462,10 @@ async def build_world(
                 location=n.get("location",""), attitude=n.get("attitude","中立"),
                 personality=n.get("personality",""), motivation=n.get("motivation",""),
                 secret=n.get("secret",""), relation_to_plot=n.get("relation_to_plot",""),
+                level=int(n.get("level", 1) or 1), ac=int(n.get("ac", 10) or 10),
+                hp=int(n.get("hp", 10) or 10), max_hp=int(n.get("max_hp", 10) or 10),
+                attributes=n.get("attributes") or {}, skills=n.get("skills") or [],
+                traits=n.get("traits") or [],
             ))
         for p in state_data.get("plot_flags", []):
             ws.plot_flags.append(PlotFlag(

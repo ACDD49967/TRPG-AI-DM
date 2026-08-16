@@ -85,4 +85,19 @@
   .divider {
     @apply border-t border-gray-100 my-3;
   }
+
+  /* 标准跑团卡：纸质质感 */
+  .paper-card {
+    background:
+      linear-gradient(rgba(255, 253, 245, 0.72), rgba(255, 253, 245, 0.72)),
+      repeating-linear-gradient(0deg, transparent, transparent 23px, rgba(120, 100, 60, 0.07) 24px),
+      linear-gradient(135deg, #fdf8ed 0%, #f5ecd8 100%);
+    border: 1px solid #d8c6a0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), inset 0 0 40px rgba(120, 100, 60, 0.05);
+    font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+  }
+  .paper-title {
+    font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+    letter-spacing: 0.02em;
+  }
 }

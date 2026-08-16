@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 
 interface CharNote { target:string;comment:string;clue?:string;turn:number; }
-interface NpcView { name:string;race:string;role:string;attitude:string;alive:boolean|null;appearance:string;personality:string;motivation:string;secret:string;relation_to_plot:string;location:string;_hidden_fields:number;_fully_revealed:boolean; }
+interface NpcView { name:string;race:string;role:string;attitude:string;alive:boolean|null;appearance:string;personality:string;motivation:string;secret:string;relation_to_plot:string;location:string;level?:number;ac?:number;hp?:number;max_hp?:number;attributes?:Record<string,number>;skills?:string[];traits?:string[];_hidden_fields:number;_fully_revealed:boolean; }
 interface JournalData {
   scene:{location:string;time:string;weather:string;atmosphere:string;npcs_here:string[]};
   npcs:{allies:NpcView[];enemies:NpcView[];neutrals:NpcView[];total:number};
@@ -32,7 +32,7 @@ function NpcCard({npc,cat}:{npc:NpcView;cat:string}){
       </div>
       <AnimatePresence>
         {exp&&<motion.div initial={{height:0}} animate={{height:'auto'}} exit={{height:0}} className="overflow-hidden">
-          <div className="mt-1.5 pt-1.5 border-t border-gray-100 space-y-0.5">
+          <div className="mt-1.5 pt-1.5 border-t border-gray-100 space-y-1">
             <Row k="身份" v={npc.role}/><Row k="种族" v={npc.race}/><Row k="位置" v={npc.location}/>
             <Row k="状态" v={npc.alive===false?'☠ 已故':labels[cat]}/>
             {npc.appearance&&<Row k="外貌" v={npc.appearance}/>}
@@ -40,6 +40,32 @@ function NpcCard({npc,cat}:{npc:NpcView;cat:string}){
             {npc.motivation&&<Row k="动机" v={npc.motivation} c="text-amber-600"/>}
             {npc.secret&&<Row k="秘密" v={npc.secret} c="text-red-500"/>}
             {npc.relation_to_plot&&<Row k="关联" v={npc.relation_to_plot} c="text-blue-600"/>}
+            {(npc.hp || npc.ac || npc.level) && (
+              <div className="grid grid-cols-3 gap-1 pt-1 mt-1 border-t border-gray-100">
+                <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">HP</span><span className="ml-1 font-bold">{npc.hp}/{npc.max_hp}</span></div>
+                <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">AC</span><span className="ml-1 font-bold">{npc.ac}</span></div>
+                <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">Lv</span><span className="ml-1 font-bold">{npc.level}</span></div>
+              </div>
+            )}
+            {npc.attributes && Object.keys(npc.attributes).length>0 && (
+              <div className="grid grid-cols-3 gap-1 pt-1 mt-1 border-t border-gray-100">
+                {Object.entries(npc.attributes).map(([k,v])=>(
+                  <div key={k} className="bg-white rounded px-1 py-0.5 border border-gray-100 flex justify-between"><span className="text-gray-400 uppercase text-[8px]">{k}</span><span className="font-bold">{v}</span></div>
+                ))}
+              </div>
+            )}
+            {npc.skills && npc.skills.length>0 && (
+              <div className="pt-1 mt-1 border-t border-gray-100">
+                <p className="text-[8px] text-gray-400 font-medium mb-0.5">技能</p>
+                <div className="flex flex-wrap gap-1">{npc.skills.map((s,i)=><span key={i} className="text-[9px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1 py-0.5">{s}</span>)}</div>
+              </div>
+            )}
+            {npc.traits && npc.traits.length>0 && (
+              <div className="pt-1 mt-1 border-t border-gray-100">
+                <p className="text-[8px] text-gray-400 font-medium mb-0.5">特性/动作</p>
+                <div className="space-y-0.5">{npc.traits.map((t,i)=><p key={i} className="text-[9px] text-gray-600">· {t}</p>)}</div>
+              </div>
+            )}
           </div>
         </motion.div>}
       </AnimatePresence>

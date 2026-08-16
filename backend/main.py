@@ -1459,7 +1459,8 @@ async def create_new_game(request: NewGameRequest):
                     ws.npcs.append(NE(**{k: v for k, v in n.items()
                                          if k in ["name","race","role","location","attitude",
                                                   "alive","personality","motivation","secret",
-                                                  "relation_to_plot","notes"]}))
+                                                  "relation_to_plot","notes",
+                                                  "level","ac","hp","max_hp","attributes","skills","traits"]}))
                 for p in ws_data.get("plot_flags", []):
                     ws.plot_flags.append(PF(**{k: v for k, v in p.items()
                                                if k in ["key","status","description","consequence"]}))

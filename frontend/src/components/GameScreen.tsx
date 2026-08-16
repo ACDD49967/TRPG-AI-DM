@@ -108,9 +108,9 @@ export default function GameScreen() {
 
       {showCharSheet && (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowCharSheet(false)}>
-          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
+          <div className="paper-card rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-gray-900">角色卡</h3>
+              <h3 className="paper-title text-lg font-bold text-gray-900">角色卡</h3>
               <button onClick={()=>setShowCharSheet(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
             </div>
 
@@ -280,7 +280,7 @@ export default function GameScreen() {
 
       {showBeast && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowBeast(false)}>
-          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
+          <div className="paper-card rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900">生物图鉴</h3>
               <button onClick={()=>setShowBeast(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
@@ -289,29 +289,76 @@ export default function GameScreen() {
             {filteredBestiary.length===0&&<p className="text-xs text-gray-400">暂无匹配生物。</p>}
             {filteredBestiary.map(b=>{
               const relatedMaps = maps.filter(m => q(`${b.details?.habitat||''} ${b.description} ${b.details?.lore||''}`).includes(q(m.name)) || q(m.description).includes(q(b.name)));
+              const s = b.stats || {};
+              const get = (...keys: string[]) => keys.map(k=>s[k]).find(v=>v!==undefined && v!=='') ?? '—';
+              const abilities: Array<[string,string]> = [
+                ['STR', get('力量','STR','str')], ['DEX', get('敏捷','DEX','dex')],
+                ['CON', get('体质','CON','con')], ['INT', get('智力','INT','int')],
+                ['WIS', get('感知','WIS','wis')], ['CHA', get('魅力','CHA','cha')],
+              ];
+              const skills = get('技能','Skills','skills');
+              const senses = get('感官','Senses','senses');
+              const languages = get('语言','Languages','languages');
+              const challenge = get('挑战等级','挑战','CR','cr');
+              const traits = get('特性','Traits','traits');
+              const actions = get('动作','Actions','actions');
               return (
-                <div key={b.id} className="flex gap-3 mb-3 border border-gray-200 rounded-lg p-2">
-                  {b.image_path&&<img src={b.image_path} alt={b.name} className="w-16 h-16 object-cover rounded-lg border" />}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold">{b.name}</p>
-                    <p className="text-[10px] text-gray-500">{b.system}{b.tags&&b.tags.length>0?` · ${b.tags.join('、')}`:''}</p>
-                    <p className="text-[10px] text-gray-600 mt-0.5">{b.description}</p>
-                    {Object.keys(b.stats||{}).length>0&&<p className="text-[10px] text-gray-500 mt-1">{Object.entries(b.stats||{}).map(([k,v])=>`${k}:${v}`).join(' · ')}</p>}
-                    {b.details && (
-                      <div className="text-[10px] text-gray-600 mt-1 space-y-0.5">
-                        {b.details.habits&&<p>习性：{b.details.habits}</p>}
-                        {b.details.habitat&&<p>栖息地：{b.details.habitat}</p>}
-                        {b.details.lore&&<p>传说：{b.details.lore}</p>}
-                        {b.details.weakness&&<p>弱点：{b.details.weakness}</p>}
+                <div key={b.id} className="mb-4 border-2 border-amber-900/30 rounded-lg p-3 bg-[#fffdf5] shadow-sm">
+                  <div className="flex items-start gap-3">
+                    {b.image_path&&<img src={b.image_path} alt={b.name} className="w-20 h-20 object-cover rounded-lg border border-amber-900/20" />}
+                    <div className="min-w-0 flex-1">
+                      <p className="paper-title text-base font-bold text-gray-900">{b.name}</p>
+                      <p className="text-[10px] text-gray-500 italic">{b.system}{b.tags&&b.tags.length>0?` · ${b.tags.join('、')}`:''}</p>
+                      <div className="grid grid-cols-3 gap-1 mt-1.5 text-[10px]">
+                        <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-gray-500">AC</span> <b>{get('AC','ac','护甲')}</b></div>
+                        <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-gray-500">HP</span> <b>{get('HP','hp','生命')}</b></div>
+                        <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-gray-500">速度</span> <b>{get('速度','Speed','speed')}</b></div>
                       </div>
-                    )}
-                    {relatedMaps.length>0 && (
-                      <div className="mt-1 pt-1 border-t border-gray-100">
-                        <p className="text-[9px] text-gray-400 mb-0.5">关联地点</p>
-                        <div className="flex flex-wrap gap-1">{relatedMaps.map(m=><span key={m.id} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 rounded px-1.5 py-0.5">{m.name}</span>)}</div>
-                      </div>
-                    )}
+                    </div>
                   </div>
+
+                  {/* 六维 */}
+                  <div className="grid grid-cols-3 gap-1 mt-2 border-t border-amber-900/10 pt-2">
+                    {abilities.map(([k,v])=>(
+                      <div key={k} className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 text-center">
+                        <span className="text-[8px] text-gray-400 font-semibold">{k}</span>
+                        <div className="text-xs font-bold">{v}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* 标准字段 */}
+                  {(skills!=='—'||senses!=='—'||languages!=='—'||challenge!=='—') && (
+                    <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-0.5 text-[10px] text-gray-700">
+                      {skills!=='—'&&<p><span className="text-gray-500 font-medium">技能：</span>{skills}</p>}
+                      {senses!=='—'&&<p><span className="text-gray-500 font-medium">感官：</span>{senses}</p>}
+                      {languages!=='—'&&<p><span className="text-gray-500 font-medium">语言：</span>{languages}</p>}
+                      {challenge!=='—'&&<p><span className="text-gray-500 font-medium">挑战等级：</span>{challenge}</p>}
+                    </div>
+                  )}
+
+                  {/* 描述 / 特性 / 动作 */}
+                  {b.description&&<p className="mt-2 text-[10px] text-gray-600 italic leading-relaxed">{b.description}</p>}
+                  {(traits!=='—'||actions!=='—') && (
+                    <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-1 text-[10px] text-gray-700">
+                      {traits!=='—'&&<p><span className="text-gray-500 font-medium">特性：</span>{traits}</p>}
+                      {actions!=='—'&&<p><span className="text-gray-500 font-medium">动作：</span>{actions}</p>}
+                    </div>
+                  )}
+                  {b.details && (
+                    <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-0.5 text-[10px] text-gray-600">
+                      {b.details.habits&&<p>习性：{b.details.habits}</p>}
+                      {b.details.habitat&&<p>栖息地：{b.details.habitat}</p>}
+                      {b.details.lore&&<p>传说：{b.details.lore}</p>}
+                      {b.details.weakness&&<p>弱点：{b.details.weakness}</p>}
+                    </div>
+                  )}
+                  {relatedMaps.length>0 && (
+                    <div className="mt-2 pt-1.5 border-t border-amber-900/10">
+                      <p className="text-[9px] text-gray-400 mb-0.5">关联地点</p>
+                      <div className="flex flex-wrap gap-1">{relatedMaps.map(m=><span key={m.id} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 rounded px-1.5 py-0.5">{m.name}</span>)}</div>
+                    </div>
+                  )}
                 </div>
               );
             })}
