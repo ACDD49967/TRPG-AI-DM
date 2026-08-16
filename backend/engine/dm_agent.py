@@ -25,8 +25,11 @@ from backend.dm_toolbox import (
     search_knowledge,
 )
 from backend.skills.prompts import (
+    COC_DECISION_PROMPT,
     COC_SYSTEM_PROMPT,
+    CUSTOM_DECISION_PROMPT,
     CUSTOM_SYSTEM_PROMPT,
+    DND4E_DECISION_PROMPT,
     DND4E_SYSTEM_PROMPT,
 )
 
@@ -737,7 +740,14 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     # 固定规则前缀：所有静态规则放在前面，动态上下文统一追加到末尾，
     # 这样同一会话/模式的 system prompt 前缀保持稳定，更容易命中 LLM prompt cache。
     sp = base_prompt
-    sp += DM_DECISION_PROMPT
+    if skill.system_prompt is None:
+        sp += DM_DECISION_PROMPT
+    elif skill.system_prompt == "DND4E":
+        sp += DND4E_DECISION_PROMPT
+    elif skill.system_prompt == "COC":
+        sp += COC_DECISION_PROMPT
+    else:
+        sp += CUSTOM_DECISION_PROMPT
     sp += _mode_instructions(state)
     sp += build_system_rule_block(
         _game_system(state),
