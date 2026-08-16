@@ -1,0 +1,778 @@
+"""FastAPI 应用入口——API路由、SSE长连接、生命周期管理。"""
+
+import asyncio
+import json
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from openai import AsyncOpenAI
+from sqlalchemy.ext.asyncio import AsyncSession
+
+import random, re
+
+from backend.config import settings
+from backend.database import get_db, init_db
+from backend.engine.dm_agent import process_player_action
+from backend.engine.world_state import WorldState
+from backend.engine.session import (
+    GameSessionState,
+    push_event,
+    push_narrative_flush,
+    session_manager,
+    sse_event_generator,
+)
+from backend.models import Character, GameSession, User
+from backend.schemas import (
+    ActionAcceptedResponse,
+    ActionRequest,
+    GenerateAttributesRequest,
+    GenerateBackstoryRequest,
+    NewGameRequest,
+    NewGameResponse,
+    WorldGenRequest,
+)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 应用生命周期
+# ═══════════════════════════════════════════════════════════════
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用启动/关闭时的生命周期管理。"""
+    # 启动时：创建数据库表
+    await init_db()
+    print(f"[AI-DM] Server started at http://{settings.HOST}:{settings.PORT}")
+    print(f"[AI-DM] Database: {settings.DATABASE_URL}")
+    print(f"[AI-DM] Model: {settings.MODEL_NAME}")
+    yield
+    # 关闭时：清理资源（如有需要）
+
+
+# ═══════════════════════════════════════════════════════════════
+# FastAPI 应用实例
+# ═══════════════════════════════════════════════════════════════
+
+app = FastAPI(
+    title="AI Dungeon Master",
+    description="由大语言模型驱动的单人D&D跑团桌游",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# CORS 中间件 —— 允许前端开发服务器跨域访问
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ═══════════════════════════════════════════════════════════════
+# API 路由
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/generate/world")
+async def generate_world(request: WorldGenRequest):
+    """多Agent分层生成D&D 5e冒险世界大纲——5步生成+迭代评分至90+。
+
+    返回大纲文本、评分、评分历史、以及结构化的世界状态（NPC/旗标/地点）。
+    """
+    from backend.engine.world_builder import build_world
+
+    player_input = f"""冒险基调: {request.tone}
+角色: {request.character_name}, {request.race} {request.char_class}, Lv.{request.character_level}
+描述: {request.description}"""
+
+    outline_text, score, history, world_state = await build_world(
+        player_input=player_input,
+        reference_script=request.description,  # 玩家描述即为参考剧本
+        api_key=request.api_key,
+        model_name=request.model_name,
+        base_url=request.base_url,
+    )
+
+    # 提取 NPC 和旗标摘要
+    npc_summary = [{"name": n.name, "role": n.role, "attitude": n.attitude}
+                   for n in world_state.npcs]
+    flag_summary = [{"key": f.key, "status": f.status} for f in world_state.plot_flags]
+
+    # 自动保存剧本
+    ws_json = json.dumps({
+        "world_outline": outline_text,
+        "npcs": [{"name":n.name,"race":n.race,"role":n.role,"location":n.location,
+                   "attitude":n.attitude,"alive":n.alive,"personality":n.personality,
+                   "motivation":n.motivation,"secret":n.secret,
+                   "relation_to_plot":n.relation_to_plot,"visibility":n.visibility.to_dict()}
+                  for n in world_state.npcs],
+        "plot_flags": [{"key":f.key,"status":f.status,"description":f.description}
+                       for f in world_state.plot_flags],
+        "locations": [{"name":l.name,"description":l.description,"secrets":l.secrets}
+                      for l in world_state.locations],
+        "world_rules": world_state.world_rules,
+    }, ensure_ascii=False)
+    from backend.scenario_importer import generate_summary
+    from backend.scenario_store import create_scenario
+    summary_client = AsyncOpenAI(
+        api_key=request.api_key or settings.LLM_API_KEY,
+        base_url=request.base_url or settings.LLM_BASE_URL,
+    )
+    summary_model = request.model_name or settings.LLM_MODEL_NAME
+    summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
+    saved = create_scenario(
+        world_outline=outline_text, world_state_json=ws_json,
+        reference_script=request.description, notes="",
+        title=outline_text.split("\n")[0].replace("#", "").strip()[:60],
+        description=request.description[:200], summary=summary, tone=request.tone,
+        character_name=request.character_name, race=request.race,
+        char_class=request.char_class, level=request.character_level,
+        score=score,
+    )
+    scenario_id = saved.id
+
+    return {
+        "scenario_id": scenario_id,
+        "content": outline_text,
+        "summary": summary,
+        "score": score,
+        "scores_detail": {},  # 多步生成不逐项返回详情
+        "revision_history": history,
+        "npcs": npc_summary,
+        "plot_flags": flag_summary,
+        "world_rules": world_state.world_rules,
+        # 序列化 WorldState 以便前端传递给游戏创建
+        "world_state_json": json.dumps({
+            "world_outline": world_state.world_outline,
+            "world_rules": world_state.world_rules,
+            "npcs": [{"name":n.name,"race":n.race,"role":n.role,"location":n.location,
+                       "attitude":n.attitude,"alive":n.alive,"personality":n.personality,
+                       "motivation":n.motivation,"secret":n.secret,
+                       "relation_to_plot":n.relation_to_plot} for n in world_state.npcs],
+            "plot_flags": [{"key":f.key,"status":f.status,"description":f.description}
+                           for f in world_state.plot_flags],
+            "locations": [{"name":l.name,"description":l.description,"secrets":l.secrets}
+                          for l in world_state.locations],
+        }, ensure_ascii=False),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# 剧本管理 API
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/scenarios")
+async def list_scenarios():
+    """列出所有已保存的剧本。"""
+    from backend.scenario_store import list_scenarios as ls
+    return {"scenarios": ls()}
+
+
+@app.post("/api/scenarios/import")
+async def import_scenario(
+    file: UploadFile = File(...),
+    splitter: str = Form("naive"),
+    chunk_size: int = Form(900),
+    title: str = Form(""),
+    description: str = Form(""),
+    tone: str = Form("史诗奇幻"),
+    character_name: str = Form("冒险者"),
+    race: str = Form("人类"),
+    char_class: str = Form("战士"),
+    character_level: int = Form(1),
+    api_key: str | None = Form(None),
+    model_name: str | None = Form(None),
+    base_url: str | None = Form(None),
+):
+    """上传剧本文件（pdf/txt/docx/doc/md）→ 按所选切分器切分 → 生成并保存新剧本。
+
+    支持 splitter=naive（切分器）或 splitter=semantic（语义切分）。
+    返回的剧本包含约400字总结、世界大纲、结构化世界状态和切分片段。
+    """
+    from backend.scenario_importer import (
+        extract_text,
+        generate_scenario_from_text,
+        split_text,
+    )
+
+    if splitter not in ("naive", "semantic"):
+        raise HTTPException(status_code=400, detail="splitter 仅支持 naive 或 semantic")
+    if chunk_size < 200 or chunk_size > 4000:
+        raise HTTPException(status_code=400, detail="chunk_size 需在 200-4000 之间")
+
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="文件不能超过 20MB")
+
+    try:
+        text = extract_text(file.filename or "", data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="文件中没有可用的剧本文本")
+
+    chunks = split_text(text, mode=splitter, chunk_size=chunk_size)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="切分后没有生成任何片段")
+
+    try:
+        result = await generate_scenario_from_text(
+            source_text=text,
+            chunks=chunks,
+            title=title,
+            description=description,
+            tone=tone,
+            character_name=character_name,
+            race=race,
+            char_class=char_class,
+            character_level=character_level,
+            api_key=api_key,
+            model_name=model_name,
+            base_url=base_url,
+            splitter=splitter,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"剧本生成失败: {e}") from e
+
+
+@app.get("/api/scenarios/{scenario_id}")
+async def get_scenario(scenario_id: str):
+    """加载一个已保存的剧本。"""
+    from backend.scenario_store import Scenario
+    s = Scenario.load(scenario_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="剧本不存在")
+    return {
+        "id": s.id,
+        "meta": s.meta.to_dict(),
+        "world_outline": s.world_outline,
+        "world_state_json": s.world_state_json,
+        "reference_script": s.reference_script,
+        "source_chunks": s.source_chunks,
+        "summary": s.meta.summary,
+        "notes": s.notes,
+    }
+
+
+@app.post("/api/scenarios/{scenario_id}/play")
+async def record_scenario_play(scenario_id: str):
+    """记录剧本被游玩一次。"""
+    from backend.scenario_store import Scenario
+    s = Scenario.load(scenario_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="剧本不存在")
+    s.record_play()
+    return {"total_sessions": s.meta.total_sessions}
+
+
+@app.delete("/api/scenarios/{scenario_id}")
+async def delete_scenario_endpoint(scenario_id: str):
+    """删除一个剧本。"""
+    from backend.scenario_store import delete_scenario
+    if not delete_scenario(scenario_id):
+        raise HTTPException(status_code=404, detail="剧本不存在")
+    return {"deleted": True}
+
+
+@app.get("/api/health")
+async def health_check():
+    """健康检查端点。"""
+    return {
+        "status": "ok",
+        "active_sessions": len(session_manager._sessions),
+        "model": settings.MODEL_NAME,
+    }
+
+
+@app.post("/api/generate/character")
+async def generate_character(request: GenerateAttributesRequest):
+    """AI生成角色属性与背景故事。
+
+    三种模式：
+    1. 提供背景故事、无属性 → AI推断属性+润色背景
+    2. 提供属性、无背景故事 → AI根据种族/职业/属性生成生动背景
+    3. 都不提供 → AI自动生成属性+背景
+
+    返回值含 attributes 和 backstory。
+    """
+    api_key = request.api_key or settings.LLM_API_KEY
+    base_url = request.base_url or settings.LLM_BASE_URL
+    model = request.model_name or settings.LLM_MODEL_NAME
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+    has_backstory = bool(request.backstory.strip())
+    has_attrs = bool(request.attributes and len(request.attributes) >= 6)
+
+    gender = request.gender or "未指定"
+    # 归一化性别值（支持中英文）
+    gender_normalized = gender
+    if gender.lower() in ("男", "m", "male", "man"):
+        gender_normalized = "男"
+    elif gender.lower() in ("女", "f", "female", "woman"):
+        gender_normalized = "女"
+    gender_hint = ""
+    gender_pronoun = "ta"
+    if gender_normalized == "男":
+        gender_hint = "性别: 男\n"
+        gender_pronoun = "他"
+    elif gender_normalized == "女":
+        gender_hint = "性别: 女\n"
+        gender_pronoun = "她"
+
+    if has_backstory and not has_attrs:
+        # 模式1：有背景故事 → 推断属性
+        user_prompt = f"""请根据以下角色背景故事推断D&D六维属性值。
+
+角色名: {request.character_name}
+{gender_hint}种族: {request.race}
+职业: {request.char_class}
+背景故事: {request.backstory}
+
+根据故事中描述的角色特点分配属性（使用标准数组[15,14,13,12,10,8]范围3-18）。
+
+只返回JSON：
+{{"str": 数字, "dex": 数字, "con": 数字, "int": 数字, "wis": 数字, "cha": 数字, "backstory": "润色后的背景(150-250字)"}}"""
+    elif has_attrs and not has_backstory:
+        # 模式2：有属性 → 根据属性生成生动背景
+        attrs = request.attributes
+        str_val = attrs.get('str', 12)
+        dex_val = attrs.get('dex', 12)
+        int_val = attrs.get('int', 12)
+        cha_val = attrs.get('cha', 12)
+        wis_val = attrs.get('wis', 12)
+        con_val = attrs.get('con', 12)
+
+        # 角色特质描述——反公式化
+        traits = []
+        if str_val >= 15: traits.append("天生神力，肌肉线条分明")
+        elif str_val <= 9: traits.append("身形瘦弱，但用技巧弥补力量的不足")
+        if dex_val >= 15: traits.append("动作如行云流水，从不失手")
+        elif dex_val <= 9: traits.append("手脚笨拙，经常打翻东西，但这让ta更谨慎")
+        if int_val >= 15: traits.append("过目不忘，对奥秘有着近乎痴迷的钻研")
+        if cha_val >= 15: traits.append("天生有一种让人无法拒绝的感染力")
+        elif cha_val <= 9: traits.append("不善言辞，沉默寡言到让人误以为是傲慢")
+
+        trait_line = "。".join(traits[:3]) if traits else "一个看似平凡但命运暗藏波澜的冒险者"
+
+        user_prompt = f"""你是一位小说家，正在为你的新主角写人物小传。这个角色不是在填表格——ta是一个活过的人，身上有伤疤、有执念、有不为人知的秘密。
+
+角色名: {request.character_name}
+{gender_hint}种族: {request.race}
+职业: {request.char_class}
+六维: 力{str_val} 敏{dex_val} 体{con_val} 智{int_val} 感{wis_val} 魅{cha_val}
+
+关键特质线索（以此为起点，不要照搬，融入故事中）: {trait_line}
+
+写一段200-350字的人物小传。必须遵循:
+1. 不要写"ta从小就"、"命运的齿轮"、"踏上冒险之路"等模板开头
+2. 从一个具体时刻切入——ta正在做什么？手上沾着什么？闻到什么味道？
+3. 属性值只是骨架。最重要的数字是ta在哪个时刻做了什么选择——那个选择的后果至今未消
+4. 给出一个具体伤疤、一个坏习惯、一个ta对别人撒过的谎（或者别人对ta撒的谎）
+5. 避免"孤独的童年""家族的秘密""神秘的力量"等奇幻人物传记高频元素。写一个更像《巫师》杰洛特或者《博德之门3》影心的角色——有缺陷，有灰色地带，不是你一眼就能看透的
+6. 角色的性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词。性别必须体现在故事中——外貌特征、动作习惯、对话语气、身体描写等
+7. **格式要求**：必须分段。2-3个自然段，段与段之间用空行分隔。不要写成一大坨连在一起的文字
+
+只返回JSON: {{"backstory": "..."}}"""
+    else:
+        # 模式3：自动生成属性+背景
+        user_prompt = f"""你是一位小说家，正在为你的新主角写人物小传。这个角色不是在填表格——ta是一个活过的人，身上有伤疤、有执念、有不为人知的秘密。
+
+角色名: {request.character_name}
+{gender_hint}种族: {request.race}
+职业: {request.char_class}
+
+第一步：根据种族特点和职业需求，分配六维属性（3-18范围）。
+{request.race}的职业倾向：战士应偏向力量体质、游荡者偏向敏捷、法师偏向智力、牧师偏向感知、吟游诗人偏向魅力。但不一定按最优配——有时候低属性会催生最好的故事。
+
+第二步：基于这组属性，写一段200-350字的人物小传。要求:
+1. 不要写"ta从小就"、"命运的齿轮"、"踏上冒险之路"等模板开头
+2. 从一个具体时刻切入——ta正在做什么？手上沾着什么？闻到什么味道？
+3. 给出一个具体伤疤、一个坏习惯、一个ta对别人撒过的谎
+4. 避免奇幻人物传记高频元素。写一个像《巫师》杰洛特或者《博德之门3》影心的角色——有缺陷，有灰色地带
+5. 属性值只是骨架。最重要的数字是ta在哪个时刻做了什么选择
+6. 角色的性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词。性别必须体现在故事中
+7. **格式要求**：必须分段。2-3个自然段，段与段之间用空行分隔
+
+只返回JSON: {{"str":数字,"dex":数字,"con":数字,"int":数字,"wis":数字,"cha":数字,"backstory":"..."}}"""
+
+    try:
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": f"你是一位天才D&D角色设计师和奇幻小说家。只返回合法JSON，不要其他文本。角色性别是{gender_normalized}，使用'{gender_pronoun}'作为人称代词。背景故事要有具体伤疤、坏习惯和灰色地带，避免模板化叙事。"},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=1000,
+            temperature=0.9,
+        )
+
+        text = resp.choices[0].message.content.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+
+        result = json.loads(text)
+
+        # 验证属性
+        required = ["str", "dex", "con", "int", "wis", "cha"]
+        attrs: dict[str, int] = {}
+        if has_attrs:
+            attrs = dict(request.attributes)
+        else:
+            for key in required:
+                attrs[key] = max(3, min(18, int(result.get(key, 12))))
+
+        backstory = result.get("backstory", "")
+        if not backstory:
+            backstory = f"{request.character_name}，一位{request.race}{request.char_class}，踏上了冒险之路。"
+
+        return {"attributes": attrs, "backstory": backstory}
+
+    except Exception as e:
+        default_attrs = {
+            "战士": {"str": 16, "dex": 13, "con": 15, "int": 10, "wis": 12, "cha": 8},
+            "法师": {"str": 8, "dex": 13, "con": 12, "int": 16, "wis": 14, "cha": 10},
+            "游荡者": {"str": 10, "dex": 16, "con": 12, "int": 13, "wis": 10, "cha": 14},
+            "牧师": {"str": 13, "dex": 10, "con": 14, "int": 10, "wis": 16, "cha": 12},
+            "游侠": {"str": 12, "dex": 16, "con": 13, "int": 10, "wis": 14, "cha": 8},
+            "吟游诗人": {"str": 8, "dex": 14, "con": 10, "int": 12, "wis": 10, "cha": 16},
+        }.get(request.char_class, {"str": 12, "dex": 12, "con": 12, "int": 12, "wis": 12, "cha": 12})
+        return {
+            "attributes": request.attributes or default_attrs,
+            "backstory": f"{request.character_name}，一位{request.race}{request.char_class}，命运的齿轮开始转动…",
+            "fallback": True,
+        }
+
+
+# ── 角色名自动生成（基于种族+性别，D&D风格） ──
+_FIRST_NAMES = {
+    "人类": {"男": ["艾伦","雷奥","加雷特","达里安","马库斯","塞德里克"],
+             "女": ["艾琳娜","莉亚娜","瑟琳娜","伊莎贝尔","玛格丽特","罗莎琳"],
+             "未指定": ["莫甘","瑞文","艾什","凯","奎因","斯凯"]},
+    "高等精灵": {"男": ["艾拉希尔","萨里翁","费伦迪斯","洛瑟安"],
+                "女": ["艾尔雯","伊瑟拉","莉安德拉","菲奥娜"],
+                "未指定": ["艾拉瑞","罗兰","塞林","维里斯"]},
+    "木精灵": {"男": ["瑟兰迪尔","莱戈拉斯","芬罗德","加拉德"],
+               "女": ["艾尔文","妮缪","洛丝","银叶"],
+               "未指定": ["林歌","风语","绿叶","河影"]},
+    "山地矮人": {"男": ["索林","巴林","杜瓦林","格罗因","铁拳"],
+                "女": ["迪萨","布琳希尔德","赫尔加","格瑞塔"],
+                "未指定": ["铁炉","岩心","钢指","山盾"]},
+    "半身人": {"男": ["米洛","芬恩","罗洛","托比"],
+              "女": ["贝尔","黛西","罗西","皮帕"],
+              "未指定": ["轻足","麦酒","烟斗","幸运叶"]},
+    "龙裔": {"男": ["阿卡拉斯","托瑞恩","克瑞格","巴哈姆"],
+             "女": ["艾莎拉","克丽丝","泽菲拉","雅拉"],
+             "未指定": ["焰舌","鳞盾","雷息","霜爪"]},
+    "半精灵": {"男": ["艾丹","瑟恩","迦兰","艾瑞克"],
+              "女": ["米拉","瑟琳","艾琳诺","薇薇安"],
+              "未指定": ["晨歌","旅者","海风","双月"]},
+    "半兽人": {"男": ["格鲁姆","塔戈","乌尔祖克","莫格","断骨"],
+             "女": ["卡莎","祖拉","娜迦","血牙"],
+             "未指定": ["铁颚","碎颅","利爪","灰皮"]},
+    "提夫林": {"男": ["莱维","阿兹拉尔","马拉克","阿什莫德"],
+              "女": ["莉莉丝","瑟拉菲娜","尼尔","卡丽迪"],
+              "未指定": ["灰烬","暗语","苦痛","硫磺"]},
+    "侏儒": {"男": ["芬克","吉姆","托里克","克拉格"],
+             "女": ["碧普","露娜","丁卡","塞尔达"],
+             "未指定": ["齿轮","弹簧","灯芯","镜片"]},
+}
+_LAST_NAMES = {
+    "人类": ["风行者","铁冠","暗河","石拳","红山","渡鸦","白塔","金谷"],
+    "高等精灵": ["银叶","星语","月刃","晨曦","暮光","秘纹"],
+    "木精灵": ["林行者","绿叶","河影","橡木","轻风","野径"],
+    "山地矮人": ["铁炉","岩盾","铜锤","石拳","金须","熔岩","钢斧"],
+    "半身人": ["轻足","麦酒","烟斗","蜜饼","桥下","老丘","花园"],
+    "龙裔": ["焰舌","鳞盾","雷息","霜爪","钢翼","风暴"],
+    "半精灵": ["旅者","双月","海风","远望","林歌","孤影"],
+    "半兽人": ["碎骨","铁颚","血牙","利爪","断脊","战吼","刀疤"],
+    "提夫林": ["苦痛","灰烬","暗语","硫磺","深渊","血誓"],
+    "侏儒": ["发条","齿轮","灯芯","弹簧","镜片","扳手","六分仪"],
+}
+
+def _generate_character_name(race: str, gender: str) -> str:
+    firsts = _FIRST_NAMES.get(race, _FIRST_NAMES["人类"]).get(gender, _FIRST_NAMES["人类"]["未指定"])
+    lasts = _LAST_NAMES.get(race, _LAST_NAMES["人类"])
+    first = random.choice(firsts)
+    last = random.choice(lasts)
+    return f"{first}·{last}"
+
+
+@app.post("/api/game/new", response_model=NewGameResponse)
+async def create_new_game(request: NewGameRequest):
+    """创建新游戏——生成角色和会话，返回 SSE 连接地址。
+
+    流程:
+    1. 创建用户（如不存在则新建）
+    2. 创建角色（若角色名为空，根据种族+性别自动生成D&D风格姓名）
+    3. 创建游戏会话
+    4. 在内存中注册活跃会话
+    5. 返回 session_id + SSE URL
+    """
+    from backend.database import async_session as db_factory
+    from sqlalchemy import select
+
+    async with db_factory() as db:
+        # 1. 获取或创建用户（避免重复用户名的唯一约束冲突）
+        result = await db.execute(select(User).where(User.username == request.username))
+        user = result.scalar_one_or_none()
+        if user is None:
+            user = User(username=request.username)
+            db.add(user)
+            await db.flush()
+
+        # 2. 创建角色（使用传入的属性或默认值）
+        default_attrs = {"str": 12, "dex": 12, "con": 12, "int": 12, "wis": 12, "cha": 12}
+        attrs = request.attributes if request.attributes else default_attrs
+
+        # 如果角色名为空或为默认值"冒险者"，根据种族+性别自动生成
+        char_name = request.character_name
+        if not char_name or char_name.strip() in ("", "冒险者"):
+            char_name = _generate_character_name(request.race, request.gender)
+
+        character = Character(
+            user_id=user.id,
+            name=char_name,
+            gender=request.gender,
+            race=request.race,
+            char_class=request.char_class,
+            level=1,
+            hp=30, max_hp=30,
+            mp=10, max_mp=10,
+            attributes=attrs,
+        )
+        db.add(character)
+        await db.flush()
+
+        # 3. 创建游戏会话
+        session = GameSession(
+            user_id=user.id,
+            character_id=character.id,
+            status="active",
+        )
+        db.add(session)
+        await db.flush()
+
+        # 4. 在内存中注册活跃会话
+        # 计算AC
+        attrs_for_ac = character.attributes or {}
+        dex_ac = (attrs_for_ac.get("dex", 10) - 10) // 2
+        _cc = character.char_class
+        if _cc in ('战士', '圣武士'): _ac = 16
+        elif _cc == '游侠': _ac = 14 + max(-2, min(2, dex_ac))
+        elif _cc == '野蛮人': _ac = 10 + dex_ac + (attrs_for_ac.get("con", 10) - 10) // 2
+        elif _cc == '武僧': _ac = 10 + dex_ac + (attrs_for_ac.get("wis", 10) - 10) // 2
+        else: _ac = 11 + dex_ac
+        if '山地矮人' in character.race: _ac += 1
+        _ac = max(8, min(22, _ac))
+
+        character_info = {
+            "gender": character.gender,
+            "race": character.race,
+            "char_class": character.char_class,
+            "level": character.level,
+            "hp": character.hp,
+            "max_hp": character.max_hp,
+            "mp": character.mp,
+            "max_mp": character.max_mp,
+            "xp": character.xp,
+            "gold": character.gold,
+            "ac": _ac,
+            "attributes": character.attributes,
+            "inventory": character.inventory,
+            "race_traits": request.race_traits or [],
+            "class_proficiencies": request.class_proficiencies or [],
+            "skill_proficiencies": request.skill_proficiencies or [],
+            "feats": request.feats or [],
+            "backstory": request.backstory or "",
+            "world_context": request.world_context or "",
+            "world_outline": request.world_outline or "",
+            "world_state_json": request.world_state_json or "",
+            "reference_script": request.reference_script or "",
+            "scenario_id": request.scenario_id or "",
+            "scenario_summary": "",
+            "new_world": request.new_world,
+            "play_mode": request.play_mode,
+        }
+
+        # 如果指定了已保存剧本ID且不是全新世界——加载剧本
+        if request.scenario_id and not request.new_world:
+            from backend.scenario_store import Scenario
+            saved = Scenario.load(request.scenario_id)
+            if saved:
+                character_info["world_outline"] = saved.world_outline or character_info["world_outline"]
+                character_info["world_state_json"] = saved.world_state_json or character_info["world_state_json"]
+                character_info["scenario_id"] = request.scenario_id
+                character_info["scenario_summary"] = saved.meta.summary or character_info.get("scenario_summary", "")
+                saved.record_play()
+
+        # 如果有剧本URL，尝试抓取
+        if request.scenario_url:
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=10) as hc:
+                    r = await hc.get(request.scenario_url)
+                    if r.status_code == 200:
+                        character_info["world_context"] = r.text[:8000]
+            except Exception:
+                pass
+        s = session_manager.create_session(
+            session_id=session.id,
+            character_id=character.id,
+            character_name=char_name,
+            character_info=character_info,
+            api_key=request.api_key,
+            model_name=request.model_name,
+        )
+        if request.base_url:
+            s.base_url = request.base_url
+
+        # 初始化持久化世界状态（P0-1修复：无条件创建，不再依赖world_state_json）
+        import json as _json
+        if request.world_state_json:
+            try:
+                ws_data = _json.loads(request.world_state_json)
+                ws = WorldState(session_id=session.id, world_outline=ws_data.get("world_outline", ""),
+                                 world_rules=ws_data.get("world_rules", ""))
+                from backend.engine.world_state import NpcEntry as NE, PlotFlag as PF, LocationEntry as LE
+                for n in ws_data.get("npcs", []):
+                    ws.npcs.append(NE(**{k: v for k, v in n.items()
+                                         if k in ["name","race","role","location","attitude",
+                                                  "alive","personality","motivation","secret",
+                                                  "relation_to_plot","notes"]}))
+                for p in ws_data.get("plot_flags", []):
+                    ws.plot_flags.append(PF(**{k: v for k, v in p.items()
+                                               if k in ["key","status","description","consequence"]}))
+                for l in ws_data.get("locations", []):
+                    ws.locations.append(LE(**{k: v for k, v in l.items()
+                                              if k in ["name","description","status","secrets"]}))
+                ws.save()
+            except Exception:
+                ws = WorldState(session_id=session.id)
+        else:
+            # 即使没有预生成剧本，也创建空的WorldState，确保update_scene能正常工作
+            ws = WorldState(session_id=session.id)
+            # 预设初始场景——从世界大纲/剧本中推断起始位置，或使用通用描述
+            init_loc = "冒险的起点"
+            init_weather = ""
+            if character_info.get("world_outline"):
+                # 尝试从世界大纲中提取第一个地点
+                outline = character_info["world_outline"]
+                m = re.search(r'(?:地点|场景|位置|起始)[：:]\s*(.+?)(?:\n|$)', outline)
+                if m:
+                    init_loc = m.group(1)[:30]
+                else:
+                    init_loc = "世界的入口"
+            ws.update_scene(current_location=init_loc, current_time="第1天 · 冒险开始", weather=init_weather)
+            ws.save()
+        s.world_state = ws
+
+        await db.commit()
+
+    return NewGameResponse(
+        session_id=session.id,
+        character_id=character.id,
+        sse_url=f"/api/game/{session.id}/stream",
+    )
+
+
+@app.post("/api/game/{session_id}/action", response_model=ActionAcceptedResponse)
+async def submit_action(session_id: str, request: ActionRequest):
+    """提交玩家行动——触发 AI DM 处理并生成叙事。
+
+    处理是异步的：此端点立即返回 accepted:true，
+    实际的叙事生成在后台进行，通过 SSE 推送给前端。
+    """
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+
+    if not state.check_rate_limit():
+        raise HTTPException(status_code=429, detail="操作太快，请稍等片刻再行动")
+
+    if state.status != "active":
+        raise HTTPException(status_code=400, detail="会话不是活跃状态")
+
+    state.mark_action()
+
+    # 在后台任务中启动 AI 处理
+    asyncio.create_task(_handle_player_action(state, request.player_input))
+
+    return ActionAcceptedResponse(accepted=True)
+
+
+async def _handle_player_action(state: GameSessionState, player_input: str):
+    """后台任务：处理玩家行动并推送 SSE 事件。"""
+    try:
+        await process_player_action(state, player_input)
+    except Exception as e:
+        await push_event(state, "error", {
+            "code": "INTERNAL_ERROR",
+            "msg": f"处理失败: {str(e)}",
+        })
+        await push_event(state, "end_of_turn", {})
+
+
+@app.get("/api/game/{session_id}/stream")
+async def stream_events(session_id: str, last_event_seq: int = 0):
+    """SSE 长连接——推送游戏事件流。
+
+    前端通过 EventSource 连接此端点，接收实时叙事、骰子结果、状态更新等事件。
+    支持通过 last_event_seq 参数进行断线重连。
+    """
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+
+    return StreamingResponse(
+        sse_event_generator(state),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        },
+    )
+
+
+@app.get("/api/game/{session_id}/journal")
+async def get_player_journal(session_id: str):
+    """获取玩家笔记——侧边栏显示当前场景、NPC(可见信息)、剧情进度。
+
+    这个端点返回仅对玩家可见的信息：
+    - 当前场景（位置/时间/天气/氛围）
+    - NPC按态度分组（仅可见字段）
+    - 剧情旗标
+    - 已发现地点
+    """
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+
+    ws = getattr(state, 'world_state', None)
+    if ws is None:
+        return {"scene": {"location": "未知", "time": "?", "weather": "", "atmosphere": ""},
+                "npcs": {"allies": [], "enemies": [], "neutrals": [], "total": 0},
+                "plot_flags": [], "locations": []}
+
+    return ws.to_player_journal()
+
+
+@app.post("/api/game/{session_id}/abort")
+async def abort_generation(session_id: str):
+    """中断当前 AI 生成——玩家点击"跳过"按钮时调用。"""
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+
+    state.request_abort()
+    await push_narrative_flush(state, "[生成已中断]")
+
+    return {"aborted": True}

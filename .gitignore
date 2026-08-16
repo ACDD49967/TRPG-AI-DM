@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# 环境与密钥
+.env
+.env.local
+*.pem
+*.crt
+*.key
+
+# 运行时数据（用户生成内容）
+dndgame.db
+*.sqlite3
+scenarios/*.json
+world_states/*.json
+!scenarios/.gitkeep
+!world_states/.gitkeep
+
+# 打包产物
+dist/
+*.zip
+*.tgz
+
+# IDE / OS / 本机开发辅助
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.claude/
+.dsh-plugins/
+dsh-routing-suite/
+.git-ssl/
+.install-cache/
+
+# 日志
+*.log
+npm-debug.log*
