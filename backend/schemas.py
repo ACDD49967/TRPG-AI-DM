@@ -35,6 +35,7 @@ class NewGameRequest(BaseModel):
     game_system: str = Field(default="dnd5e", pattern="^(dnd5e|dnd4e|coc|custom)$")
     custom_rules: str | None = None            # 自定义规则文本（game_system=custom 时使用）
     luck: int | None = Field(default=None, ge=1, le=99)  # COC 幸运值（可选）
+    extension_ids: list[str] = Field(default_factory=list)  # 启用的扩展包 ID 列表
 
 
 class GenerateBackstoryRequest(BaseModel):

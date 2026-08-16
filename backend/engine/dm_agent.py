@@ -16,6 +16,7 @@ from backend.engine.tools import DM_TOOLS
 from backend.engine.world_state import WorldState, NpcEntry, PlotFlag
 from backend.engine.game_systems import build_system_rule_block, build_stat_glossary, get_system
 from backend.knowledge_base import get_knowledge_base
+from backend.save_manager import auto_save_if_needed
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1303,6 +1304,8 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
         if len(state.response_cache) > 50:
             oldest = next(iter(state.response_cache))
             state.response_cache.pop(oldest, None)
+        # 默认每轮自动存档
+        auto_save_if_needed(state)
         return full
     except Exception as e:
         await push_event(state, "error", {"code":"LLM_ERROR","msg":str(e)})

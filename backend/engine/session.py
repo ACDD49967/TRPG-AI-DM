@@ -21,6 +21,7 @@ class GameSessionState:
     character_id: str
     character_name: str
     character_info: dict  # 种族、职业、等级、属性等
+    username: str = "default"
 
     # 玩家自定义 LLM 配置（覆盖全局设置）
     api_key: str | None = None
@@ -90,6 +91,7 @@ class SessionManager:
         character_info: dict,
         api_key: str | None = None,
         model_name: str | None = None,
+        username: str = "default",
     ) -> GameSessionState:
         """创建并注册一个新的游戏会话。"""
         state = GameSessionState(
@@ -99,6 +101,7 @@ class SessionManager:
             character_info=character_info,
             api_key=api_key,
             model_name=model_name,
+            username=username,
         )
         self._sessions[session_id] = state
         return state
@@ -165,6 +168,7 @@ async def sse_event_generator(
         "char_class": info.get("char_class", ""),
         "gender": info.get("gender", ""),
         "game_system": info.get("game_system", "dnd5e"),
+        "username": info.get("username", "default"),
         "san": info.get("san", info.get("max_san", 0)),
         "maxSan": info.get("max_san", info.get("san", 0)),
         "luck": info.get("luck", 0),

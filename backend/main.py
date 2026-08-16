@@ -382,6 +382,131 @@ async def seed_knowledge():
     return {"seeded": True}
 
 
+@app.get("/api/extensions")
+async def list_extensions_api(username: str = "default"):
+    from backend.extension_manager import list_extensions
+    return {"extensions": list_extensions(username)}
+
+
+@app.post("/api/extensions")
+async def add_extension_api(payload: dict):
+    from backend.extension_manager import add_extension
+    username = str(payload.get("username") or "default")
+    ext = add_extension(
+        username=username,
+        name=str(payload.get("name") or "未命名扩展包"),
+        description=str(payload.get("description") or ""),
+        content=str(payload.get("content") or ""),
+        system=str(payload.get("system") or "custom"),
+        tags=payload.get("tags") or [],
+        source=str(payload.get("source") or "user"),
+    )
+    return {"extension": ext}
+
+
+@app.post("/api/extensions/generate")
+async def generate_extension_api(payload: dict):
+    """由 LLM 生成扩展包 JSON。"""
+    from backend.extension_manager import add_extension
+    username = str(payload.get("username") or "default")
+    description = str(payload.get("description") or "")
+    system = str(payload.get("system") or "custom")
+    api_key = payload.get("api_key") or settings.LLM_API_KEY
+    model = payload.get("model_name") or settings.LLM_MODEL_NAME
+    base_url = payload.get("base_url") or settings.LLM_BASE_URL
+    if not model:
+        raise HTTPException(status_code=400, detail="请先选择模型")
+    if not description.strip():
+        raise HTTPException(status_code=400, detail="请描述你想生成的扩展包")
+
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    prompt = f"""请为一个 TRPG 游戏生成一个扩展包，必须返回合法 JSON，不要其他文本。
+
+规则系统：{system}
+扩展包需求：{description}
+
+JSON 格式：
+{{
+  "name": "扩展包名称",
+  "description": "一句话简介",
+  "content": "扩展包具体内容：新增规则、职业/调查员能力、物品、NPC、事件、特殊机制等，Markdown 格式，300-800字",
+  "tags": ["标签1", "标签2"]
+}}"""
+    try:
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "你是一位TRPG扩展包设计者。只返回合法JSON。"},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=1200,
+            temperature=0.8,
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+        import json as _json
+        data = _json.loads(text)
+        ext = add_extension(
+            username=username,
+            name=str(data.get("name") or "LLM生成扩展包"),
+            description=str(data.get("description") or ""),
+            content=str(data.get("content") or ""),
+            system=system,
+            tags=data.get("tags") or ["LLM生成"],
+            source="llm",
+        )
+        return {"extension": ext}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"扩展包生成失败: {e}") from e
+
+
+@app.delete("/api/extensions/{ext_id}")
+async def delete_extension_api(ext_id: str, username: str = "default"):
+    from backend.extension_manager import delete_extension
+    if not delete_extension(username, ext_id):
+        raise HTTPException(status_code=404, detail="扩展包不存在")
+    return {"deleted": True}
+
+
+@app.get("/api/saves")
+async def list_saves_api(username: str = "default"):
+    from backend.save_manager import list_saves
+    return {"saves": list_saves(username)}
+
+
+@app.post("/api/game/{session_id}/save")
+async def manual_save_api(session_id: str, payload: dict):
+    """手动存档当前会话。"""
+    from backend.save_manager import create_save
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    save = create_save(state, label=str(payload.get("label") or "手动存档"), auto=False)
+    return {"save": save}
+
+
+@app.post("/api/saves/load")
+async def load_save_api(payload: dict):
+    """载入存档：恢复为新会话并返回 SSE 地址。"""
+    from backend.save_manager import load_save, restore_state_from_save
+    username = str(payload.get("username") or "default")
+    save_id = str(payload.get("save_id") or "")
+    save_data = load_save(username, save_id)
+    if save_data is None:
+        raise HTTPException(status_code=404, detail="存档不存在")
+    state, session_id = restore_state_from_save(save_data)
+    session_manager._sessions[session_id] = state
+    return {
+        "session_id": session_id,
+        "character_id": state.character_id,
+        "sse_url": f"/api/game/{session_id}/stream",
+    }
+
+
 @app.post("/api/models")
 async def fetch_models(payload: dict):
     """从 OpenAI 兼容接口获取模型列表，用于前端下拉菜单。"""
@@ -751,6 +876,7 @@ async def create_new_game(request: NewGameRequest):
         _ac = max(8, min(22, _ac))
 
         character_info = {
+            "username": request.username or "default",
             "gender": character.gender,
             "race": character.race,
             "char_class": character.char_class,
@@ -779,6 +905,7 @@ async def create_new_game(request: NewGameRequest):
             "custom_rules": request.custom_rules or "",
             "new_world": request.new_world,
             "play_mode": request.play_mode,
+            "extension_ids": request.extension_ids,
         }
 
         # 根据规则系统预填衍生数值
@@ -852,6 +979,7 @@ async def create_new_game(request: NewGameRequest):
             character_info=character_info,
             api_key=request.api_key,
             model_name=request.model_name,
+            username=request.username or "default",
         )
         if request.base_url:
             s.base_url = request.base_url
@@ -859,6 +987,15 @@ async def create_new_game(request: NewGameRequest):
         # 长短记忆：精简模式保留 5 轮，深度模式保留 10 轮，超出部分触发摘要压缩
         s.memory.max_active_turns = 5 if request.play_mode == "lite" else 10
         s.memory.summary_trigger = s.memory.max_active_turns + 1
+
+        # 启用扩展包：写入知识库，供 RAG 检索
+        if request.extension_ids:
+            from backend.extension_manager import activate_extensions_into_kb
+            activate_extensions_into_kb(request.username or "default", request.extension_ids)
+            character_info["extensions"] = [
+                {"id": eid, "name": eid} for eid in request.extension_ids
+            ]
+            s.character_info["extensions"] = character_info["extensions"]
 
         # 初始化持久化世界状态（P0-1修复：无条件创建，不再依赖world_state_json）
         import json as _json

@@ -169,6 +169,20 @@ export default function StartScreen(){
   const [kbErr,setKbErr]=useState('');
   const [kbUploadFile,setKbUploadFile]=useState<File|null>(null);
 
+  // 扩展包与存档
+  const [extList,setExtList]=useState<Array<{id:string;name:string;description:string;system:string;tags:string[];source:string;created_at:string}>>([]);
+  const [extName,setExtName]=useState('');
+  const [extDesc,setExtDesc]=useState('');
+  const [extContent,setExtContent]=useState('');
+  const [extSystem,setExtSystem]=useState<GameSystem>('custom');
+  const [extTags,setExtTags]=useState('');
+  const [extGenDesc,setExtGenDesc]=useState('');
+  const [extBusy,setExtBusy]=useState(false);
+  const [extErr,setExtErr]=useState('');
+  const [activeExtIds,setActiveExtIds]=useState<string[]>([]);
+  const [saves,setSaves]=useState<Array<{id:string;label:string;auto:boolean;session_id:string;created_at:string;character_name:string;game_system:string}>>([]);
+  const [saveLabel,setSaveLabel]=useState('');
+
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState('');
   const setSession=useGameStore(s=>s.setSession);
@@ -177,6 +191,8 @@ export default function StartScreen(){
   useEffect(()=>{
     fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
     fetch('/api/knowledge').then(r=>r.json()).then(d=>setKbDocs(d.documents||[])).catch(()=>{});
+    fetch(`/api/extensions?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setExtList(d.extensions||[])).catch(()=>{});
+    fetch(`/api/saves?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setSaves(d.saves||[])).catch(()=>{});
   },[]);
 
   // 自动保持配置（每次关键字段变化）
@@ -370,6 +386,64 @@ export default function StartScreen(){
     finally{setKbBusy(false);}
   };
 
+  const loadExts=async()=>{
+    try{
+      const r=await fetch(`/api/extensions?username=${encodeURIComponent(username||'default')}`);
+      if(r.ok)setExtList((await r.json()).extensions||[]);
+    }catch{}
+  };
+
+  const loadSaves=async()=>{
+    try{
+      const r=await fetch(`/api/saves?username=${encodeURIComponent(username||'default')}`);
+      if(r.ok)setSaves((await r.json()).saves||[]);
+    }catch{}
+  };
+
+  const addExt=async()=>{
+    setExtBusy(true);setExtErr('');
+    try{
+      const r=await fetch('/api/extensions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        username:username||'default',name:extName||'未命名扩展包',description:extDesc,content:extContent,
+        system:extSystem,tags:extTags.split(',').map(s=>s.trim()).filter(Boolean),
+      })});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'添加失败');}
+      setExtName('');setExtDesc('');setExtContent('');setExtTags('');
+      await loadExts();
+    }catch(e:unknown){setExtErr(e instanceof Error?e.message:'添加失败');}
+    finally{setExtBusy(false);}
+  };
+
+  const genExt=async()=>{
+    setExtBusy(true);setExtErr('');
+    try{
+      const r=await fetch('/api/extensions/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        username:username||'default',description:extGenDesc,system:extSystem,
+        api_key:apiKey||undefined,model_name:modelName||undefined,base_url:baseUrl||undefined,
+      })});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'生成失败');}
+      setExtGenDesc('');await loadExts();
+    }catch(e:unknown){setExtErr(e instanceof Error?e.message:'生成失败');}
+    finally{setExtBusy(false);}
+  };
+
+  const deleteExt=async(id:string)=>{
+    try{
+      await fetch(`/api/extensions/${id}?username=${encodeURIComponent(username||'default')}`,{method:'DELETE'});
+      setActiveExtIds(ids=>ids.filter(x=>x!==id));
+      await loadExts();
+    }catch{}
+  };
+
+  const loadSaveGame=async(saveId:string)=>{
+    try{
+      const r=await fetch('/api/saves/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username||'default',save_id:saveId})});
+      if(!r.ok)return;
+      const d=await r.json();
+      setSession(d.session_id);
+    }catch{}
+  };
+
   const start=async()=>{
     if(!charName.trim()){setError('请输入角色名称');return;}
     setLoading(true);setError('');
@@ -393,6 +467,7 @@ export default function StartScreen(){
         game_system:gameSystem,
         custom_rules:gameSystem==='custom'?customRules:undefined,
         luck:gameSystem==='coc'?cocLuck:undefined,
+        extension_ids:activeExtIds,
       })});
       if(!r.ok){const e=await r.json();throw new Error(e.detail||'创建失败');}
       setSession((await r.json()).session_id);
@@ -1039,6 +1114,66 @@ export default function StartScreen(){
                     <button onClick={()=>deleteKb(d.id)} className="text-[10px] text-red-500 hover:text-red-700 px-2 py-1">删除</button>
                   </div>
                 ))}
+              </div>
+
+              {/* 扩展包管理 */}
+              <div className="border-t border-gray-200 pt-4 space-y-3">
+                <p className="text-xs font-bold text-gray-800">扩展包（增强游戏性与个性）</p>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
+                    <p className="text-xs font-medium text-gray-700">手动添加扩展包</p>
+                    <input value={extName} onChange={e=>setExtName(e.target.value)} placeholder="扩展包名称" className="input-field text-xs" />
+                    <input value={extDesc} onChange={e=>setExtDesc(e.target.value)} placeholder="一句话简介" className="input-field text-xs" />
+                    <select value={extSystem} onChange={e=>setExtSystem(e.target.value as GameSystem)} className="input-field text-xs">
+                      {GAME_SYSTEM_OPTIONS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                    <textarea value={extContent} onChange={e=>setExtContent(e.target.value)} placeholder="扩展内容：规则、能力、物品、NPC、事件等" rows={4} className="input-field resize-none text-xs" />
+                    <input value={extTags} onChange={e=>setExtTags(e.target.value)} placeholder="标签，用逗号分隔" className="input-field text-xs" />
+                    <button onClick={addExt} disabled={extBusy || !extContent.trim()} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium disabled:opacity-50">保存扩展包</button>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
+                    <p className="text-xs font-medium text-gray-700">AI 生成扩展包</p>
+                    <select value={extSystem} onChange={e=>setExtSystem(e.target.value as GameSystem)} className="input-field text-xs">
+                      {GAME_SYSTEM_OPTIONS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                    <textarea value={extGenDesc} onChange={e=>setExtGenDesc(e.target.value)} placeholder="描述你想要的扩展包，例如：新增一个酒馆斗殴规则和三个NPC" rows={4} className="input-field resize-none text-xs" />
+                    <button onClick={genExt} disabled={extBusy || !extGenDesc.trim()} className="w-full py-2 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium disabled:opacity-50">{extBusy?'生成中...':'让 AI 生成扩展包'}</button>
+                  </div>
+                </div>
+                {extErr&&<p className="text-red-500 text-xs">{extErr}</p>}
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-gray-700">已有扩展包（{extList.length}）· 勾选后将在新游戏中启用</p>
+                  {extList.length===0&&<p className="text-xs text-gray-400">暂无扩展包，可手动添加或让 AI 生成。</p>}
+                  {extList.map(e=>(
+                    <label key={e.id} className={`flex items-center justify-between bg-white rounded-lg p-2.5 border cursor-pointer ${activeExtIds.includes(e.id)?'border-indigo-300 bg-indigo-50/40':'border-gray-200'}`}>
+                      <span className="min-w-0">
+                        <span className="text-xs font-medium text-gray-800 truncate">{e.name}</span>
+                        <span className="block text-[10px] text-gray-500">{GAME_SYSTEM_LABELS[(e.system as GameSystem)||'custom']} · {e.source} · {e.description}</span>
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <input type="checkbox" checked={activeExtIds.includes(e.id)} onChange={()=>setActiveExtIds(ids=>ids.includes(e.id)?ids.filter(x=>x!==e.id):[...ids,e.id])} />
+                        <button onClick={()=>deleteExt(e.id)} className="text-[10px] text-red-500 hover:text-red-700 px-2 py-1">删除</button>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* 存档管理 */}
+              <div className="border-t border-gray-200 pt-4 space-y-3">
+                <p className="text-xs font-bold text-gray-800">存档与载入（每轮自动存档，另可手动存档）</p>
+                <div className="space-y-1.5">
+                  {saves.length===0&&<p className="text-xs text-gray-400">暂无存档。开始游戏后每轮会自动存档。</p>}
+                  {saves.map(s=>(
+                    <div key={s.id} className="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-200">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-gray-800">{s.label} {s.auto?'(自动)':'(手动)'}</p>
+                        <p className="text-[10px] text-gray-500">{s.character_name} · {GAME_SYSTEM_LABELS[(s.game_system as GameSystem)||'dnd5e']} · {s.created_at}</p>
+                      </div>
+                      <button onClick={()=>loadSaveGame(s.id)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">载入</button>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}

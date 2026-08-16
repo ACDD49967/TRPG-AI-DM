@@ -14,6 +14,17 @@ export default function GameScreen() {
   const { sessionId, goToStart, sceneInfo, status } = useGameStore();
   useSSE(sessionId);
 
+  const saveGame = async () => {
+    if (!sessionId) return;
+    try {
+      await fetch(`/api/game/${sessionId}/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: '手动存档' }),
+      });
+    } catch {}
+  };
+
   return (
     <div className="h-screen flex flex-col bg-white">
       {/* 顶栏：标题 + 场景信息 + 角色名 */}
@@ -26,16 +37,16 @@ export default function GameScreen() {
         <div className="flex items-center gap-4 text-[10px] flex-1 justify-center min-w-0">
           {sceneInfo.location !== '冒险的起点' && sceneInfo.location !== '未知' && (
             <span className="text-gray-700 font-medium truncate" title={sceneInfo.location}>
-              📍 {sceneInfo.location}
+              地点：{sceneInfo.location}
             </span>
           )}
-          <span className="text-gray-500 shrink-0">🕐 {sceneInfo.time}</span>
+          <span className="text-gray-500 shrink-0">时间：{sceneInfo.time}</span>
           {sceneInfo.weather && (
-            <span className="text-gray-400 truncate hidden sm:inline" title={sceneInfo.weather}>🌤 {sceneInfo.weather}</span>
+            <span className="text-gray-400 truncate hidden sm:inline" title={sceneInfo.weather}>天气：{sceneInfo.weather}</span>
           )}
           {sceneInfo.npcs_here.length > 0 && (
             <span className="text-gray-500 truncate hidden md:inline">
-              👥 {sceneInfo.npcs_here.slice(0, 3).join(', ')}{sceneInfo.npcs_here.length > 3 ? ` +${sceneInfo.npcs_here.length - 3}` : ''}
+              在场：{sceneInfo.npcs_here.slice(0, 3).join(', ')}{sceneInfo.npcs_here.length > 3 ? ` +${sceneInfo.npcs_here.length - 3}` : ''}
             </span>
           )}
         </div>
@@ -50,7 +61,10 @@ export default function GameScreen() {
             HP {status.hp}/{status.maxHp}
           </span>
           <span className="text-[10px] text-gray-400 font-mono hidden sm:inline">#{sessionId?.slice(0, 6)}</span>
-          <button onClick={goToStart} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">← 大厅</button>
+          <button onClick={saveGame} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">存档</button>
+          <button onClick={goToStart} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">载入</button>
+          <button onClick={goToStart} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">新游戏</button>
+          <button onClick={goToStart} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">大厅</button>
         </div>
       </header>
 
