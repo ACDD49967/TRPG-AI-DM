@@ -188,6 +188,13 @@ def _merge_vec(base: dict[str, int], other: dict[str, int]) -> dict[str, int]:
     return merged
 
 
+def _join_chunk(sentences: list[str]) -> str:
+    """按语言习惯拼接句子：中文无空格，英文/混合文本用空格分隔。"""
+    if any(re.search(r"[\u4e00-\u9fff]", s) for s in sentences):
+        return "".join(sentences)
+    return " ".join(sentences)
+
+
 def split_text_semantic(
     text: str,
     max_chunk_size: int = 1200,
@@ -209,7 +216,7 @@ def split_text_semantic(
         para = para.strip()
         if not para:
             continue
-        sentences = re.split(r"(?<=[。！？!?；;])|\n", para)
+        sentences = re.split(r"(?<=[。！？；;])|(?<=[.!?])\s+|\n", para)
         for s in sentences:
             s = s.strip()
             if s:
@@ -223,7 +230,7 @@ def split_text_semantic(
     def flush():
         nonlocal current, current_len, current_vec
         if current:
-            chunks.append("".join(current))
+            chunks.append(_join_chunk(current))
         current = []
         current_len = 0
         current_vec = None
