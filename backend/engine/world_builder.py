@@ -275,6 +275,7 @@ async def build_world(
     max_revisions: int = 2,
     game_system: str = "dnd5e",
     custom_rules: str = "",
+    progress_callback=None,
 ) -> tuple[str, int, list, WorldState]:
     """多Agent分层生成世界大纲→自评→修订→提取世界状态。
 
@@ -298,6 +299,7 @@ async def build_world(
 
     # ── Step 1: 世界观与冲突核心 ──
     print("[WorldBuilder] Step 1/6: 世界观与冲突核心...")
+    if progress_callback: progress_callback("构建世界观与冲突核心", 10)
     step1 = await _llm(client, model,
         "你是一位获奖奇幻小说家。创作深刻、独特的世界观。",
         _with_knowledge(STEP1_CONFLICT.format(player_input=pi, reference=ref), "世界观 冲突 势力 阵营 魔法 社会", game_system),
@@ -307,6 +309,7 @@ async def build_world(
 
     # ── Step 2: 主线三幕结构 ──
     print("[WorldBuilder] Step 2/6: 主线三幕结构...")
+    if progress_callback: progress_callback("编织主线三幕结构", 25)
     step2 = await _llm(client, model,
         "你是一位D&D冒险设计师。设计引人入胜的三幕结构。",
         _with_knowledge(STEP2_PLOT.format(world_context=step1), "三幕结构 剧情节点 转折 结局", game_system),
@@ -316,6 +319,7 @@ async def build_world(
 
     # ── Step 3: NPC网络与支线 ──
     print("[WorldBuilder] Step 3/6: NPC网络与支线...")
+    if progress_callback: progress_callback("塑造NPC与支线网络", 40)
     step3 = await _llm(client, model,
         "你是一位角色设计大师。创造有深度的NPC网络。",
         _with_knowledge(STEP3_NPC.format(world_context=step1, plot_context=step2), "NPC 反派 动机 支线 关系", game_system),
@@ -325,6 +329,7 @@ async def build_world(
 
     # ── Step 4: 遭遇表 ──
     print("[WorldBuilder] Step 4/6: 遭遇表与隐藏内容...")
+    if progress_callback: progress_callback("布置遭遇与隐藏内容", 55)
     step4 = await _llm(client, model,
         "你是一位D&D遭遇设计师。设计挑战与秘密。",
         _with_knowledge(STEP4_ENCOUNTERS.format(world_context=step1, plot_context=step2, npc_context=step3), "遭遇 战斗 陷阱 魔法物品 秘密", game_system),
@@ -335,6 +340,7 @@ async def build_world(
     # ── Step 5: 合并+评分 ──
     history = []
     print("[WorldBuilder] Step 5/6: 合并+自评...")
+    if progress_callback: progress_callback("合并大纲并自评", 70)
     merge_result = await _llm(client, model,
         "你是一位D&D模组主编。诚实评分，合理打分，不要过分苛刻。",
         MERGE_PROMPT.format(step1=step1, step2=step2, step3=step3, step4=step4),
@@ -410,6 +416,7 @@ async def build_world(
     # ── Step 6: 提取结构化世界状态 ──
     outline = _dedupe_headings(outline)
     print("[WorldBuilder] Step 6/6: 提取结构化世界状态...")
+    if progress_callback: progress_callback("提取世界状态与NPC", 85)
     ws = WorldState(world_outline=outline)
     try:
         extract_result = await _llm(client, model,
@@ -443,4 +450,5 @@ async def build_world(
     prog_score = _programmatic_score(outline, ws)
     final_score = round((score + prog_score) / 2)
     history.append({"iteration": "final", "score": final_score, "programmatic": prog_score})
+    if progress_callback: progress_callback("生成完成", 100)
     return outline, final_score, history, ws

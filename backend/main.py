@@ -176,6 +176,111 @@ async def generate_world(request: WorldGenRequest):
     }
 
 
+@app.post("/api/generate/world/stream")
+async def generate_world_stream(request: WorldGenRequest):
+    """流式生成世界：通过 SSE 实时推送进度，最后返回完整结果。"""
+    from backend.engine.world_builder import build_world
+
+    player_input = f"""冒险基调: {request.tone}
+角色: {request.character_name}, {request.race} {request.char_class}, Lv.{request.character_level}
+描述: {request.description}"""
+
+    if not (request.model_name or settings.LLM_MODEL_NAME):
+        raise HTTPException(status_code=400, detail="请先选择或填写模型名称")
+
+    async def event_stream():
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def progress(label: str, percent: int):
+            queue.put_nowait({"type": "progress", "label": label, "percent": percent})
+
+        async def run():
+            try:
+                outline_text, score, history, world_state = await build_world(
+                    player_input=player_input,
+                    reference_script=request.description,
+                    api_key=request.api_key,
+                    model_name=request.model_name,
+                    base_url=request.base_url,
+                    game_system=request.game_system,
+                    custom_rules=request.custom_rules or "",
+                    target_score=75,
+                    max_revisions=1,
+                    progress_callback=progress,
+                )
+                await queue.put_nowait({"type": "__complete__", "data": (outline_text, score, history, world_state)})
+            except Exception as e:
+                await queue.put_nowait({"type": "__error__", "msg": str(e)})
+
+        task = asyncio.create_task(run())
+        while True:
+            item = await queue.get()
+            if item["type"] == "progress":
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                continue
+            if item["type"] == "__error__":
+                yield f"data: {json.dumps({'type':'error','msg':item['msg']}, ensure_ascii=False)}\n\n"
+                break
+            # complete
+            outline_text, score, history, world_state = item["data"]
+            npc_summary = [{"name": n.name, "role": n.role, "attitude": n.attitude} for n in world_state.npcs]
+            flag_summary = [{"key": f.key, "status": f.status} for f in world_state.plot_flags]
+            ws_json = json.dumps({
+                "world_outline": outline_text,
+                "npcs": [{"name": n.name, "race": n.race, "role": n.role, "location": n.location,
+                          "attitude": n.attitude, "alive": n.alive, "personality": n.personality,
+                          "motivation": n.motivation, "secret": n.secret,
+                          "relation_to_plot": n.relation_to_plot, "visibility": n.visibility.to_dict()}
+                         for n in world_state.npcs],
+                "plot_flags": [{"key": f.key, "status": f.status, "description": f.description} for f in world_state.plot_flags],
+                "locations": [{"name": l.name, "description": l.description, "secrets": l.secrets} for l in world_state.locations],
+                "world_rules": world_state.world_rules,
+            }, ensure_ascii=False)
+            from backend.scenario_importer import generate_summary
+            from backend.scenario_store import create_scenario
+            summary_client = AsyncOpenAI(api_key=request.api_key or settings.LLM_API_KEY, base_url=request.base_url or settings.LLM_BASE_URL)
+            summary_model = request.model_name or settings.LLM_MODEL_NAME
+            summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
+            saved = create_scenario(
+                world_outline=outline_text, world_state_json=ws_json,
+                reference_script=request.description, custom_rules=request.custom_rules or "", notes="",
+                title=outline_text.split("\n")[0].replace("#", "").strip()[:60],
+                description=request.description[:200], summary=summary,
+                system=request.game_system, tone=request.tone,
+                character_name=request.character_name, race=request.race,
+                char_class=request.char_class, level=request.character_level,
+                score=score,
+            )
+            result = {
+                "type": "complete",
+                "scenario_id": saved.id,
+                "content": outline_text,
+                "summary": summary,
+                "system": request.game_system,
+                "score": score,
+                "scores_detail": {},
+                "revision_history": history,
+                "npcs": npc_summary,
+                "plot_flags": flag_summary,
+                "world_rules": world_state.world_rules,
+                "world_state_json": json.dumps({
+                    "world_outline": world_state.world_outline,
+                    "world_rules": world_state.world_rules,
+                    "npcs": [{"name": n.name, "race": n.race, "role": n.role, "location": n.location,
+                              "attitude": n.attitude, "alive": n.alive, "personality": n.personality,
+                              "motivation": n.motivation, "secret": n.secret,
+                              "relation_to_plot": n.relation_to_plot} for n in world_state.npcs],
+                    "plot_flags": [{"key": f.key, "status": f.status, "description": f.description} for f in world_state.plot_flags],
+                    "locations": [{"name": l.name, "description": l.description, "secrets": l.secrets} for l in world_state.locations],
+                }, ensure_ascii=False),
+            }
+            yield f"data: {json.dumps(result, ensure_ascii=False)}\n\n"
+            break
+        await task
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 # ═══════════════════════════════════════════════════════════════
 # 剧本管理 API
 # ═══════════════════════════════════════════════════════════════

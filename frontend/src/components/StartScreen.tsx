@@ -284,25 +284,48 @@ export default function StartScreen(){
 
   const genWorld=async()=>{
     setWorldGenBusy(true);setWorldGenErr('');setWorldGenStage(0);
-    const timer=setInterval(()=>setWorldGenStage(s=>s<4?s+1:s),3000);
     try{
-      const r=await fetch('/api/generate/world',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      const r=await fetch('/api/generate/world/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         description:worldDesc||'一个'+worldTone+'的冒险',character_name:charName||'冒险者',
         race:rc.name,char_class:cc.name,tone:worldTone,
         game_system:gameSystem,custom_rules:customRules||undefined,
         api_key:apiKey||undefined,model_name:modelName||undefined,base_url:baseUrl||undefined,
       })});
-      clearInterval(timer);setWorldGenStage(4);
       if(!r.ok)throw new Error('生成失败');
-      const d=await r.json();setWorldOutline(d.content);setWorldScore(d.score);
-      if(d.scenario_id){setScenarioId(d.scenario_id);setSelectedScenario(d.scenario_id);setShowScenarioList(false);}
-      if(d.world_state_json)setWorldStateJson(d.world_state_json);
-      if(d.summary)setScenarioSummary(d.summary);
-      if(d.system)setScenarioSystem(d.system as GameSystem);
-      if(d.source_chunks)setSourceChunks(d.source_chunks);
+      const reader=r.body?.getReader();
+      const decoder=new TextDecoder();
+      let buffer='';
+      if(reader){
+        while(true){
+          const {done,value}=await reader.read();
+          if(done)break;
+          buffer+=decoder.decode(value,{stream:true});
+          const events=buffer.split('\n\n');
+          buffer=events.pop()||'';
+          for(const evt of events){
+            const line=evt.split('\n').find(l=>l.startsWith('data: '));
+            if(!line)continue;
+            const data=JSON.parse(line.slice(6));
+            if(data.type==='progress'){
+              const idx=Math.min(WORLD_STAGES.length-1, Math.floor((data.percent/100)*WORLD_STAGES.length));
+              setWorldGenStage(idx);
+            }else if(data.type==='complete'){
+              setWorldOutline(data.content);setWorldScore(data.score);
+              if(data.scenario_id){setScenarioId(data.scenario_id);setSelectedScenario(data.scenario_id);setShowScenarioList(false);}
+              if(data.world_state_json)setWorldStateJson(data.world_state_json);
+              if(data.summary)setScenarioSummary(data.summary);
+              if(data.system)setScenarioSystem(data.system as GameSystem);
+              if(data.source_chunks)setSourceChunks(data.source_chunks);
+              setWorldGenStage(WORLD_STAGES.length-1);
+            }else if(data.type==='error'){
+              throw new Error(data.msg||'生成失败');
+            }
+          }
+        }
+      }
       fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
       loadKb();
-    }catch(e:unknown){setWorldGenErr(e instanceof Error?e.message:'生成失败');clearInterval(timer);}
+    }catch(e:unknown){setWorldGenErr(e instanceof Error?e.message:'生成失败');}
     finally{setWorldGenBusy(false);}
   };
 
