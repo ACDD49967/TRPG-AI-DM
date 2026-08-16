@@ -279,15 +279,7 @@ def detect_game_system(text: str, title: str = "") -> str:
     """
     haystack = f"{title}\n{text}".lower()
 
-    # COC / 克苏鲁
-    coc_keywords = [
-        "克苏鲁", "call of cthulhu", "coc", "调查员", "理智值", "san值",
-        "魔法值", "幸运值", "d100", "百分骰", "san check", "sanity",
-    ]
-    if any(k in haystack for k in coc_keywords):
-        return "coc"
-
-    # D&D 4e
+    # D&D 4e：强韧/反射/意志/威能/回复力是强特征，优先识别
     dnd4_keywords = [
         "dnd4", "d&d4", "d&d 4", "dd4", "4e", "四版", "第四版",
         "healing surge", "bloodied", "威能", "每日威能", "遭遇威能",
@@ -295,6 +287,14 @@ def detect_game_system(text: str, title: str = "") -> str:
     ]
     if any(k in haystack for k in dnd4_keywords):
         return "dnd4e"
+
+    # COC / 克苏鲁
+    coc_keywords = [
+        "克苏鲁", "call of cthulhu", "调查员", "理智值", "san值",
+        "魔法值", "幸运值", "d100", "百分骰", "san check", "sanity",
+    ]
+    if any(k in haystack for k in coc_keywords) or re.search(r"\bcoc\b", haystack):
+        return "coc"
 
     # D&D 5e
     dnd5_keywords = [
