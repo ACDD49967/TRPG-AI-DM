@@ -30,7 +30,7 @@ export default function NarrativeStream() {
     <div className="flex-1 overflow-y-auto p-5 space-y-4 min-h-0">
       {narrative.length === 0 && !currentTokenBuffer && (
         <div className="text-center text-gray-300 py-20">
-          <p className="text-3xl mb-2">🗡️</p>
+          <p className="text-3xl font-black text-gray-300 mb-2">TRPG</p>
           <p className="text-sm text-gray-400">等待游戏开始...</p>
         </div>
       )}
@@ -46,7 +46,7 @@ export default function NarrativeStream() {
           >
             {line.isDiceRoll && line.diceData && <DiceBadge data={line.diceData} />}
             {line.isGameEvent && line.gameEventData && (
-              <div><span className="font-bold text-amber-600">{line.gameEventData.type === 'combat' ? '⚔️ 战斗' : '📜 事件'}</span><p className="mt-1 text-sm text-amber-700">{line.gameEventData.description}</p></div>
+              <div><span className="font-bold text-amber-600">{line.gameEventData.type === 'combat' ? '战斗' : '事件'}</span><p className="mt-1 text-sm text-amber-700">{line.gameEventData.description}</p></div>
             )}
             {!line.isDiceRoll && !line.isGameEvent && <NarrativeBlock text={line.text} />}
           </motion.div>

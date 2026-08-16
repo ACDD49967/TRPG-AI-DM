@@ -47,7 +47,7 @@ export default function GameScreen() {
             {status.race && <span className="text-gray-400"> · {status.race} {status.char_class}</span>}
           </span>
           <span className="text-[10px] text-gray-700 font-medium">
-            ❤️ {status.hp}/{status.maxHp}
+            HP {status.hp}/{status.maxHp}
           </span>
           <span className="text-[10px] text-gray-400 font-mono hidden sm:inline">#{sessionId?.slice(0, 6)}</span>
           <button onClick={goToStart} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">← 大厅</button>

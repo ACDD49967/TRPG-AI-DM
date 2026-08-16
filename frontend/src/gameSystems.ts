@@ -31,14 +31,14 @@ export const DND4_CLASSES = [
 
 /** COC 7e 八项属性 */
 export const COC_ATTRIBUTES = [
-  { key: 'str', label: '力量', icon: '💪' },
-  { key: 'con', label: '体质', icon: '🩸' },
-  { key: 'dex', label: '敏捷', icon: '🏃' },
-  { key: 'int', label: '智力', icon: '🧠' },
-  { key: 'pow', label: '意志', icon: '🔥' },
-  { key: 'cha', label: '魅力', icon: '👑' },
-  { key: 'siz', label: '体型', icon: '📏' },
-  { key: 'edu', label: '教育', icon: '🎓' },
+  { key: 'str', label: '力量', icon: 'STR' },
+  { key: 'con', label: '体质', icon: 'CON' },
+  { key: 'dex', label: '敏捷', icon: 'DEX' },
+  { key: 'int', label: '智力', icon: 'INT' },
+  { key: 'pow', label: '意志', icon: 'POW' },
+  { key: 'cha', label: '魅力', icon: 'CHA' },
+  { key: 'siz', label: '体型', icon: 'SIZ' },
+  { key: 'edu', label: '教育', icon: 'EDU' },
 ];
 
 /** COC 7e 常见职业 */
@@ -60,12 +60,12 @@ export const COC_SKILLS = [
 
 /** 自定义/其他 的通用属性（可配合自定义规则文本） */
 export const CUSTOM_ATTRIBUTES = [
-  { key: 'str', label: '力量', icon: '💪' },
-  { key: 'dex', label: '敏捷', icon: '🏃' },
-  { key: 'con', label: '体质', icon: '🛡️' },
-  { key: 'int', label: '智力', icon: '📚' },
-  { key: 'wis', label: '感知', icon: '👁️' },
-  { key: 'cha', label: '魅力', icon: '👑' },
+  { key: 'str', label: '力量', icon: 'STR' },
+  { key: 'dex', label: '敏捷', icon: 'DEX' },
+  { key: 'con', label: '体质', icon: 'CON' },
+  { key: 'int', label: '智力', icon: 'INT' },
+  { key: 'wis', label: '感知', icon: 'WIS' },
+  { key: 'cha', label: '魅力', icon: 'CHA' },
 ];
 
 export const GAME_SYSTEM_OPTIONS: Array<{ id: GameSystem; label: string; short: string; description: string }> = (

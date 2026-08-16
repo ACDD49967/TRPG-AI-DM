@@ -31,8 +31,8 @@ export default function DiceRollOverlay() {
             (ok ? 'border-emerald-300 shadow-emerald-50' : 'border-gray-300')
           }`}>
           <div className="text-5xl mb-3">
-            {phase === 'rolling' ? <motion.span animate={{ rotate: [0, -30, 20, -10, 0], scale: [1, 1.2, 0.9, 1.1, 1] }} transition={{ duration: 0.8 }} className="inline-block">🎲</motion.span>
-            : <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 200 }} className="inline-block">{isCrit ? (ok ? '🌟' : '💥') : (ok ? '✓' : '✗')}</motion.span>}
+            {phase === 'rolling' ? <motion.span animate={{ rotate: [0, -30, 20, -10, 0], scale: [1, 1.2, 0.9, 1.1, 1] }} transition={{ duration: 0.8 }} className="inline-block font-black text-3xl">D20</motion.span>
+            : <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 200 }} className="inline-block">{isCrit ? (ok ? '大成功' : '大失败') : (ok ? '成功' : '失败')}</motion.span>}
           </div>
           <p className="text-base font-bold text-gray-800 mb-1">{latest.skill}检定</p>
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: phase === 'result' ? 1 : 0 }} className="text-2xl font-black mb-1">

@@ -10,11 +10,11 @@ export default function DecisionPanel() {
   const click = async (s: string) => {
     const store = useGameStore.getState();
     if (!sessionId || store.isProcessing) return;
-    store.appendNarrativeText(`🗣️ ${s}`); store.setProcessing(true); store.setDecisionSuggestions([]);
+    store.appendNarrativeText(`你说：${s}`); store.setProcessing(true); store.setDecisionSuggestions([]);
     try {
       const r = await fetch(`/api/game/${sessionId}/action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_input: s }) });
-      if (!r.ok) { const e = await r.json(); store.appendNarrativeText(`⚠ ${e.detail}`); store.setProcessing(false); }
-    } catch { store.appendNarrativeText('⚠ 网络错误'); store.setProcessing(false); }
+      if (!r.ok) { const e = await r.json(); store.appendNarrativeText(`错误：${e.detail}`); store.setProcessing(false); }
+    } catch { store.appendNarrativeText('错误：网络错误'); store.setProcessing(false); }
   };
 
   return (

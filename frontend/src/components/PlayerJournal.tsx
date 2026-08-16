@@ -97,9 +97,9 @@ export default function PlayerJournal(){
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {tab==='npcs'&&(<>
-          {npcs.enemies.length>0&&<div><p className="text-[9px] text-red-500 font-medium mb-1">⚔ 敌人</p>{npcs.enemies.map(n=><NpcCard key={n.name} npc={n} cat="enemy"/>)}</div>}
-          {npcs.allies.length>0&&<div><p className="text-[9px] text-emerald-500 font-medium mb-1 mt-2">🤝 盟友</p>{npcs.allies.map(n=><NpcCard key={n.name} npc={n} cat="ally"/>)}</div>}
-          {npcs.neutrals.length>0&&<div><p className="text-[9px] text-gray-400 font-medium mb-1 mt-2">👤 其他</p>{npcs.neutrals.map(n=><NpcCard key={n.name} npc={n} cat="neutral"/>)}</div>}
+          {npcs.enemies.length>0&&<div><p className="text-[9px] text-red-500 font-medium mb-1">敌人</p>{npcs.enemies.map(n=><NpcCard key={n.name} npc={n} cat="enemy"/>)}</div>}
+          {npcs.allies.length>0&&<div><p className="text-[9px] text-emerald-500 font-medium mb-1 mt-2">盟友</p>{npcs.allies.map(n=><NpcCard key={n.name} npc={n} cat="ally"/>)}</div>}
+          {npcs.neutrals.length>0&&<div><p className="text-[9px] text-gray-400 font-medium mb-1 mt-2">其他</p>{npcs.neutrals.map(n=><NpcCard key={n.name} npc={n} cat="neutral"/>)}</div>}
         </>)}
         {tab==='plot'&&<div className="space-y-1">{j.plot_flags.map(f=><div key={f.key} className="bg-white rounded-lg p-1.5 border border-gray-100 text-[10px]"><div className="flex items-center gap-1"><span className={f.status==='已完成'?'text-emerald-500':f.status==='进行中'?'text-blue-500':'text-gray-400'}>●</span><span className="text-gray-700 font-medium">{f.key}</span></div>{f.description&&<p className="text-gray-400 mt-0.5 ml-3">{f.description}</p>}</div>)}</div>}
         {tab==='places'&&<div className="space-y-1">{j.locations.map(l=><div key={l.name} className="bg-white rounded-lg p-1.5 border border-gray-100 text-[10px]"><p className="text-gray-700 font-medium">{l.name}</p>{l.description&&<p className="text-gray-400 mt-0.5">{l.description}</p>}</div>)}</div>}

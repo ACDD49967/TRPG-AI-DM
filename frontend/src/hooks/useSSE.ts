@@ -124,7 +124,7 @@ export function useSSE(sessionId: string | null) {
 
       error: (data) => {
         console.error('[SSE] 错误:', data.msg);
-        store.getState().appendNarrativeText(`⚠️ ${data.msg}`);
+        store.getState().appendNarrativeText(`错误：${data.msg}`);
       },
 
       journal_update: (data) => {

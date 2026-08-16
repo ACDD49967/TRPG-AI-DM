@@ -8,8 +8,8 @@ const ATTR_LABELS: Record<string, string> = {
   pow: '意志', siz: '体型', edu: '教育',
 };
 const ATTR_ICONS: Record<string, string> = {
-  str: '💪', dex: '🏃', con: '🛡️', int: '📚', wis: '👁️', cha: '👑',
-  pow: '🔥', siz: '📏', edu: '🎓',
+  str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA',
+  pow: 'POW', siz: 'SIZ', edu: 'EDU',
 };
 
 export default function StatusPanel() {
@@ -120,7 +120,7 @@ export default function StatusPanel() {
       {/* XP + 金币 */}
       <div className="flex justify-between text-[9px] px-0.5">
         <span className="text-gray-500">经验 <span className="text-gray-700 font-mono">{status.xp}</span></span>
-        <span className="text-amber-600 font-medium">🪙 {status.gold}</span>
+        <span className="text-amber-600 font-medium">金币 {status.gold}</span>
       </div>
 
       {/* 属性 */}
@@ -147,7 +147,7 @@ export default function StatusPanel() {
 
       {/* 数值说明 */}
       <details className="pt-1.5 border-t border-gray-200 text-[8px]">
-        <summary className="text-gray-400 cursor-pointer select-none">📖 数值说明</summary>
+        <summary className="text-gray-400 cursor-pointer select-none">数值说明</summary>
         {system === 'coc' ? (
           <ul className="mt-1 text-gray-500 space-y-0.5">
             <li>HP = (体质+体型)/2</li>
@@ -184,7 +184,7 @@ export default function StatusPanel() {
 
         {weapons.length > 0 && (
           <div className="mb-1">
-            <p className="text-[8px] text-gray-400 font-medium mb-0.5">⚔ 武器</p>
+            <p className="text-[8px] text-gray-400 font-medium mb-0.5">武器</p>
             {weapons.map((item, i) => (
               <p key={i} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate" title={item}>{item}</p>
             ))}
@@ -193,7 +193,7 @@ export default function StatusPanel() {
 
         {armor.length > 0 && (
           <div className="mb-1">
-            <p className="text-[8px] text-gray-400 font-medium mb-0.5">🛡 防具</p>
+            <p className="text-[8px] text-gray-400 font-medium mb-0.5">防具</p>
             {armor.map((item, i) => (
               <p key={i} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate" title={item}>{item}</p>
             ))}
@@ -202,7 +202,7 @@ export default function StatusPanel() {
 
         {potions.length > 0 && (
           <div className="mb-1">
-            <p className="text-[8px] text-gray-400 font-medium mb-0.5">🧪 药水</p>
+            <p className="text-[8px] text-gray-400 font-medium mb-0.5">药水</p>
             {potions.map((item, i) => (
               <p key={i} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate" title={item}>{item}</p>
             ))}
@@ -227,7 +227,7 @@ export default function StatusPanel() {
           animate={{ opacity: 1, scale: 1 }}
           className="bg-red-50 border border-red-200 rounded-lg p-1.5"
         >
-          <p className="text-[9px] text-red-600 font-bold">⚔ 战斗中</p>
+          <p className="text-[9px] text-red-600 font-bold">战斗中</p>
           <p className="text-[9px] text-red-700 truncate">{combat.enemyName}</p>
           <p className="text-[8px] text-gray-500">敌方HP: {combat.enemyHp}</p>
         </motion.div>

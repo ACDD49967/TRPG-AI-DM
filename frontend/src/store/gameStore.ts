@@ -259,7 +259,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         ...s.narrative,
         {
           id,
-          text: `🎲 ${data.skill}检定: d20=${data.roll}${data.modifier ? `+${data.modifier}` : ''} vs DC${data.dc} → ${data.result}`,
+          text: `检定：${data.skill} d20=${data.roll}${data.modifier ? `+${data.modifier}` : ''} vs DC${data.dc} → ${data.result}`,
           isDiceRoll: true,
           diceData: data,
         },
@@ -281,7 +281,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         ...s.narrative,
         {
           id,
-          text: `⚔️ ${data.description}`,
+          text: `事件：${data.description}`,
           isGameEvent: true,
           gameEventData: data,
         },

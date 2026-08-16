@@ -24,12 +24,12 @@ const TOTAL=27,MIN=8,MAX=20;
 const LS_KEY='dnd_config';
 
 const ATTRS=[
-  {k:'str',n:'力量',e:'STR',icon:'💪',s:'运动·近战'},
-  {k:'dex',n:'敏捷',e:'DEX',icon:'🏃',s:'特技·巧手·潜行·远程'},
-  {k:'con',n:'体质',e:'CON',icon:'🛡️',s:'HP·抗毒·专注'},
-  {k:'int',n:'智力',e:'INT',icon:'📚',s:'奥秘·历史·调查·自然·宗教'},
-  {k:'wis',n:'感知',e:'WIS',icon:'👁️',s:'洞察·医药·察觉·生存'},
-  {k:'cha',n:'魅力',e:'CHA',icon:'👑',s:'欺瞒·威吓·表演·游说'},
+  {k:'str',n:'力量',e:'STR',icon:'STR',s:'运动·近战'},
+  {k:'dex',n:'敏捷',e:'DEX',icon:'DEX',s:'特技·巧手·潜行·远程'},
+  {k:'con',n:'体质',e:'CON',icon:'CON',s:'HP·抗毒·专注'},
+  {k:'int',n:'智力',e:'INT',icon:'INT',s:'奥秘·历史·调查·自然·宗教'},
+  {k:'wis',n:'感知',e:'WIS',icon:'WIS',s:'洞察·医药·察觉·生存'},
+  {k:'cha',n:'魅力',e:'CHA',icon:'CHA',s:'欺瞒·威吓·表演·游说'},
 ];
 
 const RACES:Record<string,{name:string;traits:string[]}>={
@@ -388,7 +388,7 @@ export default function StartScreen(){
         <div className="grid grid-cols-2 gap-2 mb-4">
           <button onClick={()=>setPlayMode('lite')} className={`p-3 rounded-xl border text-left transition-all ${playMode==='lite'?'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-200':'border-gray-200 bg-white hover:border-gray-300'}`}>
             <div className="flex items-center gap-2">
-              <span className="text-xl">⚡</span>
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 rounded px-1.5 py-0.5">精简</span>
               <div>
                 <div className="text-sm font-bold text-gray-800">精简模式</div>
                 <div className="text-[10px] text-gray-500">低 token 消耗 · 快节奏 · 性价比玩法</div>
@@ -397,7 +397,7 @@ export default function StartScreen(){
           </button>
           <button onClick={()=>setPlayMode('deep')} className={`p-3 rounded-xl border text-left transition-all ${playMode==='deep'?'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200':'border-gray-200 bg-white hover:border-gray-300'}`}>
             <div className="flex items-center gap-2">
-              <span className="text-xl">🐉</span>
+              <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 rounded px-1.5 py-0.5">深度</span>
               <div>
                 <div className="text-sm font-bold text-gray-800">深度模式</div>
                 <div className="text-[10px] text-gray-500">高 token 消耗 · 高深度扮演 · 沉浸体验</div>
@@ -418,7 +418,7 @@ export default function StartScreen(){
           {step===2&&(
             <div className="space-y-5">
               <p className="text-[10px] text-gray-400 bg-gray-50 rounded-lg p-2 border border-gray-200">
-                📜 剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]} ｜ 🎲 角色系统：{GAME_SYSTEM_LABELS[gameSystem]}
+                剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]} ｜ 角色系统：{GAME_SYSTEM_LABELS[gameSystem]}
                 <span className="text-emerald-600">（角色不绑定剧本，可自由选择）</span>
               </p>
               {/* API配置 */}
@@ -562,7 +562,7 @@ export default function StartScreen(){
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-xs font-medium text-gray-600">属性分配</label>
                     <div className="flex gap-1">
-                      <button onClick={()=>{setAttrs(rollDndAttributes()); setAttrMode('manual');}} className="text-[10px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-gray-300">🎲 随机</button>
+                      <button onClick={()=>{setAttrs(rollDndAttributes()); setAttrMode('manual');}} className="text-[10px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-gray-300">随机</button>
                       <button onClick={()=>setAttrMode('manual')} className={`text-[10px] px-2.5 py-1 rounded-lg border ${attrMode==='manual'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-400'}`}>手动</button>
                       <button onClick={()=>setAttrMode('ai')} className={`text-[10px] px-2.5 py-1 rounded-lg border ${attrMode==='ai'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-400'}`}>自动</button>
                     </div>
@@ -604,7 +604,7 @@ export default function StartScreen(){
                   {aiErr&&<p className="text-red-500 text-xs">{aiErr}</p>}
 
                   <button onClick={()=>callAI(attrMode==='manual')} disabled={aiBusy} className="mt-2 w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
-                    {aiBusy?'⏳ 生成中...':attrMode==='manual'?'根据属性生成背景故事':'自动生成属性与背景'}
+                    {aiBusy?'生成中...':attrMode==='manual'?'根据属性生成背景故事':'自动生成属性与背景'}
                   </button>
 
                   {aiGen&&(
@@ -627,7 +627,7 @@ export default function StartScreen(){
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-xs font-medium text-gray-600">调查员属性（1-99）</label>
-                    <button onClick={()=>{setCocAttrs(rollCocAttributes()); setCocLuck(rollCocLuck());}} className="text-[10px] px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100">🎲 随机生成</button>
+                    <button onClick={()=>{setCocAttrs(rollCocAttributes()); setCocLuck(rollCocLuck());}} className="text-[10px] px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100">随机生成</button>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {COC_ATTRIBUTES.map(a=>(
@@ -639,13 +639,13 @@ export default function StartScreen(){
                     ))}
                   </div>
                   <div className="mt-3 bg-gray-50 rounded-lg p-3 border border-gray-200 grid grid-cols-2 gap-2 text-xs">
-                    <div>❤️ HP: <b>{(Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/2))}</b></div>
-                    <div>🔮 MP: <b>{cocAttrs.pow||50}</b></div>
-                    <div>🧠 SAN: <b>{(cocAttrs.pow||50)*5}</b></div>
-                    <div>🍀 幸运: <b>{cocLuck}</b></div>
+                    <div>HP: <b>{(Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/2))}</b></div>
+                    <div>MP: <b>{cocAttrs.pow||50}</b></div>
+                    <div>SAN: <b>{(cocAttrs.pow||50)*5}</b></div>
+                    <div>幸运: <b>{cocLuck}</b></div>
                   </div>
                   <button onClick={()=>callAI(true)} disabled={aiBusy} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
-                    {aiBusy?'⏳ 生成中...':'✨ 基于属性+剧本总结生成沉浸式背景'}
+                    {aiBusy?'生成中...':'基于属性+剧本总结生成沉浸式背景'}
                   </button>
                   {aiErr&&<p className="text-red-500 text-xs">{aiErr}</p>}
                   {aiGen?.backstory&&(
@@ -670,7 +670,7 @@ export default function StartScreen(){
                     ))}
                   </div>
                   <button onClick={()=>callAI(true)} disabled={aiBusy} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
-                    {aiBusy?'⏳ 生成中...':'✨ 基于属性+剧本总结生成沉浸式背景'}
+                    {aiBusy?'生成中...':'基于属性+剧本总结生成沉浸式背景'}
                   </button>
                   {aiErr&&<p className="text-red-500 text-xs">{aiErr}</p>}
                   {aiGen?.backstory&&(
@@ -754,7 +754,7 @@ export default function StartScreen(){
 
               {/* 规则系统选择 */}
               <div className="bg-indigo-50/40 rounded-lg p-3 border border-indigo-100 space-y-2">
-                <label className="block text-xs font-medium text-gray-700 mb-1">🎲 角色规则系统（独立于剧本系统）</label>
+                <label className="block text-xs font-medium text-gray-700 mb-1">角色规则系统（独立于剧本系统）</label>
                 <div className="grid grid-cols-2 gap-1.5">
                   {GAME_SYSTEM_OPTIONS.map(opt=>(
                     <button key={opt.id} onClick={()=>setGameSystem(opt.id)} className={`p-2 rounded-lg border text-left text-xs transition-all ${
@@ -777,7 +777,7 @@ export default function StartScreen(){
               {/* 文件导入：pdf / txt / docx / doc / md */}
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">📄 上传剧本文件（pdf / txt / docx / doc / md）</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">上传剧本文件（pdf / txt / docx / doc / md）</label>
                   <input
                     type="file"
                     accept=".txt,.md,.markdown,.pdf,.doc,.docx"
@@ -818,7 +818,7 @@ export default function StartScreen(){
 
               {worldGenBusy&&(
                 <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 space-y-2">
-                  <div className="flex items-center gap-2 text-sm font-medium text-gray-700"><span className="animate-pulse">⚒️</span>铸造世界中</div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-gray-700"><span className="animate-pulse">●</span>铸造世界中</div>
                   <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-1000" style={{width:`${((worldGenStage+1)/WORLD_STAGES.length)*100}%`}}/></div>
                   <div className="space-y-0.5">
                     {WORLD_STAGES.map((st,i)=>(<div key={st.key} className={`flex items-center gap-2 text-xs ${i<worldGenStage?'text-emerald-600':i===worldGenStage?'text-indigo-600 font-medium':'text-gray-400'}`}><span>{i<worldGenStage?'✓':i===worldGenStage?'◉':'○'}</span><span>{st.label}</span>{i===worldGenStage&&<span className="text-gray-400 font-normal">— {st.desc}</span>}</div>))}
@@ -843,8 +843,8 @@ export default function StartScreen(){
                     </div>
                   )}
                   <div className="flex flex-wrap gap-1">
-                    <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">📜 剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]}</span>
-                    <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200">🎲 角色系统：{GAME_SYSTEM_LABELS[gameSystem]}</span>
+                    <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]}</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200">角色系统：{GAME_SYSTEM_LABELS[gameSystem]}</span>
                     {gameSystem==='custom'&&customRules&&<span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200">自定义规则已填写</span>}
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 max-h-64 overflow-y-auto"><pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">{worldOutline.slice(0,2500)}{worldOutline.length>2500?'...':''}</pre></div>
@@ -879,18 +879,18 @@ export default function StartScreen(){
                 <div className="flex gap-3 mt-1 text-[10px] text-gray-500">
                   {gameSystem==='coc'?(
                     <>
-                      <span>❤️ HP:{Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/2)}</span>
-                      <span>🔮 MP:{cocAttrs.pow||50}</span>
-                      <span>🧠 SAN:{(cocAttrs.pow||50)*5}</span>
+                      <span>HP:{Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/2)}</span>
+                      <span>MP:{cocAttrs.pow||50}</span>
+                      <span>SAN:{(cocAttrs.pow||50)*5}</span>
                     </>
                   ):(
                     <>
-                      <span>❤️ HP:{gameSystem==='dnd4e'?d4Derived.hp:gameSystem==='dnd5e'?d5Derived.hp:30}</span>
-                      <span>🛡️ AC:12</span>
-                      {gameSystem==='dnd4e'&&<span>💗 回复力:{d4Derived.healingSurges}</span>}
+                      <span>HP:{gameSystem==='dnd4e'?d4Derived.hp:gameSystem==='dnd5e'?d5Derived.hp:30}</span>
+                      <span>AC:12</span>
+                      {gameSystem==='dnd4e'&&<span>回复力:{d4Derived.healingSurges}</span>}
                     </>
                   )}
-                  <span>{playMode==='lite'?'⚡精简模式':'🐉深度模式'}</span>
+                  <span>{playMode==='lite'?'精简模式':'深度模式'}</span>
                 </div>
                 {gameSystem==='coc'&&cocSkillPicks.length>0&&<p className="text-[10px] text-gray-500 mt-1">技能: {cocSkillPicks.join('、')}</p>}
                 {gameSystem!=='coc'&&skillPicks.length>0&&<p className="text-[10px] text-gray-500 mt-1">技能: {skillPicks.join('、')}</p>}
@@ -928,7 +928,7 @@ export default function StartScreen(){
 
               <div className="bg-indigo-50/40 rounded-lg p-3 border border-indigo-100">
                 <p className="text-[10px] text-indigo-700 leading-relaxed">
-                  📚 知识库用于 RAG 检索：游戏中的规则细节、剧本设定、玩家备注会按需被检索并注入 AI 提示词，而不是全部塞进上下文。
+                  知识库用于 RAG 检索：游戏中的规则细节、剧本设定、玩家备注会按需被检索并注入 AI 提示词，而不是全部塞进上下文。
                   你可以上传苹果园/克苏鲁公社的 PDF/DOCX，或直接添加文字备注。
                 </p>
               </div>
@@ -936,7 +936,7 @@ export default function StartScreen(){
               <div className="grid md:grid-cols-2 gap-4">
                 {/* 添加文字备注 */}
                 <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
-                  <p className="text-xs font-medium text-gray-700">✍️ 添加文字备注</p>
+                  <p className="text-xs font-medium text-gray-700">添加文字备注</p>
                   <input value={kbTitle} onChange={e=>setKbTitle(e.target.value)} placeholder="标题（可选）" className="input-field text-xs" />
                   <select value={kbSystem} onChange={e=>setKbSystem(e.target.value as GameSystem)} className="input-field text-xs">
                     {GAME_SYSTEM_OPTIONS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
@@ -948,7 +948,7 @@ export default function StartScreen(){
 
                 {/* 上传文件 */}
                 <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
-                  <p className="text-xs font-medium text-gray-700">📄 上传 PDF/DOCX/TXT/MD</p>
+                  <p className="text-xs font-medium text-gray-700">上传 PDF/DOCX/TXT/MD</p>
                   <input
                     type="file"
                     accept=".txt,.md,.markdown,.pdf,.doc,.docx"
