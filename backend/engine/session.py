@@ -47,6 +47,9 @@ class GameSessionState:
     # 持久化世界状态
     world_state: object | None = field(default=None, repr=False)
 
+    # 简单问答缓存：相同信息类问题直接返回，避免重复消耗 token
+    response_cache: dict[str, str] = field(default_factory=dict, repr=False)
+
     def check_rate_limit(self) -> bool:
         """检查距上次操作是否已超过速率限制。"""
         now = time.time()

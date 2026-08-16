@@ -558,6 +558,32 @@ COC_OPENING_PROMPT = """你是克苏鲁的呼唤守密人（Keeper）。为以�
 # 辅助
 # ═══════════════════════════════════════════════════════════════
 
+def _extract_outline(text: str, max_chars: int = 1200) -> str:
+    """将完整剧本/世界大纲压缩为 Markdown 大纲，保留章节结构完整性。"""
+    lines = text.split("\n")
+    out: list[str] = []
+    current_len = 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        is_heading = stripped.startswith("#")
+        is_bullet = stripped.startswith("-") or stripped.startswith("*") or re.match(r"^\d+[.、)]", stripped)
+        # 标题/要点/关键行优先保留；普通长段落只取首句
+        if is_heading or is_bullet:
+            line_out = stripped
+        else:
+            first_sentence = re.split(r"(?<=[。！？!?；;])", stripped)[0]
+            line_out = first_sentence[:120]
+        if current_len + len(line_out) + 1 > max_chars:
+            if is_heading:
+                out.append(line_out[: max_chars - current_len])
+            break
+        out.append(line_out)
+        current_len += len(line_out) + 1
+    return "\n".join(out)
+
+
 def _roll_damage_simple(spec: str) -> int:
     """解析 '2d6+3' 并掷出伤害。"""
     try:
@@ -661,7 +687,8 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     if world_state_text:
         wc = f"{summary_block}\n## 世界状态\n{world_state_text[:world_state_limit]}" if summary_block else f"## 世界状态\n{world_state_text[:world_state_limit]}"
     elif outline:
-        wc = f"{summary_block}\n## 冒险大纲\n{outline[:outline_limit]}" if summary_block else f"## 冒险大纲\n{outline[:outline_limit]}"
+        outline_block = _extract_outline(outline, max_chars=1200) if lite else outline[:outline_limit]
+        wc = f"{summary_block}\n## 冒险大纲\n{outline_block}" if summary_block else f"## 冒险大纲\n{outline_block}"
     elif world:
         wc = f"{summary_block}\n## 剧本\n{world[:outline_limit]}" if summary_block else f"## 剧本\n{world[:outline_limit]}"
     else:
@@ -1184,6 +1211,18 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
     if getattr(state, 'world_state', None) is None:
         state.world_state = WorldState(session_id=state.session_id)
     lite = _play_mode(state) == "lite"
+    state.memory.max_active_turns = 5 if lite else 10
+    state.memory.summary_trigger = state.memory.max_active_turns + 1
+
+    # 重复信息问题直接返回缓存，避免重复调用 LLM
+    cache_key = re.sub(r"\s+", " ", player_input.strip().lower())
+    cached = state.response_cache.get(cache_key)
+    if cached:
+        await push_event(state, "narrative_flush", {"full_text": cached})
+        await push_event(state, "end_of_turn", {})
+        state.memory.add_turn(player_input=player_input, dm_response=cached)
+        return cached
+
     client = _client(state); model = _model(state)
     retrieved = get_knowledge_base().retrieve(
         player_input,
@@ -1193,7 +1232,7 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
     sp = build_system_prompt(state, retrieved_chunks=retrieved)
 
     messages = [{"role":"system","content":sp}]
-    active_turns = state.memory.turns[-3 if lite else -state.memory.max_active_turns:]
+    active_turns = state.memory.turns[-5 if lite else -state.memory.max_active_turns:]
     for t in active_turns:
         messages.append({"role":"user","content":t.player_input})
         if t.dm_response: messages.append({"role":"assistant","content":t.dm_response})
@@ -1259,6 +1298,11 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
 
         await push_event(state, "end_of_turn", {})
         state.memory.add_turn(player_input=player_input, dm_response=full)
+        # 写入问答缓存（限制大小，避免无限增长）
+        state.response_cache[cache_key] = full
+        if len(state.response_cache) > 50:
+            oldest = next(iter(state.response_cache))
+            state.response_cache.pop(oldest, None)
         return full
     except Exception as e:
         await push_event(state, "error", {"code":"LLM_ERROR","msg":str(e)})
@@ -1276,7 +1320,8 @@ async def generate_opening_scene(state: GameSessionState) -> str:
     summary_limit = 300 if lite else 600
     outline_limit = 800 if lite else 1600
     if scenario_summary:
-        wc = f"## 剧本总结\n{scenario_summary[:summary_limit]}\n\n## 冒险大纲\n{wc[:outline_limit]}" if wc else f"## 剧本总结\n{scenario_summary[:summary_limit]}"
+        outline_part = _extract_outline(wc, max_chars=1200) if lite else wc[:outline_limit]
+        wc = f"## 剧本总结\n{scenario_summary[:summary_limit]}\n\n## 冒险大纲\n{outline_part}" if wc else f"## 剧本总结\n{scenario_summary[:summary_limit]}"
     opening_template = COC_OPENING_PROMPT if _game_system(state) == "coc" else OPENING_PROMPT
     prompt = opening_template.format(character_info=ci, backstory=(bs or "暂无")[:200 if lite else 500], world_context=wc[:2000] if wc else "暂无")
     prompt += _mode_instructions(state)

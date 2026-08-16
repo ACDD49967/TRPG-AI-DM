@@ -829,6 +829,10 @@ async def create_new_game(request: NewGameRequest):
         if request.base_url:
             s.base_url = request.base_url
 
+        # 长短记忆：精简模式保留 5 轮，深度模式保留 10 轮，超出部分触发摘要压缩
+        s.memory.max_active_turns = 5 if request.play_mode == "lite" else 10
+        s.memory.summary_trigger = s.memory.max_active_turns + 1
+
         # 初始化持久化世界状态（P0-1修复：无条件创建，不再依赖world_state_json）
         import json as _json
         if request.world_state_json:
