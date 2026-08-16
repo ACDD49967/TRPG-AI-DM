@@ -15,6 +15,7 @@ from backend.engine.rules import (
 from backend.engine.tools import DM_TOOLS
 from backend.engine.world_state import WorldState, NpcEntry, PlotFlag
 from backend.engine.game_systems import build_system_rule_block, build_stat_glossary, get_system
+from backend.knowledge_base import get_knowledge_base
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -642,7 +643,7 @@ def build_character_info(state: GameSessionState) -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(state: GameSessionState) -> str:
+def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None = None) -> str:
     char_info = build_character_info(state)
     mem = state.memory.build_context()
     ws = getattr(state, 'world_state', None)
@@ -694,6 +695,10 @@ def build_system_prompt(state: GameSessionState) -> str:
         sp += f"\n\n## 世界上下文\n{wc}"
     if wsc:
         sp += f"\n\n## 世界状态精简\n{wsc}"
+    if retrieved_chunks:
+        sp += "\n\n## 检索到的设定/规则细节（按需使用，优先于你的记忆）\n"
+        for item in retrieved_chunks[:5]:
+            sp += f"\n- [{item.get('title','')}]({item.get('source','')}) {item.get('text','')[:600]}"
     return sp
 
 
@@ -1170,7 +1175,12 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
     if getattr(state, 'world_state', None) is None:
         state.world_state = WorldState(session_id=state.session_id)
     client = _client(state); model = _model(state)
-    sp = build_system_prompt(state)
+    retrieved = get_knowledge_base().retrieve(
+        player_input,
+        system=_game_system(state),
+        top_k=5,
+    )
+    sp = build_system_prompt(state, retrieved_chunks=retrieved)
 
     messages = [{"role":"system","content":sp}]
     for t in state.memory.turns[-state.memory.max_active_turns:]:

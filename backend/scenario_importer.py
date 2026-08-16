@@ -430,6 +430,24 @@ async def generate_scenario_from_text(
         score=score,
     )
 
+    # 将剧本细节写入本地知识库，供后续 RAG 检索
+    try:
+        from backend.knowledge_base import get_knowledge_base
+        kb = get_knowledge_base()
+        scenario_source = f"scenario:{saved.id}"
+        for d in kb.list_documents():
+            if d.get("source") == scenario_source:
+                kb.remove_document(d["id"])
+        kb.add_document(
+            title=f"剧本：{saved.meta.title}",
+            content=source_text,
+            source=scenario_source,
+            system=system,
+            tags=["剧本", system, splitter],
+        )
+    except Exception as e:
+        print(f"[ScenarioImporter] 知识库写入失败（不影响剧本生成）: {e}")
+
     npc_summary = [{"name": n.name, "role": n.role, "attitude": n.attitude}
                    for n in world_state.npcs]
     flag_summary = [{"key": f.key, "status": f.status} for f in world_state.plot_flags]

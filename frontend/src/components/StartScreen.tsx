@@ -153,6 +153,17 @@ export default function StartScreen(){
   const [importBusy,setImportBusy]=useState(false);
   const [importErr,setImportErr]=useState('');
   const [importFileName,setImportFileName]=useState('');
+
+  // 知识库
+  const [kbDocs,setKbDocs]=useState<Array<{id:string;title:string;source:string;system:string;tags:string[];chunk_count:number;created_at:string}>>([]);
+  const [kbTitle,setKbTitle]=useState('');
+  const [kbContent,setKbContent]=useState('');
+  const [kbSystem,setKbSystem]=useState<GameSystem>('custom');
+  const [kbTags,setKbTags]=useState('');
+  const [kbBusy,setKbBusy]=useState(false);
+  const [kbErr,setKbErr]=useState('');
+  const [kbUploadFile,setKbUploadFile]=useState<File|null>(null);
+
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState('');
   const setSession=useGameStore(s=>s.setSession);
@@ -160,6 +171,7 @@ export default function StartScreen(){
   // 自动加载已保存剧本
   useEffect(()=>{
     fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
+    fetch('/api/knowledge').then(r=>r.json()).then(d=>setKbDocs(d.documents||[])).catch(()=>{});
   },[]);
 
   // 自动保持配置（每次关键字段变化）
@@ -276,6 +288,63 @@ export default function StartScreen(){
     finally{setImportBusy(false);}
   };
 
+  const loadKb=async()=>{
+    try{
+      const r=await fetch('/api/knowledge');
+      if(r.ok)setKbDocs((await r.json()).documents||[]);
+    }catch{}
+  };
+
+  const addKbNote=async()=>{
+    setKbBusy(true);setKbErr('');
+    try{
+      const r=await fetch('/api/knowledge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        title:kbTitle||'未命名知识',
+        content:kbContent,
+        system:kbSystem,
+        source:'player-note',
+        tags:kbTags.split(',').map(s=>s.trim()).filter(Boolean),
+      })});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'添加失败');}
+      setKbTitle('');setKbContent('');setKbTags('');
+      await loadKb();
+    }catch(e:unknown){setKbErr(e instanceof Error?e.message:'添加失败');}
+    finally{setKbBusy(false);}
+  };
+
+  const uploadKb=async(file:File)=>{
+    setKbBusy(true);setKbErr('');
+    try{
+      const fd=new FormData();
+      fd.append('file',file);
+      fd.append('title',kbTitle||file.name);
+      fd.append('system',kbSystem);
+      fd.append('source','upload');
+      fd.append('tags',kbTags);
+      const r=await fetch('/api/knowledge/upload',{method:'POST',body:fd});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'上传失败');}
+      setKbTitle('');setKbTags('');setKbUploadFile(null);
+      await loadKb();
+    }catch(e:unknown){setKbErr(e instanceof Error?e.message:'上传失败');}
+    finally{setKbBusy(false);}
+  };
+
+  const deleteKb=async(id:string)=>{
+    try{
+      await fetch(`/api/knowledge/${id}`,{method:'DELETE'});
+      await loadKb();
+    }catch{}
+  };
+
+  const seedKb=async()=>{
+    setKbBusy(true);
+    try{
+      await fetch('/api/knowledge/seed',{method:'POST'});
+      await loadKb();
+    }catch{}
+    finally{setKbBusy(false);}
+  };
+
   const start=async()=>{
     if(!charName.trim()){setError('请输入角色名称');return;}
     setLoading(true);setError('');
@@ -338,7 +407,7 @@ export default function StartScreen(){
         </div>
 
         <div className="flex gap-1 mb-5">
-          {['剧本','角色创建','冒险准备'].map((s,i)=>(
+          {['剧本','角色创建','冒险准备','知识库'].map((s,i)=>(
             <button key={i} onClick={()=>setStep(i+1)} className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
               step===i+1?'bg-indigo-600 text-white shadow-sm':step>i+1?'bg-indigo-50 text-indigo-600':'bg-gray-100 text-gray-400'}`}>{s}</button>
           ))}
@@ -845,6 +914,72 @@ export default function StartScreen(){
               <div className="flex gap-2">
                 <button onClick={()=>setStep(2)} className="flex-1 btn-secondary">← 返回</button>
                 <button onClick={start} disabled={loading} className="flex-[2] btn-primary text-base">{loading?'准备冒险中...':'开始冒险'}</button>
+              </div>
+            </div>
+          )}
+
+          {/* ═══════ 步骤4: 知识库 ═══════ */}
+          {step===4&&(
+            <div className="space-y-5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-bold text-gray-900">知识库 / RAG 设定库</h2>
+                <button onClick={seedKb} disabled={kbBusy} className="text-[10px] px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100">🔄 重置内置规则备注</button>
+              </div>
+
+              <div className="bg-indigo-50/40 rounded-lg p-3 border border-indigo-100">
+                <p className="text-[10px] text-indigo-700 leading-relaxed">
+                  📚 知识库用于 RAG 检索：游戏中的规则细节、剧本设定、玩家备注会按需被检索并注入 AI 提示词，而不是全部塞进上下文。
+                  你可以上传苹果园/克苏鲁公社的 PDF/DOCX，或直接添加文字备注。
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                {/* 添加文字备注 */}
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
+                  <p className="text-xs font-medium text-gray-700">✍️ 添加文字备注</p>
+                  <input value={kbTitle} onChange={e=>setKbTitle(e.target.value)} placeholder="标题（可选）" className="input-field text-xs" />
+                  <select value={kbSystem} onChange={e=>setKbSystem(e.target.value as GameSystem)} className="input-field text-xs">
+                    {GAME_SYSTEM_OPTIONS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>
+                  <textarea value={kbContent} onChange={e=>setKbContent(e.target.value)} placeholder="输入规则、设定、备注..." rows={4} className="input-field resize-none text-xs" />
+                  <input value={kbTags} onChange={e=>setKbTags(e.target.value)} placeholder="标签，用逗号分隔" className="input-field text-xs" />
+                  <button onClick={addKbNote} disabled={kbBusy || !kbContent.trim()} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium disabled:opacity-50">保存到知识库</button>
+                </div>
+
+                {/* 上传文件 */}
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
+                  <p className="text-xs font-medium text-gray-700">📄 上传 PDF/DOCX/TXT/MD</p>
+                  <input
+                    type="file"
+                    accept=".txt,.md,.markdown,.pdf,.doc,.docx"
+                    onChange={e=>setKbUploadFile(e.target.files?.[0]||null)}
+                    className="block w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:text-xs file:font-medium"
+                  />
+                  <input value={kbTitle} onChange={e=>setKbTitle(e.target.value)} placeholder="标题（默认文件名）" className="input-field text-xs" />
+                  <select value={kbSystem} onChange={e=>setKbSystem(e.target.value as GameSystem)} className="input-field text-xs">
+                    {GAME_SYSTEM_OPTIONS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>
+                  <input value={kbTags} onChange={e=>setKbTags(e.target.value)} placeholder="标签，用逗号分隔" className="input-field text-xs" />
+                  <button onClick={()=>kbUploadFile&&uploadKb(kbUploadFile)} disabled={kbBusy || !kbUploadFile} className="w-full py-2 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium disabled:opacity-50">
+                    {kbBusy?'处理中...':'上传到知识库'}
+                  </button>
+                </div>
+              </div>
+
+              {kbErr&&<p className="text-red-500 text-xs">{kbErr}</p>}
+
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-gray-700">已有知识条目（{kbDocs.length}）</p>
+                {kbDocs.length===0&&<p className="text-xs text-gray-400">暂无条目，点击上方“重置内置规则备注”或添加内容。</p>}
+                {kbDocs.map(d=>(
+                  <div key={d.id} className="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-200">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-gray-800 truncate">{d.title}</p>
+                      <p className="text-[10px] text-gray-500">{GAME_SYSTEM_LABELS[(d.system as GameSystem)||'custom']} · {d.source} · {d.chunk_count} 块 · {d.tags.join(' / ')||'无标签'}</p>
+                    </div>
+                    <button onClick={()=>deleteKb(d.id)} className="text-[10px] text-red-500 hover:text-red-700 px-2 py-1">删除</button>
+                  </div>
+                ))}
               </div>
             </div>
           )}

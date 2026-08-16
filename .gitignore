@@ -49,3 +49,6 @@ npm-debug.log*
 # 评估产生的原始 JSON 与样本文件（保留 Markdown 报告即可）
 eval_results/*.json
 eval_results/samples/
+
+# 用户知识库数据（保留目录）
+knowledge_base/*.json

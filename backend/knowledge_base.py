@@ -1,0 +1,245 @@
+"""本地知识库——用于 RAG 检索的固定程序实现。
+
+存储：
+- 内置规则备注（D&D 5e / D&D 4e / COC / 自定义）
+- 玩家上传的剧本/规则/备注（PDF/DOCX/TXT 等）
+- 剧本切分后的设定细节
+
+检索：
+- 基于字符 n-gram 的 TF-IDF 风格本地检索，不调用 LLM，零 token 消耗。
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import re
+import uuid
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from backend.engine.game_systems import (
+    build_stat_glossary,
+    build_system_rule_block,
+    get_system,
+)
+from backend.scenario_importer import split_text
+
+DEFAULT_KB_PATH = Path("knowledge_base/documents.json")
+
+
+def _tokenize(text: str) -> list[str]:
+    """字符 bigram 分词，适合中文与英文混合。"""
+    cleaned = re.sub(r"\s+", "", text.lower())
+    if len(cleaned) <= 1:
+        return [cleaned] if cleaned else []
+    return [cleaned[i:i + 2] for i in range(len(cleaned) - 1)]
+
+
+class KnowledgeBase:
+    def __init__(self, path: str | Path = DEFAULT_KB_PATH):
+        self.path = Path(path)
+        self.documents: list[dict[str, Any]] = []
+        self._loaded = False
+
+    def load(self) -> "KnowledgeBase":
+        if self._loaded:
+            return self
+        if self.path.exists():
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                self.documents = data.get("documents", [])
+            except Exception:
+                self.documents = []
+        else:
+            self.documents = []
+        self._loaded = True
+        return self
+
+    def save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(
+            json.dumps({"documents": self.documents}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def add_document(
+        self,
+        title: str,
+        content: str,
+        source: str = "user",
+        system: str = "custom",
+        tags: list[str] | None = None,
+        chunk_size: int = 900,
+    ) -> dict:
+        self.load()
+        chunks = split_text(content, mode="naive", chunk_size=chunk_size)
+        if not chunks:
+            chunks = [content.strip()] if content.strip() else []
+        doc = {
+            "id": uuid.uuid4().hex[:16],
+            "title": title or "未命名知识",
+            "content": content,
+            "chunks": chunks,
+            "source": source,
+            "system": system,
+            "tags": tags or [],
+            "created_at": datetime.now().isoformat(),
+        }
+        self.documents.append(doc)
+        self.save()
+        return doc
+
+    def add_note(self, title: str, content: str, system: str = "custom", tags: list[str] | None = None) -> dict:
+        return self.add_document(title, content, source="player-note", system=system, tags=tags or ["备注"])
+
+    def remove_document(self, doc_id: str) -> bool:
+        self.load()
+        before = len(self.documents)
+        self.documents = [d for d in self.documents if d["id"] != doc_id]
+        changed = len(self.documents) != before
+        if changed:
+            self.save()
+        return changed
+
+    def list_documents(self) -> list[dict]:
+        self.load()
+        return [
+            {
+                "id": d["id"],
+                "title": d["title"],
+                "source": d["source"],
+                "system": d["system"],
+                "tags": d["tags"],
+                "chunk_count": len(d["chunks"]),
+                "created_at": d.get("created_at", ""),
+            }
+            for d in self.documents
+        ]
+
+    def get_document(self, doc_id: str) -> dict | None:
+        self.load()
+        for d in self.documents:
+            if d["id"] == doc_id:
+                return d
+        return None
+
+    def retrieve(self, query: str, system: str | None = None, top_k: int = 5) -> list[dict]:
+        """基于字符 bigram 的本地 TF-IDF 检索，返回相关片段。"""
+        self.load()
+        q_terms = _tokenize(query)
+        if not q_terms:
+            return []
+
+        candidates = []
+        for doc in self.documents:
+            if system and doc.get("system") not in ("custom", system):
+                continue
+            for idx, chunk in enumerate(doc.get("chunks", [])):
+                candidates.append((doc, idx, chunk))
+
+        if not candidates:
+            return []
+
+        # 文档频率（用于 IDF）
+        df: Counter[str] = Counter()
+        for _, _, chunk in candidates:
+            for term in set(_tokenize(chunk)):
+                df[term] += 1
+        n = max(1, len(candidates))
+        idf = {term: math.log((n + 1) / (freq + 1)) + 1 for term, freq in df.items()}
+
+        scored = []
+        for doc, idx, chunk in candidates:
+            c_terms = _tokenize(chunk)
+            c_tf = Counter(c_terms)
+            q_tf = Counter(q_terms)
+            score = 0.0
+            for term, qf in q_tf.items():
+                if term in c_tf:
+                    score += qf * idf.get(term, 1.0) * (1 + math.log(c_tf[term]))
+            # 长度归一化，避免长文本无脑占优
+            score = score / (1 + math.log(len(c_terms) + 1))
+            if score > 0:
+                scored.append({
+                    "doc_id": doc["id"],
+                    "title": doc["title"],
+                    "source": doc.get("source", ""),
+                    "system": doc.get("system", ""),
+                    "chunk_index": idx,
+                    "text": chunk,
+                    "score": round(score, 4),
+                })
+
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[:top_k]
+
+    def seed_builtin_rules(self):
+        """将内置规则备注写入知识库（幂等，按 doc id 去重）。"""
+        self.load()
+        existing_ids = {d["id"] for d in self.documents}
+        seeds = [
+            {
+                "id": "builtin-rules-dnd5e",
+                "title": "D&D 5e 规则备注",
+                "content": build_system_rule_block("dnd5e") + "\n\n" + build_stat_glossary("dnd5e"),
+                "source": "builtin",
+                "system": "dnd5e",
+                "tags": ["规则书", "DND5e"],
+            },
+            {
+                "id": "builtin-rules-dnd4e",
+                "title": "D&D 4e 规则备注",
+                "content": build_system_rule_block("dnd4e") + "\n\n" + build_stat_glossary("dnd4e"),
+                "source": "builtin",
+                "system": "dnd4e",
+                "tags": ["规则书", "DND4e"],
+            },
+            {
+                "id": "builtin-rules-coc",
+                "title": "COC 7e 规则备注",
+                "content": build_system_rule_block("coc") + "\n\n" + build_stat_glossary("coc"),
+                "source": "builtin",
+                "system": "coc",
+                "tags": ["规则书", "COC7e"],
+            },
+            {
+                "id": "builtin-rules-custom",
+                "title": "自定义规则通用备注",
+                "content": build_system_rule_block("custom"),
+                "source": "builtin",
+                "system": "custom",
+                "tags": ["规则书", "自定义"],
+            },
+        ]
+        for seed in seeds:
+            if seed["id"] in existing_ids:
+                continue
+            doc = {
+                "id": seed["id"],
+                "title": seed["title"],
+                "content": seed["content"],
+                "chunks": split_text(seed["content"], mode="naive", chunk_size=900),
+                "source": seed["source"],
+                "system": seed["system"],
+                "tags": seed["tags"],
+                "created_at": datetime.now().isoformat(),
+            }
+            self.documents.append(doc)
+            existing_ids.add(seed["id"])
+        self.save()
+
+
+# 全局单例（懒加载）
+_kb: KnowledgeBase | None = None
+
+
+def get_knowledge_base() -> KnowledgeBase:
+    global _kb
+    if _kb is None:
+        _kb = KnowledgeBase().load()
+        _kb.seed_builtin_rules()
+    return _kb

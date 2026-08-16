@@ -297,6 +297,88 @@ async def delete_scenario_endpoint(scenario_id: str):
     return {"deleted": True}
 
 
+@app.get("/api/knowledge")
+async def list_knowledge():
+    """列出知识库文档（不含正文片段）。"""
+    from backend.knowledge_base import get_knowledge_base
+    return {"documents": get_knowledge_base().list_documents()}
+
+
+@app.post("/api/knowledge")
+async def add_knowledge(payload: dict):
+    """添加知识库文档/备注（JSON）。"""
+    from backend.knowledge_base import get_knowledge_base
+    title = str(payload.get("title") or "未命名知识")
+    content = str(payload.get("content") or "")
+    system = str(payload.get("system") or "custom")
+    source = str(payload.get("source") or "user")
+    tags = payload.get("tags") or []
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="内容不能为空")
+    doc = get_knowledge_base().add_document(
+        title=title, content=content, source=source, system=system, tags=tags
+    )
+    return {"doc": doc}
+
+
+@app.post("/api/knowledge/upload")
+async def upload_knowledge(
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    system: str = Form("custom"),
+    source: str = Form("user"),
+    tags: str = Form(""),
+):
+    """上传 PDF/DOCX/TXT/MD 到知识库（用于苹果园/克苏鲁公社等需要手动绕登录墙的资料）。"""
+    from backend.knowledge_base import get_knowledge_base
+    from backend.scenario_importer import extract_text
+
+    data = await file.read()
+    if len(data) > 30 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="文件不能超过 30MB")
+    try:
+        content = extract_text(file.filename or "", data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    doc = get_knowledge_base().add_document(
+        title=title or file.filename or "上传资料",
+        content=content,
+        source=source,
+        system=system,
+        tags=[t.strip() for t in tags.split(",") if t.strip()],
+    )
+    return {"doc": doc}
+
+
+@app.delete("/api/knowledge/{doc_id}")
+async def delete_knowledge(doc_id: str):
+    from backend.knowledge_base import get_knowledge_base
+    if not get_knowledge_base().remove_document(doc_id):
+        raise HTTPException(status_code=404, detail="知识文档不存在")
+    return {"deleted": True}
+
+
+@app.post("/api/knowledge/retrieve")
+async def retrieve_knowledge(payload: dict):
+    """RAG 检索：按查询返回最相关的知识片段。"""
+    from backend.knowledge_base import get_knowledge_base
+    query = str(payload.get("query") or "")
+    system = payload.get("system")
+    top_k = int(payload.get("top_k") or 5)
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="查询不能为空")
+    results = get_knowledge_base().retrieve(query, system=system, top_k=top_k)
+    return {"results": results}
+
+
+@app.post("/api/knowledge/seed")
+async def seed_knowledge():
+    """重新填充内置规则备注（幂等）。"""
+    from backend.knowledge_base import get_knowledge_base
+    get_knowledge_base().seed_builtin_rules()
+    return {"seeded": True}
+
+
 @app.get("/api/health")
 async def health_check():
     """健康检查端点。"""
