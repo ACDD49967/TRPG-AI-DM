@@ -61,6 +61,7 @@ def ensure_seeded(username: str):
             stats=beast.get("stats", {}),
             image_path="",
             tags=beast.get("tags", []),
+            details=beast.get("details", {}),
         )
     for city in COMMON_CITIES:
         add_map(
@@ -70,6 +71,7 @@ def ensure_seeded(username: str):
             image_path="",
             locations=city.get("locations", []),
             system=city.get("system", "custom"),
+            details=city.get("details", {}),
         )
     marker.write_text("1", encoding="utf-8")
 
@@ -85,7 +87,8 @@ def save_image(username: str, data: bytes, filename: str) -> str:
 
 
 def add_map(username: str, name: str, description: str, image_path: str,
-            locations: list[dict] | None = None, system: str = "custom") -> dict:
+            locations: list[dict] | None = None, system: str = "custom",
+            details: dict | None = None) -> dict:
     items = _load_meta(username, "maps")
     item = {
         "id": uuid.uuid4().hex[:16],
@@ -94,6 +97,7 @@ def add_map(username: str, name: str, description: str, image_path: str,
         "image_path": image_path,
         "locations": locations or [],
         "system": system,
+        "details": details or {},
         "created_at": datetime.now().isoformat(),
     }
     items.append(item)
@@ -116,7 +120,8 @@ def delete_map(username: str, map_id: str) -> bool:
 
 
 def add_bestiary(username: str, name: str, system: str, description: str,
-                 stats: dict | None = None, image_path: str = "", tags: list[str] | None = None) -> dict:
+                 stats: dict | None = None, image_path: str = "", tags: list[str] | None = None,
+                 details: dict | None = None) -> dict:
     items = _load_meta(username, "bestiary")
     item = {
         "id": uuid.uuid4().hex[:16],
@@ -126,6 +131,7 @@ def add_bestiary(username: str, name: str, system: str, description: str,
         "stats": stats or {},
         "image_path": image_path,
         "tags": tags or [],
+        "details": details or {},
         "created_at": datetime.now().isoformat(),
     }
     items.append(item)

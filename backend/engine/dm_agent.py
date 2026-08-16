@@ -736,6 +736,14 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
         sp += "\n\n## 检索到的设定/规则细节（按需使用，优先于你的记忆）\n"
         for item in retrieved_chunks[:3 if lite else 5]:
             sp += f"\n- [{item.get('title','')}]({item.get('source','')}) {item.get('text','')[:300 if lite else 600]}"
+    if getattr(state, "bestiary_overrides", None):
+        sp += "\n\n## 本局生物图鉴临时覆写（优先级高于知识库）\n"
+        for name, changes in state.bestiary_overrides.items():
+            sp += f"\n- {name}: {changes}"
+    if getattr(state, "city_overrides", None):
+        sp += "\n\n## 本局城市/地点临时覆写（优先级高于知识库）\n"
+        for name, changes in state.city_overrides.items():
+            sp += f"\n- {name}: {changes}"
     return sp
 
 
@@ -756,6 +764,8 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "reveal_info": _exec_reveal_info,
         "update_scene": _exec_update_scene,
         "add_character_note": _exec_character_note,
+        "update_bestiary_entry": _exec_update_bestiary,
+        "update_city_entry": _exec_update_city,
     }
     fn = handlers.get(name)
     return await fn(args, state) if fn else f"未知: {name}"
@@ -1110,12 +1120,28 @@ async def _exec_update_scene(args: dict, state: GameSessionState) -> str:
     return "场景已更新"
 
 
+async def _exec_update_bestiary(args: dict, state: GameSessionState) -> str:
+    name = args.get("name", "")
+    changes = args.get("changes", {}) or {}
+    reason = args.get("reason", "")
+    state.bestiary_overrides[name] = {**state.bestiary_overrides.get(name, {}), **changes}
+    return f"生物图鉴已临时更新: {name} ({reason})"
+
+
+async def _exec_update_city(args: dict, state: GameSessionState) -> str:
+    name = args.get("name", "")
+    changes = args.get("changes", {}) or {}
+    reason = args.get("reason", "")
+    state.city_overrides[name] = {**state.city_overrides.get(name, {}), **changes}
+    return f"城市/地点背景已临时更新: {name} ({reason})"
+
+
 async def _exec_character_note(args: dict, state: GameSessionState) -> str:
     ws = getattr(state, 'world_state', None)
     if ws is None: return "无世界状态"
     ws.add_character_note(target=args.get("target",""), target_type=args.get("target_type","npc"),
                           comment=args.get("comment",""), clue=args.get("clue",""))
-    return f"📝 {args.get('target','')}"
+    return f"角色笔记: {args.get('target','')}"
 
 
 # ═══════════════════════════════════════════════════════════════

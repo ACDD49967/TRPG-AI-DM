@@ -51,6 +51,10 @@ class GameSessionState:
     # 简单问答缓存：相同信息类问题直接返回，避免重复消耗 token
     response_cache: dict[str, str] = field(default_factory=dict, repr=False)
 
+    # 游戏内临时覆写（生物/城市），不影响知识库
+    bestiary_overrides: dict[str, dict] = field(default_factory=dict, repr=False)
+    city_overrides: dict[str, dict] = field(default_factory=dict, repr=False)
+
     def check_rate_limit(self) -> bool:
         """检查距上次操作是否已超过速率限制。"""
         now = time.time()

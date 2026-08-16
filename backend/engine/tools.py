@@ -94,9 +94,23 @@ ADD_CHARACTER_NOTE_TOOL = _tool("add_character_note",
      "clue": {"type":"string","description":"相关线索或推论(如有,可选)"}},
     ["target","target_type","comment"])
 
+UPDATE_BESTIARY_TOOL = _tool("update_bestiary_entry",
+    "游戏中临时修改/新增生物图鉴条目（仅本局生效，不写入知识库）。用于玩家遭遇变异、NPC透露新情报等。",
+    {"name": {"type": "string", "description": "生物名称"},
+     "changes": {"type": "object", "description": "要修改/新增的字段，如 description/stats/details"},
+     "reason": {"type": "string"}},
+    ["name", "changes", "reason"])
+
+UPDATE_CITY_TOOL = _tool("update_city_entry",
+    "游戏中临时修改/新增城市/地点背景（仅本局生效，不写入知识库）。用于玩家探索后发现新信息。",
+    {"name": {"type": "string", "description": "城市/地点名称"},
+     "changes": {"type": "object", "description": "要修改/新增的字段，如 description/details/locations"},
+     "reason": {"type": "string"}},
+    ["name", "changes", "reason"])
+
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, ADD_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
     UPDATE_WORLD_STATE_TOOL, REVEAL_INFO_TOOL, UPDATE_SCENE_TOOL,
-    ADD_CHARACTER_NOTE_TOOL,
+    ADD_CHARACTER_NOTE_TOOL, UPDATE_BESTIARY_TOOL, UPDATE_CITY_TOOL,
 ]

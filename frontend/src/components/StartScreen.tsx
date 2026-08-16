@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
+import RulebookModal from './RulebookModal';
 import {
   COC_ATTRIBUTES,
   COC_OCCUPATIONS,
@@ -190,6 +191,7 @@ export default function StartScreen(){
   const [beastName,setBeastName]=useState(''); const [beastSystem,setBeastSystem]=useState<GameSystem>('custom'); const [beastDesc,setBeastDesc]=useState(''); const [beastStats,setBeastStats]=useState(''); const [beastTags,setBeastTags]=useState(''); const [beastFile,setBeastFile]=useState<File|null>(null);
   const [characterImage,setCharacterImage]=useState('');
   const [mediaBusy,setMediaBusy]=useState(false); const [mediaErr,setMediaErr]=useState('');
+  const [showRulebook,setShowRulebook]=useState(false);
 
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState('');
@@ -536,6 +538,7 @@ export default function StartScreen(){
         <div className="text-center mb-6">
           <h1 className="text-3xl font-bold text-gray-900 tracking-tight">D&D 跑团</h1>
           <p className="text-gray-500 text-sm mt-1">单人冒险 · 智能主持</p>
+          <button onClick={()=>setShowRulebook(true)} className="mt-2 text-xs text-indigo-500 hover:text-indigo-700 underline underline-offset-2">打开玩家说明书</button>
         </div>
 
         {/* API 连接设置：放在选择剧本前，突出且必须 */}
@@ -1310,6 +1313,7 @@ export default function StartScreen(){
 
         </div>
       </div>
+      {showRulebook&&<RulebookModal onClose={()=>setShowRulebook(false)} />}
     </div>
   );
 }

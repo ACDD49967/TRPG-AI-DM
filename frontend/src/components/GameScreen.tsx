@@ -10,20 +10,24 @@ import InputArea from './InputArea';
 import Choices from './Choices';
 import DiceRollOverlay from './DiceRoll';
 import DecisionPanel from './DecisionPanel';
+import RulebookModal from './RulebookModal';
 
 export default function GameScreen() {
   const { sessionId, goToStart, sceneInfo, status } = useGameStore();
   useSSE(sessionId);
   const [showMap, setShowMap] = useState(false);
   const [showBeast, setShowBeast] = useState(false);
-  const [maps, setMaps] = useState<Array<{id:string;name:string;description:string;image_path:string;locations:Array<{name:string;x:number;y:number}>}>>([]);
-  const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;stats:Record<string,string>;image_path:string}>>([]);
+  const [showRulebook, setShowRulebook] = useState(false);
+  const [showCharSheet, setShowCharSheet] = useState(false);
+  const [maps, setMaps] = useState<Array<{id:string;name:string;description:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;details?:{culture?:string;districts?:string[];notable_figures?:string;dangers?:string}}>>([]);
+  const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;stats:Record<string,string>;image_path:string;details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
 
   useEffect(() => {
     const u = status.username || 'default';
-    fetch(`/api/maps?username=${encodeURIComponent(u)}`).then(r=>r.json()).then(d=>setMaps(d.maps||[])).catch(()=>{});
-    fetch(`/api/bestiary?username=${encodeURIComponent(u)}`).then(r=>r.json()).then(d=>setBestiary(d.bestiary||[])).catch(()=>{});
-  }, [status.username]);
+    const sys = status.game_system || 'dnd5e';
+    fetch(`/api/maps?username=${encodeURIComponent(u)}`).then(r=>r.json()).then(d=>setMaps((d.maps||[]).filter((m: {system?:string})=>m.system===sys || m.system==='custom'))).catch(()=>{});
+    fetch(`/api/bestiary?username=${encodeURIComponent(u)}`).then(r=>r.json()).then(d=>setBestiary((d.bestiary||[]).filter((b: {system?:string})=>b.system===sys || b.system==='custom'))).catch(()=>{});
+  }, [status.username, status.game_system]);
 
   const saveGame = async () => {
     if (!sessionId) return;
@@ -72,6 +76,8 @@ export default function GameScreen() {
             HP {status.hp}/{status.maxHp}
           </span>
           <span className="text-[10px] text-gray-400 font-mono hidden sm:inline">#{sessionId?.slice(0, 6)}</span>
+          <button onClick={()=>setShowRulebook(true)} className="text-xs text-indigo-500 hover:text-indigo-700 transition-colors">说明书</button>
+          <button onClick={()=>setShowCharSheet(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">角色卡</button>
           <button onClick={()=>setShowMap(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">地图</button>
           <button onClick={()=>setShowBeast(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">图鉴</button>
           <button onClick={saveGame} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">存档</button>
@@ -93,6 +99,37 @@ export default function GameScreen() {
       </div>
       <DiceRollOverlay />
 
+      {showCharSheet && (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowCharSheet(false)}>
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-gray-900">角色卡</h3>
+              <button onClick={()=>setShowCharSheet(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+            </div>
+            <div className="flex items-center gap-3 mb-3">
+              {status.character_image ? <img src={status.character_image} alt="角色" className="w-20 h-20 object-cover rounded-xl border border-gray-200" /> : <div className="w-20 h-20 bg-gray-100 rounded-xl flex items-center justify-center text-[9px] text-gray-400">暂无头像</div>}
+              <div>
+                <p className="text-base font-bold">{status.character_name||'冒险者'}</p>
+                <p className="text-[10px] text-gray-500">{status.race||'?'} {status.char_class||'?'} · {status.game_system||'dnd5e'}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">HP</p><p className="text-sm font-bold">{status.hp}/{status.maxHp}</p></div>
+              <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">AC</p><p className="text-sm font-bold">{status.ac}</p></div>
+              <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">等级</p><p className="text-sm font-bold">{status.level}</p></div>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {Object.entries(status.attributes||{}).map(([k,v])=>(
+                <div key={k} className="bg-white rounded-lg border border-gray-200 px-2 py-1 flex justify-between"><span className="text-[10px] text-gray-400 uppercase">{k}</span><span className="text-xs font-bold">{v}</span></div>
+              ))}
+            </div>
+            {status.inventory?.length>0&&<div className="mt-3"><p className="text-[10px] text-gray-400 mb-1">背包</p><div className="flex flex-wrap gap-1">{status.inventory.map((it,i)=><span key={i} className="text-[10px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{it}</span>)}</div></div>}
+          </div>
+        </div>
+      )}
+
+      {showRulebook && <RulebookModal onClose={()=>setShowRulebook(false)} />}
+
       {showMap && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowMap(false)}>
           <div className="bg-white rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
@@ -108,6 +145,14 @@ export default function GameScreen() {
                   <p className="text-sm font-bold">{m.name}</p>
                   <p className="text-[10px] text-gray-500 mb-2">{m.description}</p>
                   {m.locations.length>0&&<div className="flex flex-wrap gap-1">{m.locations.map((l,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-100">{l.name}</span>)}</div>}
+                  {m.details && (
+                    <div className="mt-2 text-[10px] text-gray-600 space-y-1">
+                      {m.details.culture&&<p>文化：{m.details.culture}</p>}
+                      {m.details.districts && m.details.districts.length>0&&<p>区域：{m.details.districts.join('、')}</p>}
+                      {m.details.notable_figures&&<p>知名人物：{m.details.notable_figures}</p>}
+                      {m.details.dangers&&<p>危险：{m.details.dangers}</p>}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -131,6 +176,14 @@ export default function GameScreen() {
                   <p className="text-[10px] text-gray-500">{b.system}</p>
                   <p className="text-[10px] text-gray-600 mt-0.5">{b.description}</p>
                   {Object.keys(b.stats||{}).length>0&&<p className="text-[10px] text-gray-500 mt-1">{Object.entries(b.stats||{}).map(([k,v])=>`${k}:${v}`).join(' · ')}</p>}
+                  {b.details && (
+                    <div className="text-[10px] text-gray-600 mt-1 space-y-0.5">
+                      {b.details.habits&&<p>习性：{b.details.habits}</p>}
+                      {b.details.habitat&&<p>栖息地：{b.details.habitat}</p>}
+                      {b.details.lore&&<p>传说：{b.details.lore}</p>}
+                      {b.details.weakness&&<p>弱点：{b.details.weakness}</p>}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

@@ -383,6 +383,7 @@ def build_system_rule_block(system_id: str, custom_rules: str = "") -> str:
 - 技能检定、攻击、伤害、死亡豁免等判定结果必须通过 dice_roll / combat_round / death_saving_throw 工具计算并返回。
 - 你不得在叙事中自行编造最终数值；工具返回的数值才是权威。
 - 需要修改 HP/金币/物品/理智等状态时，必须调用 update_state，由程序计算并更新。
+- 禁止在调用 dice_roll / combat_round 之前直接宣布成功、失败、伤害、属性改变或检定结果；必须先完成判定工具调用。
 """
     if system_id == "dnd5e":
         return general_numeric_rule + "本局使用 D&D 5e 规则。请严格遵循上方 SYSTEM_PROMPT 中的全部 5e 规则。"
