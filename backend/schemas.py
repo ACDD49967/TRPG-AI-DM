@@ -29,6 +29,7 @@ class NewGameRequest(BaseModel):
     scenario_url: str | None = None
     scenario_id: str | None = None
     skill_proficiencies: list[str] | None = None
+    skills: dict[str, int] | None = None          # COC/自定义技能具体数值
     feats: list[dict] | None = None
     new_world: bool = True                     # True=全新世界, False=老剧本开新局
     play_mode: str = Field(default="deep", pattern="^(lite|deep)$")  # lite=精简模式, deep=深度模式

@@ -24,6 +24,7 @@ export interface CharacterStatus {
   scenario_id?: string;
   backstory?: string;
   skill_proficiencies?: string[];
+  skills?: Record<string, number>;
   feats?: Array<{ name: string; description?: string }>;
   custom_classes?: string[];
   custom_skills?: string[];

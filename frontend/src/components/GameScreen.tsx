@@ -191,6 +191,9 @@ export default function GameScreen() {
             {/* 技能 / 特长 / 特性 */}
             {((status.skill_proficiencies?.length ?? 0)>0 || (status.feats?.length ?? 0)>0 || (status.race_traits?.length ?? 0)>0 || (status.class_proficiencies?.length ?? 0)>0) && (
               <div className="space-y-2 mb-4">
+                {status.skills && Object.keys(status.skills).length>0 && (
+                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">技能数值</p><div className="flex flex-wrap gap-1">{Object.entries(status.skills).map(([k,v])=><span key={k} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5">{k}: {v}</span>)}</div></div>
+                )}
                 {status.skill_proficiencies && status.skill_proficiencies.length>0 && (
                   <div><p className="text-[10px] text-gray-400 font-medium mb-1">技能熟练</p><div className="flex flex-wrap gap-1">{status.skill_proficiencies.map((s,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
                 )}
@@ -320,6 +323,18 @@ export default function GameScreen() {
                       </div>
                     </div>
                   </div>
+
+                  {/* D&D4e 关键数值 */}
+                  {b.system === 'dnd4e' && (
+                    <div className="grid grid-cols-3 gap-1 mt-2 border-t border-amber-900/10 pt-2 text-[10px]">
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">强韧</span> <b>{get('强韧','Fortitude','fort')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">反射</span> <b>{get('反射','Reflex','ref')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">意志</span> <b>{get('意志','Will','will')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">等级</span> <b>{get('等级','Level','level')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">XP</span> <b>{get('XP','xp')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">角色</span> <b>{get('角色类型','role')}</b></div>
+                    </div>
+                  )}
 
                   {/* 六维 / COC 关键数值 */}
                   {b.system === 'coc' ? (

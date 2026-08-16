@@ -707,7 +707,10 @@ def build_character_info(state: GameSessionState) -> str:
             parts = [f"{names.get(k,k)}:{v}({(v-10)//2:+d})" for k, v in attrs.items()]
         lines.append("属性: " + " | ".join(parts))
 
-    if skills:
+    skill_values = info.get("skills", {}) or {}
+    if skill_values:
+        lines.append("技能: " + "、".join(f"{k}:{v}" for k, v in skill_values.items() if v))
+    elif skills:
         lines.append("技能熟练: " + ", ".join(skills))
     if info.get("custom_classes"):
         lines.append("剧本专属职业/身份: " + ", ".join(info["custom_classes"]))

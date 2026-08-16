@@ -1334,6 +1334,7 @@ async def create_new_game(request: NewGameRequest):
             "race_traits": request.race_traits or [],
             "class_proficiencies": request.class_proficiencies or [],
             "skill_proficiencies": request.skill_proficiencies or [],
+            "skills": request.skills or {},
             "feats": request.feats or [],
             "backstory": request.backstory or "",
             "world_context": request.world_context or "",

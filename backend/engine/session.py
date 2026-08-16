@@ -177,6 +177,7 @@ async def sse_event_generator(
         "scenario_id": info.get("scenario_id", ""),
         "backstory": info.get("backstory", ""),
         "skill_proficiencies": info.get("skill_proficiencies", []),
+        "skills": info.get("skills", {}),
         "feats": info.get("feats", []),
         "custom_classes": info.get("custom_classes", []),
         "custom_skills": info.get("custom_skills", []),
