@@ -66,6 +66,26 @@ def _safe_title(title: str) -> str:
     return title or "未命名知识"
 
 
+def _clean_content(text: str) -> str:
+    """清理知识库正文中的控制字符/不可打印字符/替换符乱码。"""
+    if not text:
+        return ""
+    cleaned = "".join(ch for ch in text if ch.isprintable() or ch in "\n\r\t")
+    # 大量 \ufffd 通常是二进制/编码损坏，直接清空
+    if cleaned.count("\ufffd") / max(1, len(cleaned)) > 0.3:
+        return ""
+    return cleaned
+
+
+def _is_garbled(text: str) -> bool:
+    """判断文本是否已严重乱码（替换符+不可打印字符占比过高）。"""
+    if not text.strip():
+        return True
+    repl = text.count("\ufffd")
+    nonprint = sum(1 for ch in text if not ch.isprintable() and ch not in "\n\r\t")
+    return (repl + nonprint) / max(1, len(text)) > 0.2
+
+
 class KnowledgeBase:
     def __init__(self, path: str | Path = DEFAULT_KB_PATH):
         self.path = Path(path)
@@ -79,16 +99,27 @@ class KnowledgeBase:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
                 self.documents = data.get("documents", [])
-                # 按内容去重（统一化处理）
+                # 按内容去重 + 清理乱码（统一化处理）
                 seen: set[str] = set()
-                deduped = []
+                cleaned_docs = []
+                changed = False
                 for d in self.documents:
                     h = hashlib.md5((d.get("content", "") or "").encode("utf-8", errors="replace")).hexdigest()
-                    if h not in seen:
-                        seen.add(h)
-                        deduped.append(d)
-                if len(deduped) != len(self.documents):
-                    self.documents = deduped
+                    if h in seen:
+                        changed = True
+                        continue
+                    seen.add(h)
+                    content = _clean_content(d.get("content", "") or "")
+                    if _is_garbled(content):
+                        changed = True
+                        continue
+                    if content != (d.get("content", "") or ""):
+                        d["content"] = content
+                        d["chunks"] = split_text(content, mode="naive", chunk_size=900)
+                        changed = True
+                    cleaned_docs.append(d)
+                if changed:
+                    self.documents = cleaned_docs
                     self.save()
             except Exception:
                 self.documents = []
@@ -114,6 +145,7 @@ class KnowledgeBase:
         chunk_size: int = 900,
     ) -> dict:
         self.load()
+        content = _clean_content(content)
         chunks = split_text(content, mode="naive", chunk_size=chunk_size)
         if not chunks:
             chunks = [content.strip()] if content.strip() else []
