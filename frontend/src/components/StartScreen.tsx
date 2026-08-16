@@ -172,7 +172,8 @@ export default function StartScreen(){
   const [cocAttrs,setCocAttrs]=useState<Record<string,number>>(()=>rollCocAttributes());
   const [occupation,setOccupation]=useState('学者');
   const [cocSkillPicks,setCocSkillPicks]=useState<string[]>([]);
-  const [cocSkillPoints,setCocSkillPoints]=useState<Record<string,number>>(()=>Object.fromEntries(COC_SKILLS.map(s=>[s,COC_SKILL_BASE[s]||0])));
+  const [cocOccInc,setCocOccInc]=useState<Record<string,number>>(()=>Object.fromEntries(COC_SKILLS.map(s=>[s,0])));
+  const [cocPerInc,setCocPerInc]=useState<Record<string,number>>(()=>Object.fromEntries(COC_SKILLS.map(s=>[s,0])));
   const [cocLuck,setCocLuck]=useState<number>(()=>rollCocLuck());
   const [customAttrs,setCustomAttrs]=useState<Record<string,number>>({str:10,dex:10,con:10,int:10,wis:10,cha:10});
   const [splitter,setSplitter]=useState<'naive'|'semantic'>('naive');
@@ -257,9 +258,13 @@ export default function StartScreen(){
 
   const pb = pointBuyConfig(gameSystem);
   const rm=useMemo(()=>pb.total-spent(attrs, pb.cost),[attrs, pb]);
-  const cocTotalPoints = Math.max(0, (cocAttrs.edu||50)*4 + (cocAttrs.int||50)*2);
-  const cocSpentPoints = COC_SKILLS.reduce((sum,s)=>sum+Math.max(0,(cocSkillPoints[s]||0)-(COC_SKILL_BASE[s]||0)),0);
-  const cocRemainPoints = cocTotalPoints - cocSpentPoints;
+  const cocOccPool = Math.max(0, (cocAttrs.edu||50)*4);
+  const cocPerPool = Math.max(0, (cocAttrs.int||50)*2);
+  const cocOccSpent = COC_SKILLS.reduce((sum,s)=>sum+(cocOccInc[s]||0),0);
+  const cocPerSpent = COC_SKILLS.reduce((sum,s)=>sum+(cocPerInc[s]||0),0);
+  const cocOccRemain = cocOccPool - cocOccSpent;
+  const cocPerRemain = cocPerPool - cocPerSpent;
+  const cocSkillValues = Object.fromEntries(COC_SKILLS.map(s=>[s,(COC_SKILL_BASE[s]||0)+(cocOccInc[s]||0)+(cocPerInc[s]||0)]));
   const finalAttrs=useMemo(()=>{
     if(gameSystem==='coc') return cocAttrs;
     if(gameSystem==='custom') return customAttrs;
@@ -280,12 +285,27 @@ export default function StartScreen(){
   const inc=useCallback((k:string)=>setAttrs(p=>{const c=p[k];if(c>=pb.max)return p;const nv=c+1;if(spent(p, pb.cost)+(pb.cost[nv]||0)-(pb.cost[c]||0)>pb.total)return p;return{...p,[k]:nv};}),[pb]);
   const dec=useCallback((k:string)=>setAttrs(p=>p[k]<=pb.min?p:{...p,[k]:p[k]-1}),[pb]);
 
-  const incCocSkill=(name:string)=>{
-    if(cocRemainPoints<=0) return;
-    setCocSkillPoints(p=>({...p,[name]:Math.min(75,(p[name]||0)+1)}));
+  const incCocOcc=(name:string)=>{
+    if(cocOccRemain<=0) return;
+    setCocOccInc(p=>{
+      const next=(p[name]||0)+1;
+      if((COC_SKILL_BASE[name]||0)+next+(cocPerInc[name]||0)>75) return p;
+      return {...p,[name]:next};
+    });
   };
-  const decCocSkill=(name:string)=>{
-    setCocSkillPoints(p=>({...p,[name]:Math.max(COC_SKILL_BASE[name]||0,(p[name]||0)-1)}));
+  const decCocOcc=(name:string)=>{
+    setCocOccInc(p=>({...p,[name]:Math.max(0,(p[name]||0)-1)}));
+  };
+  const incCocPer=(name:string)=>{
+    if(cocPerRemain<=0) return;
+    setCocPerInc(p=>{
+      const next=(p[name]||0)+1;
+      if((COC_SKILL_BASE[name]||0)+(cocOccInc[name]||0)+next>75) return p;
+      return {...p,[name]:next};
+    });
+  };
+  const decCocPer=(name:string)=>{
+    setCocPerInc(p=>({...p,[name]:Math.max(0,(p[name]||0)-1)}));
   };
 
   const toggleSkill=(name:string)=>{setSkillPicks(p=>p.includes(name)?p.filter(s=>s!==name):p.length<2?[...p,name]:p);};
@@ -583,7 +603,9 @@ export default function StartScreen(){
       game_system: gameSystem,
       attributes: finalAttrs,
       skill_proficiencies: gameSystem==='coc'?cocSkillPicks:skillPicks,
-      skills: gameSystem==='coc'?cocSkillPoints:undefined,
+      skills: gameSystem==='coc'?cocSkillValues:undefined,
+      coc_occ_inc: gameSystem==='coc'?cocOccInc:undefined,
+      coc_per_inc: gameSystem==='coc'?cocPerInc:undefined,
       backstory: aiGen?.backstory || backstoryText || '',
       character_image: characterImage,
       custom_rules: gameSystem==='custom'?customRules:undefined,
@@ -621,8 +643,18 @@ export default function StartScreen(){
         if(c.game_system==='coc')setCocSkillPicks(c.skill_proficiencies);
         else setSkillPicks(c.skill_proficiencies);
       }
-      if(c.skills && typeof c.skills === 'object'){
-        setCocSkillPoints(c.skills as Record<string,number>);
+      if(c.coc_occ_inc && typeof c.coc_occ_inc === 'object'){
+        setCocOccInc(c.coc_occ_inc as Record<string,number>);
+      }
+      if(c.coc_per_inc && typeof c.coc_per_inc === 'object'){
+        setCocPerInc(c.coc_per_inc as Record<string,number>);
+      } else if(c.skills && typeof c.skills === 'object'){
+        // 旧角色卡只有最终技能值：全部视为职业技能分配，个人池清零
+        const finalSkills = c.skills as Record<string,number>;
+        const occ: Record<string,number> = {};
+        COC_SKILLS.forEach(s=>{ occ[s]=Math.max(0,(finalSkills[s]||0)-(COC_SKILL_BASE[s]||0)); });
+        setCocOccInc(occ);
+        setCocPerInc(Object.fromEntries(COC_SKILLS.map(s=>[s,0])));
       }
       if(c.backstory){setBackstoryText(c.backstory);setAiGen({attributes:c.attributes||{},backstory:c.backstory});}
       if(c.character_image)setCharacterImage(c.character_image);
@@ -704,7 +736,7 @@ export default function StartScreen(){
         reference_script:referenceScript||undefined,scenario_id:scenarioId||undefined,
         new_world:!scenarioId,
         skill_proficiencies:gameSystem==='coc'?cocSkillPicks:skillPicks,
-        skills:gameSystem==='coc'?cocSkillPoints:undefined,
+        skills:gameSystem==='coc'?cocSkillValues:undefined,
         play_mode:playMode,
         game_system:gameSystem,
         custom_rules:gameSystem==='custom'?customRules:undefined,
@@ -982,33 +1014,45 @@ export default function StartScreen(){
                   </div>
                   {cocSkillPicks.length>0&&<p className="text-[10px] text-indigo-500 mt-1">已选: {cocSkillPicks.join('、')}</p>}
 
-                  {/* COC 技能点分配 */}
+                  {/* COC 技能点分配（双池官方规则） */}
                   <div className="mt-3 bg-gray-50 rounded-lg p-3 border border-gray-200">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-gray-600">技能点总数（教育×4 + 智力×2）</span>
-                      <b className="text-gray-800">{cocTotalPoints}</b>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="bg-white rounded-lg border border-gray-200 p-2">
+                        <p className="text-gray-600">职业技能点（教育×4）</p>
+                        <p>可用 <b className="text-gray-800">{cocOccPool}</b> · 剩余 <b className={cocOccRemain<0?'text-red-500':'text-emerald-600'}>{cocOccRemain}</b></p>
+                      </div>
+                      <div className="bg-white rounded-lg border border-gray-200 p-2">
+                        <p className="text-gray-600">个人兴趣点（智力×2）</p>
+                        <p>可用 <b className="text-gray-800">{cocPerPool}</b> · 剩余 <b className={cocPerRemain<0?'text-red-500':'text-emerald-600'}>{cocPerRemain}</b></p>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between text-xs mt-1">
-                      <span className="text-gray-600">剩余可分配</span>
-                      <b className={cocRemainPoints<0?'text-red-500':'text-emerald-600'}>{cocRemainPoints}</b>
-                    </div>
-                    <div className="max-h-48 overflow-y-auto mt-2 space-y-1">
+                    <div className="max-h-56 overflow-y-auto mt-2 space-y-1">
                       {COC_SKILLS.map(s=>{
                         const base=COC_SKILL_BASE[s]||0;
-                        const cur=cocSkillPoints[s]||base;
+                        const occ=cocOccInc[s]||0;
+                        const per=cocPerInc[s]||0;
+                        const final=base+occ+per;
                         return (
-                          <div key={s} className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-2 py-1">
-                            <span className="text-[10px] text-gray-600">{s} <span className="text-gray-400">基础{base}</span></span>
-                            <div className="flex items-center gap-1">
-                              <button onClick={()=>decCocSkill(s)} disabled={cur<=base} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-gray-500 disabled:opacity-30">−</button>
-                              <span className="text-xs font-bold w-8 text-center">{cur}</span>
-                              <button onClick={()=>incCocSkill(s)} disabled={cur>=75||cocRemainPoints<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-gray-500 disabled:opacity-30">+</button>
+                          <div key={s} className="bg-white rounded-lg border border-gray-200 px-2 py-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-gray-600">{s} <span className="text-gray-400">基础{base} → 最终{final}</span></span>
+                              <span className="text-xs font-bold text-gray-800">{final}</span>
+                            </div>
+                            <div className="flex items-center gap-1 mt-1 text-[9px]">
+                              <span className="text-gray-400 w-7">职业</span>
+                              <button onClick={()=>decCocOcc(s)} disabled={occ<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-gray-500 disabled:opacity-30">−</button>
+                              <span className="w-6 text-center font-medium">{occ}</span>
+                              <button onClick={()=>incCocOcc(s)} disabled={final>=75||cocOccRemain<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-gray-500 disabled:opacity-30">+</button>
+                              <span className="text-gray-400 w-7 ml-2">个人</span>
+                              <button onClick={()=>decCocPer(s)} disabled={per<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-gray-500 disabled:opacity-30">−</button>
+                              <span className="w-6 text-center font-medium">{per}</span>
+                              <button onClick={()=>incCocPer(s)} disabled={final>=75||cocPerRemain<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-gray-500 disabled:opacity-30">+</button>
                             </div>
                           </div>
                         );
                       })}
                     </div>
-                    <p className="text-[9px] text-gray-400 mt-1">COC 7e 官方规则：职业技能点=教育×4，个人兴趣点=智力×2；初始技能最高75（含基础值）。</p>
+                    <p className="text-[9px] text-gray-400 mt-1">COC 7e 官方规则：职业技能点=教育×4，个人兴趣点=智力×2；每项最终值=基础+职业+个人，最高75（含基础值）。</p>
                   </div>
                 </div>
               )}
