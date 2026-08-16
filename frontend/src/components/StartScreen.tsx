@@ -111,6 +111,7 @@ export default function StartScreen(){
   const [modelOptions,setModelOptions]=useState<string[]>([]);
   const [modelFetchBusy,setModelFetchBusy]=useState(false);
   const [modelFetchErr,setModelFetchErr]=useState('');
+  const [modelInputMode,setModelInputMode]=useState<'select'|'manual'>('manual');
   const [scenarioMode,setScenarioMode]=useState<'existing'|'split'|'generate'>('generate');
   const [username,setUsername]=useState(cfg.username);
   const [charName,setCharName]=useState('');
@@ -224,6 +225,7 @@ export default function StartScreen(){
       const d=await r.json();
       setModelOptions(d.models||[]);
       if(d.models?.length===1)setModelName(d.models[0]);
+      if(d.models?.length>0)setModelInputMode('select');
     }catch(e:unknown){setModelFetchErr(e instanceof Error?e.message:'获取模型失败');}
     finally{setModelFetchBusy(false);}
   };
@@ -568,10 +570,28 @@ export default function StartScreen(){
             <div>
               <label className="block text-[10px] text-gray-500 mb-1">模型（可从服务商自动获取，也可手动填写）</label>
               <div className="flex gap-2">
-                <input list="model-options" value={modelName} onChange={e=>setModelName(e.target.value)} placeholder="选择或输入模型名称" className="input-field font-mono text-xs flex-1" />
-                <datalist id="model-options">
-                  {modelOptions.map(m=><option key={m} value={m} />)}
-                </datalist>
+                {modelInputMode==='select' && modelOptions.length>0 ? (
+                  <>
+                    <select
+                      value={modelOptions.includes(modelName) ? modelName : ''}
+                      onChange={e=>{
+                        if(e.target.value==='__manual__'){ setModelInputMode('manual'); return; }
+                        setModelName(e.target.value);
+                      }}
+                      className="input-field font-mono text-xs flex-1"
+                    >
+                      <option value="" disabled>选择模型...</option>
+                      {modelOptions.map(m=><option key={m} value={m}>{m}</option>)}
+                      <option value="__manual__">手动输入...</option>
+                    </select>
+                    <button onClick={()=>setModelInputMode('manual')} className="btn-secondary text-xs px-3 whitespace-nowrap">手动</button>
+                  </>
+                ) : (
+                  <>
+                    <input value={modelName} onChange={e=>setModelName(e.target.value)} placeholder="输入模型名称" className="input-field font-mono text-xs flex-1" />
+                    {modelOptions.length>0&&<button onClick={()=>setModelInputMode('select')} className="btn-secondary text-xs px-3 whitespace-nowrap">列表</button>}
+                  </>
+                )}
                 <button onClick={fetchModels} disabled={modelFetchBusy || !apiKey} className="btn-secondary text-xs px-3 whitespace-nowrap">{modelFetchBusy?'获取中...':'获取模型'}</button>
               </div>
               {modelFetchErr&&<p className="text-red-500 text-[10px] mt-1">{modelFetchErr}</p>}
