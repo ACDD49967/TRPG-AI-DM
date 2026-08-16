@@ -73,7 +73,12 @@ const SKILLS=[
   {n:'游说',a:'cha',d:'谈判、说服'},
 ];
 
-const TONES=['史诗奇幻','黑暗奇幻','悬疑探案','轻松幽默','末日废土','东方武侠','哥特恐怖','蒸汽朋克'];
+const TONES=[
+  '史诗奇幻','黑暗奇幻','悬疑探案','轻松幽默','末日废土','东方武侠','哥特恐怖','蒸汽朋克',
+  '剑与魔法','克苏鲁恐怖','太空歌剧','赛博朋克','低魔写实','高魔冒险','政治权谋','宫廷阴谋',
+  '海盗冒险','西部荒野','现代都市','神话史诗','童话暗黑','推理本格','战斗爽文','生存探索',
+  '神秘学','宗教史诗','精灵森林','矮人王国','龙裔战争','深海恐惧','梦境异界','废土求生',
+];
 const WORLD_STAGES=[
   {key:'conflict',label:'构建世界冲突',desc:'雕琢世界的伤痕与张力'},
   {key:'plot',label:'编织三幕结构',desc:'铺设命运的丝线'},
@@ -131,6 +136,8 @@ export default function StartScreen(){
   // 世界
   const [worldDesc,setWorldDesc]=useState('');
   const [worldTone,setWorldTone]=useState('史诗奇幻');
+  const [customTone,setCustomTone]=useState('');
+  const [toneCustom,setToneCustom]=useState(false);
   const [worldNote,setWorldNote]=useState('');
   const [referenceScript,setReferenceScript]=useState('');
   const [worldOutline,setWorldOutline]=useState('');
@@ -954,9 +961,30 @@ export default function StartScreen(){
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">基调</label>
-                      <select value={worldTone} onChange={e=>setWorldTone(e.target.value)} className="input-field">
+                      <select
+                        value={toneCustom ? '__custom__' : worldTone}
+                        onChange={e=>{
+                          if(e.target.value==='__custom__'){
+                            setToneCustom(true);
+                            if(customTone) setWorldTone(customTone);
+                          } else {
+                            setToneCustom(false);
+                            setWorldTone(e.target.value);
+                          }
+                        }}
+                        className="input-field"
+                      >
                         {TONES.map(t=><option key={t} value={t}>{t}</option>)}
+                        <option value="__custom__">自定义...</option>
                       </select>
+                      {toneCustom&&(
+                        <input
+                          value={customTone}
+                          onChange={e=>{ setCustomTone(e.target.value); setWorldTone(e.target.value); }}
+                          placeholder="输入自定义基调"
+                          className="input-field mt-1 text-xs"
+                        />
+                      )}
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">参考剧本</label>
