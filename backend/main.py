@@ -106,6 +106,8 @@ async def generate_world(request: WorldGenRequest):
         base_url=request.base_url,
         game_system=request.game_system,
         custom_rules=request.custom_rules or "",
+        target_score=75,
+        max_revisions=1,
     )
 
     # 提取 NPC 和旗标摘要
@@ -260,6 +262,8 @@ async def import_scenario(
             model_name=model_name,
             base_url=base_url,
             splitter=splitter,
+            target_score=75,
+            max_revisions=1,
         )
         return result
     except Exception as e:
