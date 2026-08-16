@@ -32,7 +32,7 @@ from backend.engine.rules import (
     roll_death_save, short_rest, long_rest,
 )
 from backend.engine.tools import DM_TOOLS
-from backend.engine.world_state import WorldState, NpcEntry, PlotFlag
+from backend.engine.world_state import WorldState, NpcEntry, PlotFlag, LocationEntry
 from backend.engine.game_systems import build_system_rule_block, build_stat_glossary, get_system
 from backend.knowledge_base import get_knowledge_base
 from backend.save_manager import auto_save_if_needed
@@ -797,6 +797,14 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
         _game_system(state),
         state.character_info.get("custom_rules", ""),
     )
+    sp += """
+## DM 权限与职责（你是主持人，不是旁观者）
+- 你拥有主持权限：可以新增/修改 NPC、地点、生物、地图、世界状态、旗标和玩家状态。
+- 使用这些权限前必须先通过工具调用，并在 reason 中说明原因。
+- 新增内容必须符合当前规则系统、剧本设定与数值合理性。
+- 不要滥用权限替玩家做决定；不要暴露 DM 后台信息给玩家。
+- 每次修改后通过 update_scene / journal_update 保持玩家可见信息同步。
+"""
 
     # 动态上下文统一放在静态规则之后
     mem_text = mem if mem.strip() else "冒险刚启。篝火刚点起来，第一颗骰子还在你的掌心。"
@@ -1148,24 +1156,47 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
     ws = getattr(state, 'world_state', None)
     if ws is None: return "无世界状态"
     action = args.get("action", ""); target = args.get("target", ""); changes = args.get("changes", {}); reason = args.get("reason", "")
-    if action == "update_npc":
-        if ws.update_npc(target, **changes): return f"✅ {target}已更新 ({reason})"
-        ws.add_npc(NpcEntry(name=target, role=changes.get("role",""), location=changes.get("location",""),
-                             attitude=changes.get("attitude","中立"), personality=changes.get("personality",""),
-                             motivation=changes.get("motivation",""), secret=changes.get("secret",""),
-                             relation_to_plot=changes.get("relation_to_plot",""), alive=changes.get("alive",True)))
-        return f"✅ 新增NPC: {target}"
-    elif action == "add_npc":
-        ws.add_npc(NpcEntry(name=target, role=changes.get("role",""), location=changes.get("location",""),
-                             attitude=changes.get("attitude","中立"), personality=changes.get("personality",""),
-                             motivation=changes.get("motivation",""), relation_to_plot=changes.get("relation_to_plot","")))
-        return f"✅ NPC: {target}"
+    if action in ("update_npc", "add_npc"):
+        npc_data = {
+            "name": target,
+            "race": changes.get("race", ""),
+            "role": changes.get("role", ""),
+            "location": changes.get("location", ""),
+            "attitude": changes.get("attitude", "中立"),
+            "personality": changes.get("personality", ""),
+            "motivation": changes.get("motivation", ""),
+            "secret": changes.get("secret", ""),
+            "relation_to_plot": changes.get("relation_to_plot", ""),
+            "alive": changes.get("alive", True),
+            "level": int(changes.get("level", 1) or 1),
+            "hp": int(changes.get("hp", 10) or 10),
+            "max_hp": int(changes.get("max_hp", changes.get("hp", 10)) or 10),
+            "ac": int(changes.get("ac", 10) or 10),
+            "attributes": changes.get("attributes", {}),
+            "skills": changes.get("skills", []),
+            "traits": changes.get("traits", []),
+            "image_path": changes.get("image_path", ""),
+        }
+        if action == "update_npc" and ws.get_npc(target):
+            ws.update_npc(target, **npc_data)
+        else:
+            ws.add_npc(NpcEntry(**npc_data))
+        ws.save()
+        await push_event(state, "journal_update", ws.to_player_journal())
+        return f"✅ NPC: {target} ({reason})"
     elif action == "set_flag":
         ws.set_flag(key=target, status=changes.get("status","进行中"), description=changes.get("description",""), consequence=changes.get("consequence",""))
         return f"✅ 旗标: {target}"
     elif action == "add_location":
-        ws.locations.append(type('LE',(),{"name":target,"description":changes.get("description",""),"secrets":changes.get("secrets",""),"discovered":True})())
+        ws.locations.append(LocationEntry(
+            name=target,
+            description=changes.get("description", ""),
+            status=changes.get("status", "可访问"),
+            secrets=changes.get("secrets", ""),
+            discovered=changes.get("discovered", True),
+        ))
         ws.save()
+        await push_event(state, "journal_update", ws.to_player_journal())
         return f"✅ 地点: {target}"
     return f"未知操作: {action}"
 
