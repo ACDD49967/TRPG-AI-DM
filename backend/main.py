@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,6 +71,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# 静态媒体（地图/生物/角色图片）
+import os as _os
+_os.makedirs("media", exist_ok=True)
+app.mount("/media", StaticFiles(directory="media"), name="media")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -507,6 +514,131 @@ async def load_save_api(payload: dict):
     }
 
 
+@app.get("/api/maps")
+async def list_maps_api(username: str = "default"):
+    from backend.media_manager import list_maps
+    return {"maps": list_maps(username)}
+
+
+@app.post("/api/maps")
+async def add_map_api(payload: dict):
+    from backend.media_manager import add_map
+    username = str(payload.get("username") or "default")
+    item = add_map(
+        username=username,
+        name=str(payload.get("name") or "未命名地图"),
+        description=str(payload.get("description") or ""),
+        image_path=str(payload.get("image_path") or ""),
+        locations=payload.get("locations") or [],
+        system=str(payload.get("system") or "custom"),
+    )
+    return {"map": item}
+
+
+@app.post("/api/maps/upload")
+async def upload_map_api(
+    file: UploadFile = File(...),
+    username: str = Form("default"),
+    name: str = Form("未命名地图"),
+    description: str = Form(""),
+    system: str = Form("custom"),
+    locations: str = Form("[]"),
+):
+    from backend.media_manager import add_map, save_image
+    import json as _json
+    data = await file.read()
+    image_path = save_image(username, data, file.filename or "map.png")
+    try:
+        locs = _json.loads(locations) if locations.strip() else []
+    except Exception:
+        locs = []
+    item = add_map(username, name, description, image_path, locs, system)
+    return {"map": item}
+
+
+@app.delete("/api/maps/{map_id}")
+async def delete_map_api(map_id: str, username: str = "default"):
+    from backend.media_manager import delete_map
+    if not delete_map(username, map_id):
+        raise HTTPException(status_code=404, detail="地图不存在")
+    return {"deleted": True}
+
+
+@app.get("/api/bestiary")
+async def list_bestiary_api(username: str = "default"):
+    from backend.media_manager import list_bestiary
+    return {"bestiary": list_bestiary(username)}
+
+
+@app.post("/api/bestiary")
+async def add_bestiary_api(payload: dict):
+    from backend.media_manager import add_bestiary
+    username = str(payload.get("username") or "default")
+    item = add_bestiary(
+        username=username,
+        name=str(payload.get("name") or "未命名生物"),
+        system=str(payload.get("system") or "custom"),
+        description=str(payload.get("description") or ""),
+        stats=payload.get("stats") or {},
+        image_path=str(payload.get("image_path") or ""),
+        tags=payload.get("tags") or [],
+    )
+    return {"bestiary": item}
+
+
+@app.post("/api/bestiary/upload")
+async def upload_bestiary_api(
+    file: UploadFile = File(...),
+    username: str = Form("default"),
+    name: str = Form("未命名生物"),
+    system: str = Form("custom"),
+    description: str = Form(""),
+    stats: str = Form("{}"),
+    tags: str = Form(""),
+):
+    from backend.media_manager import add_bestiary, save_image
+    import json as _json
+    data = await file.read()
+    image_path = save_image(username, data, file.filename or "creature.png")
+    try:
+        stats_data = _json.loads(stats) if stats.strip() else {}
+    except Exception:
+        stats_data = {}
+    item = add_bestiary(username, name, system, description, stats_data, image_path,
+                        [t.strip() for t in tags.split(",") if t.strip()])
+    return {"bestiary": item}
+
+
+@app.delete("/api/bestiary/{beast_id}")
+async def delete_bestiary_api(beast_id: str, username: str = "default"):
+    from backend.media_manager import delete_bestiary
+    if not delete_bestiary(username, beast_id):
+        raise HTTPException(status_code=404, detail="生物不存在")
+    return {"deleted": True}
+
+
+@app.post("/api/media/character")
+async def upload_character_image_pre(username: str = Form("default"), file: UploadFile = File(...)):
+    """创建角色前上传角色图片，返回可用的图片路径。"""
+    from backend.media_manager import save_image
+    image_path = save_image(username, await file.read(), file.filename or "character.png")
+    return {"image_path": image_path}
+
+
+@app.post("/api/game/{session_id}/image")
+async def upload_character_image(session_id: str, file: UploadFile = File(...)):
+    """上传当前角色图片。"""
+    from backend.media_manager import save_image
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    data = await file.read()
+    image_path = save_image(state.username, data, file.filename or "character.png")
+    state.character_info["character_image"] = image_path
+    await push_event(state, "state_update", {"character_image": image_path})
+    return {"image_path": image_path}
+
+
 @app.post("/api/models")
 async def fetch_models(payload: dict):
     """从 OpenAI 兼容接口获取模型列表，用于前端下拉菜单。"""
@@ -877,6 +1009,7 @@ async def create_new_game(request: NewGameRequest):
 
         character_info = {
             "username": request.username or "default",
+            "character_image": request.character_image or "",
             "gender": character.gender,
             "race": character.race,
             "char_class": character.char_class,

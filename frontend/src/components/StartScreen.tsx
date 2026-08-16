@@ -183,6 +183,14 @@ export default function StartScreen(){
   const [saves,setSaves]=useState<Array<{id:string;label:string;auto:boolean;session_id:string;created_at:string;character_name:string;game_system:string}>>([]);
   const [saveLabel,setSaveLabel]=useState('');
 
+  // 地图 / 生物图鉴 / 角色图片
+  const [maps,setMaps]=useState<Array<{id:string;name:string;description:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;system:string}>>([]);
+  const [mapName,setMapName]=useState(''); const [mapDesc,setMapDesc]=useState(''); const [mapSystem,setMapSystem]=useState<GameSystem>('custom'); const [mapFile,setMapFile]=useState<File|null>(null);
+  const [bestiary,setBestiary]=useState<Array<{id:string;name:string;system:string;description:string;stats:Record<string,string>;image_path:string;tags:string[]}>>([]);
+  const [beastName,setBeastName]=useState(''); const [beastSystem,setBeastSystem]=useState<GameSystem>('custom'); const [beastDesc,setBeastDesc]=useState(''); const [beastStats,setBeastStats]=useState(''); const [beastTags,setBeastTags]=useState(''); const [beastFile,setBeastFile]=useState<File|null>(null);
+  const [characterImage,setCharacterImage]=useState('');
+  const [mediaBusy,setMediaBusy]=useState(false); const [mediaErr,setMediaErr]=useState('');
+
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState('');
   const setSession=useGameStore(s=>s.setSession);
@@ -192,6 +200,8 @@ export default function StartScreen(){
     fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
     fetch('/api/knowledge').then(r=>r.json()).then(d=>setKbDocs(d.documents||[])).catch(()=>{});
     fetch(`/api/extensions?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setExtList(d.extensions||[])).catch(()=>{});
+    fetch(`/api/maps?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setMaps(d.maps||[])).catch(()=>{});
+    fetch(`/api/bestiary?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setBestiary(d.bestiary||[])).catch(()=>{});
     fetch(`/api/saves?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setSaves(d.saves||[])).catch(()=>{});
   },[]);
 
@@ -444,6 +454,49 @@ export default function StartScreen(){
     }catch{}
   };
 
+  const uploadMap=async(file:File)=>{
+    setMediaBusy(true);setMediaErr('');
+    try{
+      const fd=new FormData(); fd.append('file',file); fd.append('username',username||'default'); fd.append('name',mapName||file.name); fd.append('description',mapDesc); fd.append('system',mapSystem);
+      const r=await fetch('/api/maps/upload',{method:'POST',body:fd});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'上传失败');}
+      setMapName('');setMapDesc('');setMapFile(null);
+      const d=await (await fetch(`/api/maps?username=${encodeURIComponent(username||'default')}`)).json(); setMaps(d.maps||[]);
+    }catch(e:unknown){setMediaErr(e instanceof Error?e.message:'上传失败');}
+    finally{setMediaBusy(false);}
+  };
+
+  const deleteMap=async(id:string)=>{
+    try{await fetch(`/api/maps/${id}?username=${encodeURIComponent(username||'default')}`,{method:'DELETE'}); setMaps(maps.filter(m=>m.id!==id));}catch{}
+  };
+
+  const uploadBeast=async(file:File)=>{
+    setMediaBusy(true);setMediaErr('');
+    try{
+      const fd=new FormData(); fd.append('file',file); fd.append('username',username||'default'); fd.append('name',beastName||file.name); fd.append('system',beastSystem); fd.append('description',beastDesc); fd.append('stats',beastStats||'{}'); fd.append('tags',beastTags);
+      const r=await fetch('/api/bestiary/upload',{method:'POST',body:fd});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'上传失败');}
+      setBeastName('');setBeastDesc('');setBeastStats('');setBeastTags('');setBeastFile(null);
+      const d=await (await fetch(`/api/bestiary?username=${encodeURIComponent(username||'default')}`)).json(); setBestiary(d.bestiary||[]);
+    }catch(e:unknown){setMediaErr(e instanceof Error?e.message:'上传失败');}
+    finally{setMediaBusy(false);}
+  };
+
+  const deleteBeast=async(id:string)=>{
+    try{await fetch(`/api/bestiary/${id}?username=${encodeURIComponent(username||'default')}`,{method:'DELETE'}); setBestiary(bestiary.filter(b=>b.id!==id));}catch{}
+  };
+
+  const uploadCharacterImage=async(file:File)=>{
+    setMediaBusy(true);setMediaErr('');
+    try{
+      const fd=new FormData(); fd.append('file',file); fd.append('username',username||'default');
+      const r=await fetch('/api/media/character',{method:'POST',body:fd});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'上传失败');}
+      setCharacterImage((await r.json()).image_path||'');
+    }catch(e:unknown){setMediaErr(e instanceof Error?e.message:'上传失败');}
+    finally{setMediaBusy(false);}
+  };
+
   const start=async()=>{
     if(!charName.trim()){setError('请输入角色名称');return;}
     setLoading(true);setError('');
@@ -468,6 +521,7 @@ export default function StartScreen(){
         custom_rules:gameSystem==='custom'?customRules:undefined,
         luck:gameSystem==='coc'?cocLuck:undefined,
         extension_ids:activeExtIds,
+        character_image:characterImage||undefined,
       })});
       if(!r.ok){const e=await r.json();throw new Error(e.detail||'创建失败');}
       setSession((await r.json()).session_id);
@@ -564,6 +618,16 @@ export default function StartScreen(){
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="block text-xs font-medium text-gray-600 mb-1">玩家</label><input value={username} onChange={e=>setUsername(e.target.value)} placeholder="你的名字" className="input-field" /></div>
                 <div><label className="block text-xs font-medium text-gray-600 mb-1">角色名 <span className="text-red-400">*</span></label><input value={charName} onChange={e=>setCharName(e.target.value)} placeholder="取名..." className="input-field" /></div>
+              </div>
+
+              {/* 角色图片 */}
+              <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                {characterImage?<img src={characterImage} alt="角色" className="w-16 h-16 object-cover rounded-lg border border-gray-300" />:<div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center text-[9px] text-gray-400">暂无头像</div>}
+                <div className="flex-1">
+                  <label className="block text-[10px] text-gray-500 mb-1">角色图片（可自定义）</label>
+                  <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>{const f=e.target.files?.[0]; if(f)uploadCharacterImage(f);}} className="block w-full text-xs" />
+                  {mediaErr&&<p className="text-red-500 text-[10px] mt-1">{mediaErr}</p>}
+                </div>
               </div>
 
               {/* 性别 */}
@@ -1003,31 +1067,43 @@ export default function StartScreen(){
                 <textarea value={scenarioText} onChange={e=>setScenarioText(e.target.value)} placeholder="粘贴自定义剧本..." rows={4} className="input-field resize-none" />
               </div>
 
-              <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                <p className="text-[10px] text-gray-500 font-medium mb-2">角色预览 · 角色{GAME_SYSTEM_LABELS[gameSystem]} / 剧本{GAME_SYSTEM_LABELS[scenarioSystem]}</p>
-                <p className="text-sm text-gray-800">
-                  <span className="font-bold text-indigo-600">{charName||'???'}</span>
-                  <span className="text-gray-400"> — </span>
-                  <span>{gameSystem==='coc'?`${occupation}（调查员）`:gameSystem==='custom'?'自定义角色':`${rc.name} ${cc.name} Lv.1`}</span>
-                </p>
-                <div className="flex gap-3 mt-1 text-[10px] text-gray-500">
-                  {gameSystem==='coc'?(
-                    <>
-                      <span>HP:{Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/2)}</span>
-                      <span>MP:{cocAttrs.pow||50}</span>
-                      <span>SAN:{(cocAttrs.pow||50)*5}</span>
-                    </>
-                  ):(
-                    <>
-                      <span>HP:{gameSystem==='dnd4e'?d4Derived.hp:gameSystem==='dnd5e'?d5Derived.hp:30}</span>
-                      <span>AC:12</span>
-                      {gameSystem==='dnd4e'&&<span>回复力:{d4Derived.healingSurges}</span>}
-                    </>
-                  )}
-                  <span>{playMode==='lite'?'精简模式':'深度模式'}</span>
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="flex">
+                  <div className="w-24 h-28 bg-gray-100 flex items-center justify-center shrink-0">
+                    {characterImage?<img src={characterImage} alt="角色" className="w-full h-full object-cover" />:<span className="text-[9px] text-gray-400">暂无头像</span>}
+                  </div>
+                  <div className="flex-1 p-3">
+                    <p className="text-sm font-bold text-gray-900">{charName||'???'}</p>
+                    <p className="text-[10px] text-gray-500">{gameSystem==='coc'?`${occupation}（调查员）`:gameSystem==='custom'?'自定义角色':`${rc.name} ${cc.name} Lv.1`} · {GAME_SYSTEM_LABELS[gameSystem]}</p>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2">
+                      {gameSystem==='coc'?(
+                        <>
+                          <span className="text-[10px] text-gray-500">HP <b className="text-gray-800">{Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/2)}</b></span>
+                          <span className="text-[10px] text-gray-500">MP <b className="text-gray-800">{cocAttrs.pow||50}</b></span>
+                          <span className="text-[10px] text-gray-500">SAN <b className="text-gray-800">{(cocAttrs.pow||50)*5}</b></span>
+                          <span className="text-[10px] text-gray-500">幸运 <b className="text-gray-800">{cocLuck}</b></span>
+                        </>
+                      ):(
+                        <>
+                          <span className="text-[10px] text-gray-500">HP <b className="text-gray-800">{gameSystem==='dnd4e'?d4Derived.hp:gameSystem==='dnd5e'?d5Derived.hp:30}</b></span>
+                          <span className="text-[10px] text-gray-500">AC <b className="text-gray-800">12</b></span>
+                          {gameSystem==='dnd4e'&&<span className="text-[10px] text-gray-500">回复力 <b className="text-gray-800">{d4Derived.healingSurges}</b></span>}
+                          <span className="text-[10px] text-gray-500">{playMode==='lite'?'精简模式':'深度模式'}</span>
+                        </>
+                      )}
+                    </div>
+                    {gameSystem==='coc'&&cocSkillPicks.length>0&&<p className="text-[10px] text-gray-500 mt-1">技能: {cocSkillPicks.join('、')}</p>}
+                    {gameSystem!=='coc'&&skillPicks.length>0&&<p className="text-[10px] text-gray-500 mt-1">技能: {skillPicks.join('、')}</p>}
+                  </div>
                 </div>
-                {gameSystem==='coc'&&cocSkillPicks.length>0&&<p className="text-[10px] text-gray-500 mt-1">技能: {cocSkillPicks.join('、')}</p>}
-                {gameSystem!=='coc'&&skillPicks.length>0&&<p className="text-[10px] text-gray-500 mt-1">技能: {skillPicks.join('、')}</p>}
+                <div className="border-t border-gray-200 p-3 grid grid-cols-3 gap-1.5 bg-gray-50/60">
+                  {Object.entries(gameSystem==='coc'?cocAttrs:finalAttrs).map(([k,v])=>(
+                    <div key={k} className="bg-white rounded border border-gray-200 px-2 py-1 flex items-center justify-between">
+                      <span className="text-[9px] text-gray-400 uppercase">{k}</span>
+                      <span className="text-[11px] font-bold text-gray-800">{v}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
@@ -1156,6 +1232,60 @@ export default function StartScreen(){
                       </span>
                     </label>
                   ))}
+                </div>
+              </div>
+
+              {/* 地图管理 */}
+              <div className="border-t border-gray-200 pt-4 space-y-3">
+                <p className="text-xs font-bold text-gray-800">地区地图（可上传自定义地图）</p>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
+                    <input value={mapName} onChange={e=>setMapName(e.target.value)} placeholder="地图名称" className="input-field text-xs" />
+                    <input value={mapDesc} onChange={e=>setMapDesc(e.target.value)} placeholder="地图简介" className="input-field text-xs" />
+                    <select value={mapSystem} onChange={e=>setMapSystem(e.target.value as GameSystem)} className="input-field text-xs">
+                      {GAME_SYSTEM_OPTIONS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                    <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setMapFile(e.target.files?.[0]||null)} className="block w-full text-xs" />
+                    <button onClick={()=>mapFile&&uploadMap(mapFile)} disabled={mediaBusy||!mapFile} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium disabled:opacity-50">上传地图</button>
+                  </div>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {maps.length===0&&<p className="text-xs text-gray-400">暂无地图</p>}
+                    {maps.map(m=>(
+                      <div key={m.id} className="flex items-center gap-2 bg-white rounded-lg p-2 border border-gray-200">
+                        {m.image_path&&<img src={m.image_path} alt={m.name} className="w-10 h-10 object-cover rounded border" />}
+                        <div className="min-w-0 flex-1"><p className="text-xs font-medium truncate">{m.name}</p><p className="text-[9px] text-gray-400">{m.locations.length} 个地点</p></div>
+                        <button onClick={()=>deleteMap(m.id)} className="text-[10px] text-red-500">删除</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 生物图鉴 */}
+              <div className="border-t border-gray-200 pt-4 space-y-3">
+                <p className="text-xs font-bold text-gray-800">生物图鉴（可上传自定义生物图片）</p>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
+                    <input value={beastName} onChange={e=>setBeastName(e.target.value)} placeholder="生物名称" className="input-field text-xs" />
+                    <select value={beastSystem} onChange={e=>setBeastSystem(e.target.value as GameSystem)} className="input-field text-xs">
+                      {GAME_SYSTEM_OPTIONS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                    <textarea value={beastDesc} onChange={e=>setBeastDesc(e.target.value)} placeholder="生物描述" rows={2} className="input-field resize-none text-xs" />
+                    <input value={beastStats} onChange={e=>setBeastStats(e.target.value)} placeholder={'属性JSON，如 {"HP":20,"AC":14}'} className="input-field font-mono text-xs" />
+                    <input value={beastTags} onChange={e=>setBeastTags(e.target.value)} placeholder="标签，逗号分隔" className="input-field text-xs" />
+                    <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setBeastFile(e.target.files?.[0]||null)} className="block w-full text-xs" />
+                    <button onClick={()=>beastFile&&uploadBeast(beastFile)} disabled={mediaBusy||!beastFile} className="w-full py-2 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium disabled:opacity-50">上传生物</button>
+                  </div>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {bestiary.length===0&&<p className="text-xs text-gray-400">暂无生物</p>}
+                    {bestiary.map(b=>(
+                      <div key={b.id} className="flex items-center gap-2 bg-white rounded-lg p-2 border border-gray-200">
+                        {b.image_path&&<img src={b.image_path} alt={b.name} className="w-10 h-10 object-cover rounded border" />}
+                        <div className="min-w-0 flex-1"><p className="text-xs font-medium truncate">{b.name}</p><p className="text-[9px] text-gray-400">{b.system} · {Object.keys(b.stats||{}).length} 项属性</p></div>
+                        <button onClick={()=>deleteBeast(b.id)} className="text-[10px] text-red-500">删除</button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 

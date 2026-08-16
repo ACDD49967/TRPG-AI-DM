@@ -39,6 +39,7 @@ export default function StatusPanel() {
     <div className="w-48 bg-gray-50/80 border-r border-gray-200 p-2.5 flex flex-col gap-2 overflow-y-auto text-[10px]">
       {/* 角色身份 */}
       <div className="text-center pb-2 border-b border-gray-200">
+        {status.character_image && <img src={status.character_image} alt="角色" className="w-14 h-14 object-cover rounded-lg border border-gray-200 mx-auto mb-1" />}
         <h3 className="text-xs font-bold text-gray-800 truncate">
           {status.character_name || '冒险者'}
         </h3>

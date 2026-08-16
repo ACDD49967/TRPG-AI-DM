@@ -169,6 +169,7 @@ async def sse_event_generator(
         "gender": info.get("gender", ""),
         "game_system": info.get("game_system", "dnd5e"),
         "username": info.get("username", "default"),
+        "character_image": info.get("character_image", ""),
         "san": info.get("san", info.get("max_san", 0)),
         "maxSan": info.get("max_san", info.get("san", 0)),
         "luck": info.get("luck", 0),

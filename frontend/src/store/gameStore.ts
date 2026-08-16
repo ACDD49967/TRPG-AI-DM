@@ -20,6 +20,7 @@ export interface CharacterStatus {
   gender?: string;
   game_system?: 'dnd5e' | 'dnd4e' | 'coc' | 'custom';
   username?: string;
+  character_image?: string;
   san?: number;
   maxSan?: number;
   luck?: number;

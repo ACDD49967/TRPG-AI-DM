@@ -36,6 +36,7 @@ class NewGameRequest(BaseModel):
     custom_rules: str | None = None            # 自定义规则文本（game_system=custom 时使用）
     luck: int | None = Field(default=None, ge=1, le=99)  # COC 幸运值（可选）
     extension_ids: list[str] = Field(default_factory=list)  # 启用的扩展包 ID 列表
+    character_image: str | None = None                     # 角色图片路径（可选）
 
 
 class GenerateBackstoryRequest(BaseModel):

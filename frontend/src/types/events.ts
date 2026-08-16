@@ -47,6 +47,7 @@ export interface StateUpdateEvent {
   max_healing_surges?: number;
   surge_value?: number;
   game_system?: 'dnd5e' | 'dnd4e' | 'coc' | 'custom';
+  character_image?: string;
 }
 
 /** DM给出的建议选项 */
