@@ -3,7 +3,7 @@
 import json, random, re
 from typing import Any
 from openai import AsyncOpenAI
-from backend.config import settings
+from backend.config import ensure_valid_api_key, settings
 from backend.engine.session import (
     GameSessionState, push_event, push_narrative_token,
 )
@@ -814,6 +814,8 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "add_character_note": _exec_character_note,
         "update_bestiary_entry": _exec_update_bestiary,
         "update_city_entry": _exec_update_city,
+        "add_scenario_bestiary": _exec_add_scenario_bestiary,
+        "add_scenario_map": _exec_add_scenario_map,
         "generate_name": lambda a,s: generate_name(a.get("race","人类")),
         "roll_treasure": lambda a,s: "、".join(roll_treasure(int(a.get("cr",1)))),
         "npc_quirk": lambda a,s: npc_quirk(),
@@ -1188,6 +1190,38 @@ async def _exec_update_city(args: dict, state: GameSessionState) -> str:
     return f"城市/地点背景已临时更新: {name} ({reason})"
 
 
+async def _exec_add_scenario_bestiary(args: dict, state: GameSessionState) -> str:
+    from backend.media_manager import add_bestiary
+    scenario_id = state.character_info.get("scenario_id", "") or ""
+    item = add_bestiary(
+        username=state.username or "default",
+        name=args.get("name", "未命名生物"),
+        system=_game_system(state),
+        description=args.get("description", "") or "",
+        stats=args.get("stats") or {},
+        tags=args.get("tags") or [],
+        scenario_id=scenario_id,
+    )
+    await push_event(state, "bestiary_updated", {})
+    return f"已加入当前剧本图鉴: {item['name']}"
+
+
+async def _exec_add_scenario_map(args: dict, state: GameSessionState) -> str:
+    from backend.media_manager import add_map
+    scenario_id = state.character_info.get("scenario_id", "") or ""
+    item = add_map(
+        username=state.username or "default",
+        name=args.get("name", "未命名地图"),
+        description=args.get("description", "") or "",
+        image_path="",
+        locations=args.get("locations") or [],
+        system=_game_system(state),
+        scenario_id=scenario_id,
+    )
+    await push_event(state, "maps_updated", {})
+    return f"已加入当前剧本地图: {item['name']}"
+
+
 async def _exec_character_note(args: dict, state: GameSessionState) -> str:
     ws = getattr(state, 'world_state', None)
     if ws is None: return "无世界状态"
@@ -1202,7 +1236,7 @@ async def _exec_character_note(args: dict, state: GameSessionState) -> str:
 
 def _client(s: GameSessionState) -> AsyncOpenAI:
     return AsyncOpenAI(
-        api_key=s.api_key or settings.LLM_API_KEY,
+        api_key=ensure_valid_api_key(s.api_key),
         base_url=getattr(s, 'base_url', None) or settings.LLM_BASE_URL,
     )
 
@@ -1421,7 +1455,7 @@ async def generate_opening_scene(state: GameSessionState) -> str:
     prompt += _mode_instructions(state)
     prompt += build_system_rule_block(_game_system(state), state.character_info.get("custom_rules", ""))
     system_role = "你是克苏鲁的呼唤守密人（Keeper），负责营造神秘、恐怖与调查氛围。" if _game_system(state) == "coc" else "你是世界级D&D地下城主。"
-    max_tokens = 600 if _play_mode(state) == "lite" else min(1200, skill.max_tokens)
+    max_tokens = 1500 if _play_mode(state) == "lite" else min(3000, skill.max_tokens)
     try:
         stream = await client.chat.completions.create(
             model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],

@@ -88,7 +88,7 @@ def save_image(username: str, data: bytes, filename: str) -> str:
 
 def add_map(username: str, name: str, description: str, image_path: str,
             locations: list[dict] | None = None, system: str = "custom",
-            details: dict | None = None) -> dict:
+            details: dict | None = None, scenario_id: str = "") -> dict:
     items = _load_meta(username, "maps")
     item = {
         "id": uuid.uuid4().hex[:16],
@@ -98,6 +98,7 @@ def add_map(username: str, name: str, description: str, image_path: str,
         "locations": locations or [],
         "system": system,
         "details": details or {},
+        "scenario_id": scenario_id or "",
         "created_at": datetime.now().isoformat(),
     }
     items.append(item)
@@ -105,9 +106,12 @@ def add_map(username: str, name: str, description: str, image_path: str,
     return item
 
 
-def list_maps(username: str) -> list[dict]:
+def list_maps(username: str, scenario_id: str | None = None) -> list[dict]:
     ensure_seeded(username)
-    return _load_meta(username, "maps")
+    items = _load_meta(username, "maps")
+    if scenario_id is not None:
+        return [i for i in items if not i.get("scenario_id") or i.get("scenario_id") == scenario_id]
+    return items
 
 
 def delete_map(username: str, map_id: str) -> bool:
@@ -121,7 +125,7 @@ def delete_map(username: str, map_id: str) -> bool:
 
 def add_bestiary(username: str, name: str, system: str, description: str,
                  stats: dict | None = None, image_path: str = "", tags: list[str] | None = None,
-                 details: dict | None = None) -> dict:
+                 details: dict | None = None, scenario_id: str = "") -> dict:
     items = _load_meta(username, "bestiary")
     item = {
         "id": uuid.uuid4().hex[:16],
@@ -132,6 +136,7 @@ def add_bestiary(username: str, name: str, system: str, description: str,
         "image_path": image_path,
         "tags": tags or [],
         "details": details or {},
+        "scenario_id": scenario_id or "",
         "created_at": datetime.now().isoformat(),
     }
     items.append(item)
@@ -139,9 +144,12 @@ def add_bestiary(username: str, name: str, system: str, description: str,
     return item
 
 
-def list_bestiary(username: str) -> list[dict]:
+def list_bestiary(username: str, scenario_id: str | None = None) -> list[dict]:
     ensure_seeded(username)
-    return _load_meta(username, "bestiary")
+    items = _load_meta(username, "bestiary")
+    if scenario_id is not None:
+        return [i for i in items if not i.get("scenario_id") or i.get("scenario_id") == scenario_id]
+    return items
 
 
 def delete_bestiary(username: str, beast_id: str) -> bool:

@@ -13,7 +13,7 @@ import DecisionPanel from './DecisionPanel';
 import RulebookModal from './RulebookModal';
 
 export default function GameScreen() {
-  const { sessionId, goToStart, sceneInfo, status } = useGameStore();
+  const { sessionId, goToStart, sceneInfo, status, mediaVersion } = useGameStore();
   useSSE(sessionId);
   const [showMap, setShowMap] = useState(false);
   const [showBeast, setShowBeast] = useState(false);
@@ -25,9 +25,10 @@ export default function GameScreen() {
   useEffect(() => {
     const u = status.username || 'default';
     const sys = status.game_system || 'dnd5e';
-    fetch(`/api/maps?username=${encodeURIComponent(u)}`).then(r=>r.json()).then(d=>setMaps((d.maps||[]).filter((m: {system?:string})=>m.system===sys || m.system==='custom'))).catch(()=>{});
-    fetch(`/api/bestiary?username=${encodeURIComponent(u)}`).then(r=>r.json()).then(d=>setBestiary((d.bestiary||[]).filter((b: {system?:string})=>b.system===sys || b.system==='custom'))).catch(()=>{});
-  }, [status.username, status.game_system]);
+    const sid = status.scenario_id || '';
+    fetch(`/api/maps?username=${encodeURIComponent(u)}&scenario_id=${encodeURIComponent(sid)}`).then(r=>r.json()).then(d=>setMaps((d.maps||[]).filter((m: {system?:string})=>m.system===sys || m.system==='custom'))).catch(()=>{});
+    fetch(`/api/bestiary?username=${encodeURIComponent(u)}&scenario_id=${encodeURIComponent(sid)}`).then(r=>r.json()).then(d=>setBestiary((d.bestiary||[]).filter((b: {system?:string})=>b.system===sys || b.system==='custom'))).catch(()=>{});
+  }, [status.username, status.game_system, status.scenario_id, mediaVersion]);
 
   const saveGame = async () => {
     if (!sessionId) return;
@@ -101,29 +102,118 @@ export default function GameScreen() {
 
       {showCharSheet && (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowCharSheet(false)}>
-          <div className="bg-white rounded-2xl max-w-md w-full max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900">角色卡</h3>
               <button onClick={()=>setShowCharSheet(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
             </div>
-            <div className="flex items-center gap-3 mb-3">
+
+            {/* 身份 */}
+            <div className="flex items-center gap-3 mb-4">
               {status.character_image ? <img src={status.character_image} alt="角色" className="w-20 h-20 object-cover rounded-xl border border-gray-200" /> : <div className="w-20 h-20 bg-gray-100 rounded-xl flex items-center justify-center text-[9px] text-gray-400">暂无头像</div>}
               <div>
                 <p className="text-base font-bold">{status.character_name||'冒险者'}</p>
                 <p className="text-[10px] text-gray-500">{status.race||'?'} {status.char_class||'?'} · {status.game_system||'dnd5e'}</p>
+                {status.hit_die && <p className="text-[10px] text-gray-400">生命骰：{status.hit_die}</p>}
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-2 mb-3">
+
+            {/* 核心数值 */}
+            <div className="grid grid-cols-4 gap-2 mb-4">
               <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">HP</p><p className="text-sm font-bold">{status.hp}/{status.maxHp}</p></div>
               <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">AC</p><p className="text-sm font-bold">{status.ac}</p></div>
               <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">等级</p><p className="text-sm font-bold">{status.level}</p></div>
+              <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">经验</p><p className="text-sm font-bold">{status.xp}</p></div>
+              {status.game_system==='coc' && (
+                <>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">MP</p><p className="text-sm font-bold">{status.mp}/{status.maxMp}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">SAN</p><p className="text-sm font-bold">{status.san}/{status.maxSan}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">幸运</p><p className="text-sm font-bold">{status.luck}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">伤害加值</p><p className="text-sm font-bold">{status.damage_bonus||'0'}</p></div>
+                </>
+              )}
+              {status.game_system==='dnd4e' && (
+                <>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">回复力</p><p className="text-sm font-bold">{status.healing_surges}/{status.max_healing_surges}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">回复量</p><p className="text-sm font-bold">{status.surge_value}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">强韧/反射/意志</p><p className="text-sm font-bold">{status.fortitude}/{status.reflex}/{status.will}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">熟练加值</p><p className="text-sm font-bold">{status.proficiency_bonus||2}</p></div>
+                </>
+              )}
+              {status.game_system==='dnd5e' && (
+                <>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">MP</p><p className="text-sm font-bold">{status.mp}/{status.maxMp}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">熟练加值</p><p className="text-sm font-bold">{status.proficiency_bonus||2}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">金币</p><p className="text-sm font-bold">{status.gold}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">法术位</p><p className="text-sm font-bold">{Array.isArray(status.spell_slots) ? status.spell_slots.join('/') : (typeof status.spell_slots==='object' && status.spell_slots ? JSON.stringify(status.spell_slots) : '-')}</p></div>
+                </>
+              )}
             </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {Object.entries(status.attributes||{}).map(([k,v])=>(
-                <div key={k} className="bg-white rounded-lg border border-gray-200 px-2 py-1 flex justify-between"><span className="text-[10px] text-gray-400 uppercase">{k}</span><span className="text-xs font-bold">{v}</span></div>
-              ))}
+
+            {/* 属性 */}
+            <div className="mb-4">
+              <p className="text-[10px] text-gray-400 font-medium mb-1">属性</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {Object.entries(status.attributes||{}).map(([k,v])=>{
+                  const m=Math.floor((Number(v)-10)/2);
+                  return (
+                    <div key={k} className="bg-white rounded-lg border border-gray-200 px-2 py-1 flex justify-between">
+                      <span className="text-[10px] text-gray-400 uppercase">{k}</span>
+                      <span className="text-xs font-bold">{v}{status.game_system!=='coc' && <span className={`ml-1 text-[9px] ${m>=0?'text-emerald-500':'text-red-400'}`}>({m>=0?'+':''}{m})</span>}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            {status.inventory?.length>0&&<div className="mt-3"><p className="text-[10px] text-gray-400 mb-1">背包</p><div className="flex flex-wrap gap-1">{status.inventory.map((it,i)=><span key={i} className="text-[10px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{it}</span>)}</div></div>}
+
+            {/* 技能 / 特长 / 特性 */}
+            {((status.skill_proficiencies?.length ?? 0)>0 || (status.feats?.length ?? 0)>0 || (status.race_traits?.length ?? 0)>0 || (status.class_proficiencies?.length ?? 0)>0) && (
+              <div className="space-y-2 mb-4">
+                {status.skill_proficiencies && status.skill_proficiencies.length>0 && (
+                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">技能熟练</p><div className="flex flex-wrap gap-1">{status.skill_proficiencies.map((s,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
+                )}
+                {status.feats && status.feats.length>0 && (
+                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">特长</p><div className="space-y-1">{status.feats.map((f,i)=><div key={i} className="text-[10px] bg-amber-50 text-amber-800 border border-amber-200 rounded px-2 py-1">{f.name}{f.description?`：${f.description}`:''}</div>)}</div></div>
+                )}
+                {status.race_traits && status.race_traits.length>0 && (
+                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">种族特性</p><div className="flex flex-wrap gap-1">{status.race_traits.map((s,i)=><span key={i} className="text-[10px] bg-gray-100 text-gray-700 border border-gray-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
+                )}
+                {status.class_proficiencies && status.class_proficiencies.length>0 && (
+                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">职业熟练</p><div className="flex flex-wrap gap-1">{status.class_proficiencies.map((s,i)=><span key={i} className="text-[10px] bg-gray-100 text-gray-700 border border-gray-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
+                )}
+              </div>
+            )}
+
+            {/* 剧本专属 / 额外属性 */}
+            {((status.custom_classes?.length ?? 0)>0 || (status.custom_skills?.length ?? 0)>0 || (status.extra_attributes && Object.keys(status.extra_attributes).length>0)) && (
+              <div className="space-y-2 mb-4">
+                {status.custom_classes && status.custom_classes.length>0 && (
+                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">剧本专属职业/身份</p><div className="flex flex-wrap gap-1">{status.custom_classes.map((s,i)=><span key={i} className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
+                )}
+                {status.custom_skills && status.custom_skills.length>0 && (
+                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">剧本专属技能</p><div className="flex flex-wrap gap-1">{status.custom_skills.map((s,i)=><span key={i} className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
+                )}
+                {status.extra_attributes && Object.keys(status.extra_attributes).length>0 && (
+                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">额外属性</p><div className="flex flex-wrap gap-1">{Object.entries(status.extra_attributes).map(([k,v],i)=><span key={i} className="text-[10px] bg-gray-100 text-gray-700 border border-gray-200 rounded px-1.5 py-0.5">{k}: {v}</span>)}</div></div>
+                )}
+              </div>
+            )}
+
+            {/* 背景故事 */}
+            {status.backstory && (
+              <div className="mb-4">
+                <p className="text-[10px] text-gray-400 font-medium mb-1">背景故事</p>
+                <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{status.backstory}</p>
+              </div>
+            )}
+
+            {/* 背包 */}
+            {status.inventory?.length>0 && (
+              <div className="mb-4">
+                <p className="text-[10px] text-gray-400 font-medium mb-1">背包</p>
+                <div className="flex flex-wrap gap-1">{status.inventory.map((it,i)=><span key={i} className="text-[10px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{it}</span>)}</div>
+              </div>
+            )}
           </div>
         </div>
       )}

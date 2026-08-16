@@ -23,7 +23,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from backend.config import settings
+from backend.config import ensure_valid_api_key, settings
 from backend.engine.game_systems import detect_game_system
 
 
@@ -350,7 +350,7 @@ async def generate_summary(
                             source=source_text[:4000],
                         )},
                     ],
-                    max_tokens=800,
+                    max_tokens=2000,
                     temperature=0.4,
                 ),
                 timeout=60,
@@ -404,6 +404,7 @@ async def generate_scenario_from_text(
     model = model_name or settings.LLM_MODEL_NAME
     if not model:
         raise ValueError("请提供模型名称")
+    api_key = ensure_valid_api_key(api_key)
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     if not system or system == "auto":

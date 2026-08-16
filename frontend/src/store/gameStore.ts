@@ -21,12 +21,29 @@ export interface CharacterStatus {
   game_system?: 'dnd5e' | 'dnd4e' | 'coc' | 'custom';
   username?: string;
   character_image?: string;
+  scenario_id?: string;
+  backstory?: string;
+  skill_proficiencies?: string[];
+  feats?: Array<{ name: string; description?: string }>;
+  custom_classes?: string[];
+  custom_skills?: string[];
+  extra_attributes?: Record<string, string>;
+  race_traits?: string[];
+  class_proficiencies?: string[];
+  hit_die?: string;
   san?: number;
   maxSan?: number;
   luck?: number;
   healing_surges?: number;
   max_healing_surges?: number;
   surge_value?: number;
+  proficiency_bonus?: number;
+  spell_slots?: number[] | { spell_slots?: number[]; pact_slots?: number };
+  fortitude?: number;
+  reflex?: number;
+  will?: number;
+  damage_bonus?: string;
+  build?: number;
 }
 
 /** 场景信息（在顶栏显示） */
@@ -97,6 +114,8 @@ interface GameState {
   decisionSuggestions: string[];
   /** P2-12修复：Journal数据SSE推送——替代被动轮询 */
   journalData: Record<string, unknown> | null;
+  /** 媒体内容版本号：AI 新增地图/生物后递增，触发前端重新拉取 */
+  mediaVersion: number;
   /** 场景信息——在顶栏显示 */
   sceneInfo: SceneInfo;
 
@@ -142,6 +161,8 @@ interface GameState {
   extractDecisions: (text: string) => void;
   /** P2-12修复：设置Journal数据（来自SSE推送） */
   setJournalData: (data: Record<string, unknown>) => void;
+  /** 通知前端媒体（地图/图鉴）已更新 */
+  bumpMediaVersion: () => void;
   /** 设置场景信息（来自SSE推送） */
   setSceneInfo: (data: Partial<SceneInfo>) => void;
   /** 重置游戏状态 */
@@ -161,6 +182,7 @@ const initialStatus: CharacterStatus = {
   ac: 10,
   inventory: [],
   attributes: { str: 12, dex: 12, con: 12, int: 12, wis: 12, cha: 12 },
+  scenario_id: '',
 };
 
 const initialScene: SceneInfo = {
@@ -184,6 +206,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   worldOutline: null,
   decisionSuggestions: [],
   journalData: null,
+  mediaVersion: 0,
   sceneInfo: { ...initialScene },
 
   setSession: (sessionId) =>
@@ -198,6 +221,10 @@ export const useGameStore = create<GameState>((set, get) => ({
   /** P2-12修复：SSE推送Journal数据 */
   setJournalData: (data: Record<string, unknown>) =>
     set({ journalData: data }),
+
+  /** 通知前端媒体（地图/图鉴）已更新 */
+  bumpMediaVersion: () =>
+    set((s) => ({ mediaVersion: s.mediaVersion + 1 })),
 
   /** 设置场景信息 */
   setSceneInfo: (data: Partial<SceneInfo>) =>
@@ -318,6 +345,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       worldOutline: null,
       decisionSuggestions: [],
       journalData: null,
+      mediaVersion: 0,
       sceneInfo: { ...initialScene },
     }),
 
@@ -336,6 +364,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       worldOutline: null,
       decisionSuggestions: [],
       journalData: null,
+      mediaVersion: 0,
       sceneInfo: { ...initialScene },
     }),
 }));

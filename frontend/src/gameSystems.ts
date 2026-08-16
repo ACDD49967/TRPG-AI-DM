@@ -100,9 +100,22 @@ export function rollCocLuck(): number {
   return (d(6) + d(6) + d(6)) * 5;
 }
 
-/** D&D 5e/4e 标准属性组随机分配：15,14,13,12,10,8 */
+/** D&D 5e 标准属性组随机分配：15,14,13,12,10,8 */
 export function rollDndAttributes(): Record<string, number> {
   const values = [15, 14, 13, 12, 10, 8];
+  for (let i = values.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [values[i], values[j]] = [values[j], values[i]];
+  }
+  const keys = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+  const out: Record<string, number> = {};
+  keys.forEach((k, i) => { out[k] = values[i]; });
+  return out;
+}
+
+/** D&D 4e 标准属性组随机分配：16,14,13,12,11,10 */
+export function rollDnd4Attributes(): Record<string, number> {
+  const values = [16, 14, 13, 12, 11, 10];
   for (let i = values.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [values[i], values[j]] = [values[j], values[i]];

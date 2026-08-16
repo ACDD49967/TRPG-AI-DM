@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import random, re
 
-from backend.config import settings
+from backend.config import ensure_valid_api_key, settings
 from backend.database import get_db, init_db
 from backend.engine.dm_agent import process_player_action
 from backend.engine.world_state import WorldState
@@ -97,12 +97,16 @@ async def generate_world(request: WorldGenRequest):
 
     if not (request.model_name or settings.LLM_MODEL_NAME):
         raise HTTPException(status_code=400, detail="请先选择或填写模型名称")
+    try:
+        api_key = ensure_valid_api_key(request.api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     try:
         outline_text, score, history, world_state = await build_world(
             player_input=player_input,
             reference_script=request.description,  # 玩家描述即为参考剧本
-            api_key=request.api_key,
+            api_key=api_key,
             model_name=request.model_name,
             base_url=request.base_url,
             game_system=request.game_system,
@@ -138,7 +142,7 @@ async def generate_world(request: WorldGenRequest):
     from backend.scenario_importer import generate_summary
     from backend.scenario_store import create_scenario
     summary_client = AsyncOpenAI(
-        api_key=request.api_key or settings.LLM_API_KEY,
+        api_key=api_key,
         base_url=request.base_url or settings.LLM_BASE_URL,
     )
     summary_model = request.model_name or settings.LLM_MODEL_NAME
@@ -195,6 +199,10 @@ async def generate_world_stream(request: WorldGenRequest):
 
     if not (request.model_name or settings.LLM_MODEL_NAME):
         raise HTTPException(status_code=400, detail="请先选择或填写模型名称")
+    try:
+        api_key = ensure_valid_api_key(request.api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     async def event_stream():
         queue: asyncio.Queue = asyncio.Queue()
@@ -207,7 +215,7 @@ async def generate_world_stream(request: WorldGenRequest):
                 outline_text, score, history, world_state = await build_world(
                     player_input=player_input,
                     reference_script=request.description,
-                    api_key=request.api_key,
+                    api_key=api_key,
                     model_name=request.model_name,
                     base_url=request.base_url,
                     game_system=request.game_system,
@@ -250,7 +258,7 @@ async def generate_world_stream(request: WorldGenRequest):
                 }, ensure_ascii=False)
                 from backend.scenario_importer import generate_summary
                 from backend.scenario_store import create_scenario
-                summary_client = AsyncOpenAI(api_key=request.api_key or settings.LLM_API_KEY, base_url=request.base_url or settings.LLM_BASE_URL)
+                summary_client = AsyncOpenAI(api_key=api_key, base_url=request.base_url or settings.LLM_BASE_URL)
                 summary_model = request.model_name or settings.LLM_MODEL_NAME
                 summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
                 saved = create_scenario(
@@ -566,11 +574,15 @@ async def generate_extension_api(payload: dict):
     base_url = payload.get("base_url") or settings.LLM_BASE_URL
     if not model:
         raise HTTPException(status_code=400, detail="请先选择模型")
+    try:
+        api_key = ensure_valid_api_key(api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if not description.strip():
         raise HTTPException(status_code=400, detail="请描述你想生成的扩展包")
 
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-    prompt = f"""请为一个 TRPG 游戏生成一个扩展包，必须返回合法 JSON，不要其他文本。
+    prompt = f"""请为一个 TRPG 游戏生成一个扩展包，必须返回合法 JSON，不要 Markdown 代码块，不要其他文本。
 
 规则系统：{system}
 扩展包需求：{description}
@@ -589,7 +601,7 @@ JSON 格式：
                 {"role": "system", "content": "你是一位TRPG扩展包设计者。只返回合法JSON。"},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=1200,
+            max_tokens=2000,
             temperature=0.8,
         )
         text = (resp.choices[0].message.content or "").strip()
@@ -665,9 +677,9 @@ async def load_save_api(payload: dict):
 
 
 @app.get("/api/maps")
-async def list_maps_api(username: str = "default"):
+async def list_maps_api(username: str = "default", scenario_id: str | None = None):
     from backend.media_manager import list_maps
-    return {"maps": list_maps(username)}
+    return {"maps": list_maps(username, scenario_id)}
 
 
 @app.post("/api/maps")
@@ -681,6 +693,7 @@ async def add_map_api(payload: dict):
         image_path=str(payload.get("image_path") or ""),
         locations=payload.get("locations") or [],
         system=str(payload.get("system") or "custom"),
+        scenario_id=str(payload.get("scenario_id") or ""),
     )
     return {"map": item}
 
@@ -693,6 +706,7 @@ async def upload_map_api(
     description: str = Form(""),
     system: str = Form("custom"),
     locations: str = Form("[]"),
+    scenario_id: str = Form(""),
 ):
     from backend.media_manager import add_map, save_image
     import json as _json
@@ -702,7 +716,7 @@ async def upload_map_api(
         locs = _json.loads(locations) if locations.strip() else []
     except Exception:
         locs = []
-    item = add_map(username, name, description, image_path, locs, system)
+    item = add_map(username, name, description, image_path, locs, system, scenario_id=scenario_id)
     return {"map": item}
 
 
@@ -715,9 +729,9 @@ async def delete_map_api(map_id: str, username: str = "default"):
 
 
 @app.get("/api/bestiary")
-async def list_bestiary_api(username: str = "default"):
+async def list_bestiary_api(username: str = "default", scenario_id: str | None = None):
     from backend.media_manager import list_bestiary
-    return {"bestiary": list_bestiary(username)}
+    return {"bestiary": list_bestiary(username, scenario_id)}
 
 
 @app.post("/api/bestiary")
@@ -732,6 +746,7 @@ async def add_bestiary_api(payload: dict):
         stats=payload.get("stats") or {},
         image_path=str(payload.get("image_path") or ""),
         tags=payload.get("tags") or [],
+        scenario_id=str(payload.get("scenario_id") or ""),
     )
     return {"bestiary": item}
 
@@ -745,6 +760,7 @@ async def upload_bestiary_api(
     description: str = Form(""),
     stats: str = Form("{}"),
     tags: str = Form(""),
+    scenario_id: str = Form(""),
 ):
     from backend.media_manager import add_bestiary, save_image
     import json as _json
@@ -755,7 +771,8 @@ async def upload_bestiary_api(
     except Exception:
         stats_data = {}
     item = add_bestiary(username, name, system, description, stats_data, image_path,
-                        [t.strip() for t in tags.split(",") if t.strip()])
+                        [t.strip() for t in tags.split(",") if t.strip()],
+                        scenario_id=scenario_id)
     return {"bestiary": item}
 
 
@@ -795,8 +812,10 @@ async def fetch_models(payload: dict):
     import httpx
     base_url = str(payload.get("base_url") or settings.LLM_BASE_URL).rstrip("/")
     api_key = str(payload.get("api_key") or settings.LLM_API_KEY)
-    if not api_key:
-        raise HTTPException(status_code=400, detail="请先填写 API Key")
+    try:
+        api_key = ensure_valid_api_key(api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     try:
         async with httpx.AsyncClient(timeout=15) as hc:
             r = await hc.get(f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"})
@@ -837,6 +856,10 @@ async def generate_character(request: GenerateAttributesRequest):
     model = request.model_name or settings.LLM_MODEL_NAME
     if not model:
         raise HTTPException(status_code=400, detail="请先选择或填写模型名称")
+    try:
+        api_key = ensure_valid_api_key(request.api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     has_backstory = bool(request.backstory.strip())
@@ -1011,13 +1034,13 @@ async def generate_character(request: GenerateAttributesRequest):
                     model=model,
                     messages=[
                         {"role": "system", "content": (
-                            f"你是一位沉浸式角色背景设计师。只返回合法JSON，不要其他文本。"
+                            f"你是一位沉浸式角色背景设计师。只返回合法JSON，不要Markdown代码块，不要其他文本。"
                             f"角色性别是{gender_normalized}，使用'{gender_pronoun}'作为人称代词。"
                             f"背景故事要有具体伤疤、坏习惯和灰色地带，避免模板化叙事。\n\n{style_block}"
                         )},
                         {"role": "user", "content": user_prompt},
                     ],
-                    max_tokens=1000,
+                    max_tokens=3000,
                     temperature=0.9,
                 )
                 break
@@ -1034,7 +1057,6 @@ async def generate_character(request: GenerateAttributesRequest):
             if text.endswith("```"):
                 text = text[:-3]
             text = text.strip()
-
         result = json.loads(text)
 
         # 验证属性
@@ -1053,6 +1075,7 @@ async def generate_character(request: GenerateAttributesRequest):
         return {"attributes": attrs, "backstory": backstory}
 
     except Exception as e:
+        print(f"[CharacterGen] 背景生成最终失败: {e}")
         default_attrs = {
             "战士": {"str": 16, "dex": 13, "con": 15, "int": 10, "wis": 12, "cha": 8},
             "法师": {"str": 8, "dex": 13, "con": 12, "int": 16, "wis": 14, "cha": 10},

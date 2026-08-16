@@ -121,7 +121,7 @@ MERGE_PROMPT = """你是一位TRPG模组主编。请将以下四个部分合并�
 6. 规则合规(10分)：DC/CR是否合理
 7. 史诗感与TRPG风味(10分)：是否读起来像真正的TRPG模组
 
-输出JSON：
+输出JSON（只输出JSON对象，不要Markdown代码块，不要任何解释文字）：
 {{
   "total_score": 数字,
   "scores": {{"完整性":n,"世界观深度":n,"剧情张力":n,"NPC丰富度":n,"可玩性":n,"规则合规":n,"史诗感":n}},
@@ -142,7 +142,7 @@ REVISE_PROMPT = """当前大纲评分 {current_score}/100，未达90分。请根
 ## 问题与建议
 {issues_suggestions}
 
-请输出修改后的完整大纲（JSON格式）：
+请输出修改后的完整大纲（只输出JSON对象，不要Markdown代码块，不要解释文字）：
 {{"revised_outline": "完整的修改后大纲(Markdown)", "changes_summary": "修改摘要"}}"""
 
 
@@ -162,6 +162,11 @@ EXTRACT_STATE_PROMPT = """请从以下TRPG冒险大纲中提取关键的结构�
 2. plot_flags: 关键剧情节点，每个包含 key(旗标名), status(默认"未触发"), description
 3. locations: 关键地点，每个包含 name, description, secrets(如有)
 4. world_rules: 这个世界独特的规则（魔法限制、社会规则等）
+
+## 严格输出格式（必须遵守）
+- 只输出一个 JSON 对象，不要 Markdown 代码块（不要 ```json），不要任何解释、前后缀或注释。
+- 所有键名严格使用英文小写 snake_case。
+- 数组为空时输出 []，字符串为空时输出 ""。
 
 输出纯JSON：
 {{"npcs":[...],"plot_flags":[...],"locations":[...],"world_rules":"..."}}"""
@@ -323,7 +328,7 @@ async def build_world(
     step1 = await _llm(client, model,
         "你是一位获奖奇幻小说家。创作深刻、独特的世界观。",
         _with_knowledge(STEP1_CONFLICT.format(player_input=pi, reference=ref), "世界观 冲突 势力 阵营 魔法 社会", game_system),
-        max_tokens=2000, temp=0.9, timeout=60)
+        max_tokens=3000, temp=0.9, timeout=60)
     if not step1:
         raise RuntimeError("世界生成失败：模型调用多次超时，请检查模型/网络后重试")
 
@@ -333,7 +338,7 @@ async def build_world(
     step2 = await _llm(client, model,
         "你是一位TRPG冒险设计师。设计引人入胜的三幕结构。",
         _with_knowledge(STEP2_PLOT.format(world_context=step1), "三幕结构 剧情节点 转折 结局", game_system),
-        max_tokens=3000, temp=0.85, timeout=90)
+        max_tokens=4000, temp=0.85, timeout=90)
     if not step2:
         step2 = "主线采用经典三幕结构：第一幕引入冲突，第二幕遭遇转折与背叛，第三幕迎来高潮与结局。具体情节建议结合世界观继续细化。"
 
@@ -343,7 +348,7 @@ async def build_world(
     step3 = await _llm(client, model,
         "你是一位角色设计大师。创造有深度的NPC网络。",
         _with_knowledge(STEP3_NPC.format(world_context=step1, plot_context=step2), "NPC 反派 动机 支线 关系", game_system),
-        max_tokens=2500, temp=0.9, timeout=90)
+        max_tokens=3500, temp=0.9, timeout=90)
     if not step3:
         step3 = "关键NPC网络：围绕核心冲突设置至少五名角色，包含盟友、对手与隐藏敌意的中立者，并安排两条与主线隐性关联的支线。"
 
@@ -353,7 +358,7 @@ async def build_world(
     step4 = await _llm(client, model,
         "你是一位TRPG遭遇设计师。设计挑战与秘密。",
         _with_knowledge(STEP4_ENCOUNTERS.format(world_context=step1, plot_context=step2, npc_context=step3), "遭遇 战斗 陷阱 魔法物品 秘密", game_system),
-        max_tokens=2500, temp=0.85, timeout=90)
+        max_tokens=3500, temp=0.85, timeout=90)
     if not step4:
         step4 = "遭遇与隐藏内容：设计五场类型各异的遭遇（战斗、社交、探索、陷阱），三处秘密区域，以及一件带有背景故事的独特宝物。"
 
@@ -411,7 +416,7 @@ async def build_world(
         rescore = await _llm(client, model,
             "你是一位公平的TRPG模组评委。诚实评价，不过分苛刻也不故意放水。",
             f"新大纲:\n{outline[:4000]}\n\n请输出JSON: {{\"total_score\":数字(0-100)}}",
-            max_tokens=500, temp=0.3, timeout=60)
+            max_tokens=1200, temp=0.3, timeout=60)
         try:
             rescore_data = _extract_json(rescore)
             new_score = rescore_data.get("total_score", score)

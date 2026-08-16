@@ -19,6 +19,24 @@ function parseSSEData(lines: string[]): Record<string, unknown> | null {
   }
 }
 
+/** 将后端 snake_case 状态字段映射为前端 camelCase，避免 maxHp/maxMp/maxSan 不更新 */
+function normalizeStatusUpdate(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...data };
+  if (out.max_hp !== undefined) {
+    out.maxHp = out.max_hp;
+    delete out.max_hp;
+  }
+  if (out.max_mp !== undefined) {
+    out.maxMp = out.max_mp;
+    delete out.max_mp;
+  }
+  if (out.max_san !== undefined) {
+    out.maxSan = out.max_san;
+    delete out.max_san;
+  }
+  return out;
+}
+
 export function useSSE(sessionId: string | null) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastSeqRef = useRef(0);
@@ -87,7 +105,7 @@ export function useSSE(sessionId: string | null) {
           }
         }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        store.getState().updateStatus(update as any);
+        store.getState().updateStatus(normalizeStatusUpdate(update) as any);
       },
 
       choices: (data) => {
@@ -142,6 +160,14 @@ export function useSSE(sessionId: string | null) {
         }
       },
 
+      maps_updated: () => {
+        store.getState().bumpMediaVersion();
+      },
+
+      bestiary_updated: () => {
+        store.getState().bumpMediaVersion();
+      },
+
       scene_update: (data) => {
         store.getState().setSceneInfo({
           location: data.location as string || '',
@@ -170,7 +196,7 @@ export function useSSE(sessionId: string | null) {
     const eventTypes = [
       'intro', 'narrative', 'narrative_flush', 'dice_roll',
       'state_update', 'choices', 'game_event', 'error', 'end_of_turn',
-      'journal_update', 'scene_update',
+      'journal_update', 'scene_update', 'maps_updated', 'bestiary_updated',
     ];
 
     for (const eventType of eventTypes) {

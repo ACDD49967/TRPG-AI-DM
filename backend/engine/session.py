@@ -150,7 +150,7 @@ async def sse_event_generator(
     from backend.engine.dm_agent import generate_opening_scene
 
     try:
-        await generate_opening_scene(state)
+        await asyncio.wait_for(generate_opening_scene(state), timeout=30)
     except Exception:
         await push_narrative_token(state, f"欢迎，{state.character_name}。冒险开始了…")
 
@@ -174,6 +174,16 @@ async def sse_event_generator(
         "game_system": info.get("game_system", "dnd5e"),
         "username": info.get("username", "default"),
         "character_image": info.get("character_image", ""),
+        "scenario_id": info.get("scenario_id", ""),
+        "backstory": info.get("backstory", ""),
+        "skill_proficiencies": info.get("skill_proficiencies", []),
+        "feats": info.get("feats", []),
+        "custom_classes": info.get("custom_classes", []),
+        "custom_skills": info.get("custom_skills", []),
+        "extra_attributes": info.get("extra_attributes", {}),
+        "race_traits": info.get("race_traits", []),
+        "class_proficiencies": info.get("class_proficiencies", []),
+        "hit_die": info.get("hit_die", ""),
         "san": info.get("san", info.get("max_san", 0)),
         "maxSan": info.get("max_san", info.get("san", 0)),
         "luck": info.get("luck", 0),

@@ -108,6 +108,21 @@ UPDATE_CITY_TOOL = _tool("update_city_entry",
      "reason": {"type": "string"}},
     ["name", "changes", "reason"])
 
+ADD_SCENARIO_BESTIARY_TOOL = _tool("add_scenario_bestiary",
+    "在当前剧本中新增一个生物图鉴条目（仅当前剧本生效，不写入知识库）。用于遭遇新怪物、NPC召唤物或特殊生物时。",
+    {"name": {"type": "string", "description": "生物名称"},
+     "description": {"type": "string", "description": "外观/习性或背景简述"},
+     "stats": {"type": "object", "description": "数值，如 HP/AC/攻击/技能等"},
+     "tags": {"type": "array", "items": {"type": "string"}, "description": "标签，如 人形生物/神话生物"}},
+    ["name"])
+
+ADD_SCENARIO_MAP_TOOL = _tool("add_scenario_map",
+    "在当前剧本中新增一张地图（仅当前剧本生效，不写入知识库）。用于发现新区域、进入地城或需要展示场景布局时。",
+    {"name": {"type": "string", "description": "地图/地点名称"},
+     "description": {"type": "string", "description": "区域描述"},
+     "locations": {"type": "array", "items": {"type": "object"}, "description": "可选地点标记 [{name,x,y}]"}},
+    ["name"])
+
 GENERATE_NAME_TOOL = _tool("generate_name",
     "生成一个符合种族/背景的 NPC 名字。",
     {"race": {"type": "string", "description": "种族，如人类/精灵/矮人"}},
@@ -133,5 +148,6 @@ DM_TOOLS = [
     DEATH_SAVE_TOOL, REST_TOOL, ADD_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
     UPDATE_WORLD_STATE_TOOL, REVEAL_INFO_TOOL, UPDATE_SCENE_TOOL,
     ADD_CHARACTER_NOTE_TOOL, UPDATE_BESTIARY_TOOL, UPDATE_CITY_TOOL,
+    ADD_SCENARIO_BESTIARY_TOOL, ADD_SCENARIO_MAP_TOOL,
     GENERATE_NAME_TOOL, ROLL_TREASURE_TOOL, NPC_QUIRK_TOOL, SEARCH_KNOWLEDGE_TOOL,
 ]

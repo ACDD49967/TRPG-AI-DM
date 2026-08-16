@@ -16,13 +16,21 @@ import {
   getDnd5Derived,
   rollCocAttributes,
   rollCocLuck,
+  rollDnd4Attributes,
   rollDndAttributes,
   type GameSystem,
 } from '../gameSystems';
 
-const COST: Record<number,number>={8:0,9:1,10:2,11:3,12:4,13:5,14:7,15:9,16:11,17:13,18:15,19:17,20:19};
-const TOTAL=27,MIN=8,MAX=20;
+const DND5_COST: Record<number,number>={8:0,9:1,10:2,11:3,12:4,13:5,14:7,15:9};
+const DND4_COST: Record<number,number>={8:0,9:1,10:2,11:3,12:4,13:5,14:6,15:8,16:10,17:13,18:16};
+const DND5_TOTAL=27,DND5_MIN=8,DND5_MAX=15;
+const DND4_TOTAL=22,DND4_MIN=8,DND4_MAX=18;
 const LS_KEY='dnd_config';
+
+function pointBuyConfig(system: GameSystem): { cost: Record<number, number>; total: number; min: number; max: number } {
+  if (system === 'dnd4e') return { cost: DND4_COST, total: DND4_TOTAL, min: DND4_MIN, max: DND4_MAX };
+  return { cost: DND5_COST, total: DND5_TOTAL, min: DND5_MIN, max: DND5_MAX };
+}
 
 const ATTRS=[
   {k:'str',n:'力量',e:'STR',icon:'STR',s:'运动·近战'},
@@ -88,7 +96,7 @@ const WORLD_STAGES=[
 ];
 
 function mod(v:number){const m=Math.floor((v-10)/2);return m>=0?`+${m}`:`${m}`;}
-function spent(a:Record<string,number>){let s=0;for(const v of Object.values(a))s+=COST[v]||0;return s;}
+function spent(a:Record<string,number>, cost: Record<number,number>){let s=0;for(const v of Object.values(a))s+=cost[v]||0;return s;}
 
 // ═══════════════════════ localStorage持久化 ═══════════════════════
 
@@ -159,10 +167,10 @@ export default function StartScreen(){
   const [gameSystem,setGameSystem]=useState<GameSystem>('dnd5e');
   const [scenarioSystem,setScenarioSystem]=useState<GameSystem>('dnd5e');
   const [customRules,setCustomRules]=useState('');
-  const [cocAttrs,setCocAttrs]=useState<Record<string,number>>({str:50,con:50,dex:50,int:50,pow:50,cha:50,siz:50,edu:50});
+  const [cocAttrs,setCocAttrs]=useState<Record<string,number>>(()=>rollCocAttributes());
   const [occupation,setOccupation]=useState('学者');
   const [cocSkillPicks,setCocSkillPicks]=useState<string[]>([]);
-  const [cocLuck,setCocLuck]=useState(50);
+  const [cocLuck,setCocLuck]=useState<number>(()=>rollCocLuck());
   const [customAttrs,setCustomAttrs]=useState<Record<string,number>>({str:10,dex:10,con:10,int:10,wis:10,cha:10});
   const [splitter,setSplitter]=useState<'naive'|'semantic'>('naive');
   const [chunkSize,setChunkSize]=useState(900);
@@ -241,7 +249,8 @@ export default function StartScreen(){
     finally{setModelFetchBusy(false);}
   };
 
-  const rm=useMemo(()=>TOTAL-spent(attrs),[attrs]);
+  const pb = pointBuyConfig(gameSystem);
+  const rm=useMemo(()=>pb.total-spent(attrs, pb.cost),[attrs, pb]);
   const finalAttrs=useMemo(()=>{
     if(gameSystem==='coc') return cocAttrs;
     if(gameSystem==='custom') return customAttrs;
@@ -259,8 +268,8 @@ export default function StartScreen(){
   const d5Derived = getDnd5Derived(cc.name, finalAttrs, 1);
   const d4Derived = getDnd4Derived(cc.name, finalAttrs);
 
-  const inc=useCallback((k:string)=>setAttrs(p=>{const c=p[k];if(c>=MAX)return p;const nv=c+1;if(spent(p)+(COST[nv]||0)-(COST[c]||0)>TOTAL)return p;return{...p,[k]:nv};}),[]);
-  const dec=useCallback((k:string)=>setAttrs(p=>p[k]<=MIN?p:{...p,[k]:p[k]-1}),[]);
+  const inc=useCallback((k:string)=>setAttrs(p=>{const c=p[k];if(c>=pb.max)return p;const nv=c+1;if(spent(p, pb.cost)+(pb.cost[nv]||0)-(pb.cost[c]||0)>pb.total)return p;return{...p,[k]:nv};}),[pb]);
+  const dec=useCallback((k:string)=>setAttrs(p=>p[k]<=pb.min?p:{...p,[k]:p[k]-1}),[pb]);
 
   const toggleSkill=(name:string)=>{setSkillPicks(p=>p.includes(name)?p.filter(s=>s!==name):p.length<2?[...p,name]:p);};
 
@@ -283,12 +292,17 @@ export default function StartScreen(){
       if(backstoryOnly)body.attributes=isCoc?cocAttrs:attrs;
       else if(backstoryText.trim())body.backstory=backstoryText.trim();
       const r=await fetch('/api/generate/character',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      if(!r.ok)throw new Error('生成失败');
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'生成失败');}
       const d=await r.json();
       if(backstoryOnly){
         d.attributes=isCoc?cocAttrs:attrs;
       }
       setAiGen(d);
+      if(d.fallback){
+        setAiErr('LLM 调用失败，已使用降级默认值（请检查 API Key / 模型 / 网络）');
+      }else{
+        setAiErr('');
+      }
     }catch(e:unknown){setAiErr(e instanceof Error?e.message:'生成失败');}
     finally{setAiBusy(false);}
   };
@@ -303,7 +317,7 @@ export default function StartScreen(){
         custom_classes:customClasses,custom_skills:customSkills,extra_attributes:extraAttributes,
         api_key:apiKey||undefined,model_name:modelName||undefined,base_url:baseUrl||undefined,
       })});
-      if(!r.ok)throw new Error('生成失败');
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'生成失败');}
       const reader=r.body?.getReader();
       const decoder=new TextDecoder();
       let buffer='';
@@ -829,7 +843,7 @@ export default function StartScreen(){
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-xs font-medium text-gray-600">属性分配</label>
                     <div className="flex gap-1">
-                      <button onClick={()=>{setAttrs(rollDndAttributes()); setAttrMode('manual');}} className="text-[10px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-gray-300">随机</button>
+                      <button onClick={()=>{setAttrs(gameSystem==='dnd4e'?rollDnd4Attributes():rollDndAttributes()); setAttrMode('manual');}} className="text-[10px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-gray-300">随机</button>
                       <button onClick={()=>setAttrMode('manual')} className={`text-[10px] px-2.5 py-1 rounded-lg border ${attrMode==='manual'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-400'}`}>手动</button>
                       <button onClick={()=>setAttrMode('ai')} className={`text-[10px] px-2.5 py-1 rounded-lg border ${attrMode==='ai'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-400'}`}>自动</button>
                     </div>
@@ -838,9 +852,9 @@ export default function StartScreen(){
                   {attrMode==='manual'&&(
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5 border border-gray-200">
-                        <span className="text-[10px] text-gray-500">购点{TOTAL}pt · 8-20 · 15以上每点2pt</span>
+                        <span className="text-[10px] text-gray-500">购点 {pb.total}pt · {pb.min}-{pb.max} · 按官方点数表</span>
                         <div className="flex items-center gap-2">
-                          <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full transition-all" style={{width:`${((TOTAL-rm)/TOTAL)*100}%`}}/></div>
+                          <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full transition-all" style={{width:`${pb.total>0?((pb.total-rm)/pb.total)*100:0}%`}}/></div>
                           <span className={`text-xs font-bold ${rm<0?'text-red-500':'text-indigo-600'}`}>{rm}</span>
                         </div>
                       </div>
@@ -851,9 +865,9 @@ export default function StartScreen(){
                           <span className="text-[9px] text-gray-400 hidden sm:block w-20">{a.s}</span>
                           {pri&&<span className="text-[9px] bg-amber-100 text-amber-700 px-1 rounded-full">主</span>}
                           <div className="flex items-center gap-1 ml-auto">
-                            <button onClick={()=>dec(a.k)} disabled={v<=MIN} className="w-6 h-6 rounded bg-gray-100 border border-gray-200 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-xs">−</button>
+                            <button onClick={()=>dec(a.k)} disabled={v<=pb.min} className="w-6 h-6 rounded bg-gray-100 border border-gray-200 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-xs">−</button>
                             <span className="w-6 text-center text-xs font-bold text-gray-700">{v}</span>
-                            <button onClick={()=>inc(a.k)} disabled={v>=MAX||rm<(COST[v+1]||99)-(COST[v]||0)} className="w-6 h-6 rounded bg-gray-100 border border-gray-200 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-xs">+</button>
+                            <button onClick={()=>inc(a.k)} disabled={v>=pb.max||rm<(pb.cost[v+1]||99)-(pb.cost[v]||0)} className="w-6 h-6 rounded bg-gray-100 border border-gray-200 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-xs">+</button>
                           </div>
                           <span className="w-12 text-right text-xs font-bold text-indigo-600">{v}<span className={`ml-0.5 ${(v-10)>=0?'text-emerald-500':'text-red-400'}`}>({mod(v)})</span></span>
                         </div>
@@ -901,9 +915,10 @@ export default function StartScreen(){
                       <div key={a.key} className="flex items-center gap-2 p-2 rounded-lg border border-gray-200 bg-white">
                         <span className="text-sm">{a.icon}</span>
                         <span className="text-xs font-semibold text-gray-700 w-12">{a.label}</span>
-                        <input type="number" min={1} max={99} value={cocAttrs[a.key]||50} onChange={e=>setCocAttrs(p=>({...p,[a.key]:Math.max(1,Math.min(99,Number(e.target.value)||50))}))} className="input-field text-xs py-1 px-2" />
+                        <span className="ml-auto text-xs font-bold text-indigo-600">{cocAttrs[a.key]||50}</span>
                       </div>
                     ))}
+                    <p className="text-[10px] text-gray-400">按 COC 7e 规则掷骰生成：STR/CON/DEX/INT/POW/CHA=3d6×5，SIZ/EDU=(2d6+6)×5；不可自由填写。</p>
                   </div>
                   <div className="mt-3 bg-gray-50 rounded-lg p-3 border border-gray-200 grid grid-cols-2 gap-2 text-xs">
                     <div>HP: <b>{Math.max(1, Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/10))}</b></div>

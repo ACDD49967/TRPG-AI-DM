@@ -6,6 +6,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def ensure_valid_api_key(api_key: str | None = None) -> str:
+    """校验 API Key，拒绝空值或 .env.example 中的示例占位 Key。"""
+    key = (api_key or settings.LLM_API_KEY or "").strip()
+    lowered = key.lower()
+    if not key or "your-api-key" in lowered or lowered.startswith("sk-your"):
+        raise ValueError("未配置有效 API Key（当前为示例占位 Key），请在前端填写真实 Key")
+    return key
+
+
 class Settings:
     """TRPG AI 跑团主持应用的全局配置。"""
 
