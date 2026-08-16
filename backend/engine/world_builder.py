@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 from backend.config import settings
 from backend.engine.world_state import NpcEntry, PlotFlag, LocationEntry, WorldState
 from backend.engine.game_systems import build_system_rule_block, get_system
+from backend.knowledge_base import get_knowledge_base
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -191,6 +192,19 @@ async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
         return ""
 
 
+def _with_knowledge(prompt: str, query: str, system: str, top_k: int = 3) -> str:
+    """从本地知识库检索相关规则/设定片段并附加到 Prompt（固定程序，零 token）。"""
+    try:
+        results = get_knowledge_base().retrieve(query, system=system, top_k=top_k)
+        if results:
+            block = "\n\n## 可用规则/设定参考（来自知识库，按需采用）\n"
+            block += "\n".join(f"- [{r.get('title','')}] {r.get('text','')[:300]}" for r in results)
+            return prompt + block
+    except Exception:
+        pass
+    return prompt
+
+
 def _dedupe_headings(text: str) -> str:
     """合并后处理：去除连续/重复出现的相同 Markdown 标题。"""
     seen: set[str] = set()
@@ -239,6 +253,8 @@ async def build_world(
     api_key = api_key or settings.LLM_API_KEY
     base_url = base_url or settings.LLM_BASE_URL
     model = model_name or settings.LLM_MODEL_NAME
+    if not model:
+        raise ValueError("请提供模型名称")
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
     # P2修复：为世界生成增加宽松的评分基线，避免无限修订循环
 
@@ -254,7 +270,8 @@ async def build_world(
     print("[WorldBuilder] Step 1/6: 世界观与冲突核心...")
     step1 = await _llm(client, model,
         "你是一位获奖奇幻小说家。创作深刻、独特的世界观。",
-        STEP1_CONFLICT.format(player_input=pi, reference=ref), max_tokens=2000, temp=0.9, timeout=60)
+        _with_knowledge(STEP1_CONFLICT.format(player_input=pi, reference=ref), "世界观 冲突 势力 阵营 魔法 社会", game_system),
+        max_tokens=2000, temp=0.9, timeout=60)
     if not step1:
         return "世界生成超时——请重试或使用手动上下文。", 0, [], WorldState()
 
@@ -262,7 +279,8 @@ async def build_world(
     print("[WorldBuilder] Step 2/6: 主线三幕结构...")
     step2 = await _llm(client, model,
         "你是一位D&D冒险设计师。设计引人入胜的三幕结构。",
-        STEP2_PLOT.format(world_context=step1), max_tokens=3000, temp=0.85, timeout=90)
+        _with_knowledge(STEP2_PLOT.format(world_context=step1), "三幕结构 剧情节点 转折 结局", game_system),
+        max_tokens=3000, temp=0.85, timeout=90)
     if not step2:
         step2 = f"(生成超时) 基于世界观的默认三幕结构。"
 
@@ -270,7 +288,8 @@ async def build_world(
     print("[WorldBuilder] Step 3/6: NPC网络与支线...")
     step3 = await _llm(client, model,
         "你是一位角色设计大师。创造有深度的NPC网络。",
-        STEP3_NPC.format(world_context=step1, plot_context=step2), max_tokens=2500, temp=0.9, timeout=90)
+        _with_knowledge(STEP3_NPC.format(world_context=step1, plot_context=step2), "NPC 反派 动机 支线 关系", game_system),
+        max_tokens=2500, temp=0.9, timeout=90)
     if not step3:
         step3 = f"(生成超时) 默认NPC配置。"
 
@@ -278,7 +297,7 @@ async def build_world(
     print("[WorldBuilder] Step 4/6: 遭遇表与隐藏内容...")
     step4 = await _llm(client, model,
         "你是一位D&D遭遇设计师。设计挑战与秘密。",
-        STEP4_ENCOUNTERS.format(world_context=step1, plot_context=step2, npc_context=step3),
+        _with_knowledge(STEP4_ENCOUNTERS.format(world_context=step1, plot_context=step2, npc_context=step3), "遭遇 战斗 陷阱 魔法物品 秘密", game_system),
         max_tokens=2500, temp=0.85, timeout=90)
     if not step4:
         step4 = f"(生成超时) 默认遭遇配置。"

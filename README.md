@@ -12,6 +12,8 @@
 - **沉浸式背景生成**：创建角色后，可将角色信息与已选剧本总结一起交给 LLM 生成与世界背景相符的沉浸式背景；也可自行填写。
 - **角色与剧本解耦**：角色规则系统由玩家独立选择，不随所选剧本自动绑定；同一角色可搭配不同剧本。
 - **本地知识库 / RAG**：内置 D&D 5e、D&D 4e、COC、自定义规则备注；支持上传 PDF/DOCX/TXT 或添加文字备注，AI 按需检索设定细节，不把所有内容塞进上下文。
+- **剧本三模式**：已有剧本 / 本体切分 / AI 自动生成；不同模式自动增减 AI 生成相关选项。
+- **API 模型自动获取**：API 配置前置，默认 OpenAI 兼容地址；填入地址与 Key 后可自动获取模型列表下拉选择或手动填写。
 - **风格化叙事**：D&D 采用西幻史诗文风，COC 采用克苏鲁恐怖守密人文风，自定义世界严格贴合玩家规则。
 - **精简 / 深度双模式**：开局选择「精简模式」（低 token、快节奏）或「深度模式」（高 token、高深度扮演）。
 
@@ -21,7 +23,7 @@
 |------|---------|------|
 | Python | 3.11+ | 后端 API 服务器 |
 | Node.js | 18+ | 前端 UI（可选，后端可独立运行） |
-| DeepSeek API Key | — | [免费获取](https://platform.deepseek.com/api_keys) |
+| OpenAI / DeepSeek API Key | — | OpenAI 兼容接口即可 |
 
 macOS 用户：`brew install python@3.12 node`
 Ubuntu 用户：`sudo apt install python3.12 python3.12-venv nodejs npm`

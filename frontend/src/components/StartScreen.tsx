@@ -88,9 +88,9 @@ function spent(a:Record<string,number>){let s=0;for(const v of Object.values(a))
 
 function loadConfig():{apiKey:string;modelName:string;baseUrl:string;username:string}{
   try{const d=JSON.parse(localStorage.getItem(LS_KEY)||'{}');return{
-    apiKey:d.apiKey||'',modelName:d.modelName||'deepseek-v4-pro',
-    baseUrl:d.baseUrl||'https://api.deepseek.com/v1',username:d.username||'',
-  };}catch{return{apiKey:'',modelName:'deepseek-v4-pro',baseUrl:'https://api.deepseek.com/v1',username:''};}
+    apiKey:d.apiKey||'',modelName:d.modelName||'',
+    baseUrl:d.baseUrl||'https://api.openai.com/v1',username:d.username||'',
+  };}catch{return{apiKey:'',modelName:'',baseUrl:'https://api.openai.com/v1',username:''};}
 }
 function saveConfig(cfg:{apiKey:string;modelName:string;baseUrl:string;username:string}){
   localStorage.setItem(LS_KEY,JSON.stringify(cfg));
@@ -106,6 +106,11 @@ export default function StartScreen(){
   const [modelName,setModelName]=useState(cfg.modelName);
   const [baseUrl,setBaseUrl]=useState(cfg.baseUrl);
   const [showKey,setShowKey]=useState(false);
+  const [provider,setProvider]=useState<'openai'|'deepseek'|'custom'>(baseUrl.includes('deepseek')?'deepseek':baseUrl.includes('openai')?'openai':'custom');
+  const [modelOptions,setModelOptions]=useState<string[]>([]);
+  const [modelFetchBusy,setModelFetchBusy]=useState(false);
+  const [modelFetchErr,setModelFetchErr]=useState('');
+  const [scenarioMode,setScenarioMode]=useState<'existing'|'split'|'generate'>('generate');
   const [username,setUsername]=useState(cfg.username);
   const [charName,setCharName]=useState('');
   const [gender,setGender]=useState('未指定');
@@ -176,6 +181,24 @@ export default function StartScreen(){
 
   // 自动保持配置（每次关键字段变化）
   useEffect(()=>{saveConfig({apiKey,modelName,baseUrl,username});},[apiKey,modelName,baseUrl,username]);
+
+  const applyProvider=(p:'openai'|'deepseek'|'custom')=>{
+    setProvider(p);
+    if(p==='openai')setBaseUrl('https://api.openai.com/v1');
+    else if(p==='deepseek')setBaseUrl('https://api.deepseek.com/v1');
+  };
+
+  const fetchModels=async()=>{
+    setModelFetchBusy(true);setModelFetchErr('');
+    try{
+      const r=await fetch('/api/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({base_url:baseUrl,api_key:apiKey})});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'获取模型失败');}
+      const d=await r.json();
+      setModelOptions(d.models||[]);
+      if(d.models?.length===1)setModelName(d.models[0]);
+    }catch(e:unknown){setModelFetchErr(e instanceof Error?e.message:'获取模型失败');}
+    finally{setModelFetchBusy(false);}
+  };
 
   const rm=useMemo(()=>TOTAL-spent(attrs),[attrs]);
   const finalAttrs=useMemo(()=>{
@@ -386,6 +409,45 @@ export default function StartScreen(){
           <p className="text-gray-500 text-sm mt-1">单人冒险 · 智能主持</p>
         </div>
 
+        {/* API 连接设置：放在选择剧本前，突出且必须 */}
+        <div className="card p-4 mb-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold text-gray-800">API 连接</p>
+            <div className="flex gap-1">
+              {(['openai','deepseek','custom'] as const).map(p=>(
+                <button key={p} onClick={()=>applyProvider(p)} className={`text-[10px] px-2.5 py-1 rounded-lg border transition-colors ${provider===p?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                  {p==='openai'?'OpenAI':p==='deepseek'?'DeepSeek':'自定义'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1">API 地址</label>
+              <input value={baseUrl} onChange={e=>{setBaseUrl(e.target.value); if(!e.target.value.includes('deepseek')&&!e.target.value.includes('openai'))setProvider('custom');}} placeholder="https://api.openai.com/v1" className="input-field font-mono text-xs" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1">API Key</label>
+              <div className="flex gap-2">
+                <input type={showKey?'text':'password'} value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="sk-..." className="input-field font-mono text-xs flex-1" />
+                <button onClick={()=>setShowKey(!showKey)} className="btn-secondary text-xs px-3">{showKey?'隐藏':'显示'}</button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1">模型（可从服务商自动获取，也可手动填写）</label>
+              <div className="flex gap-2">
+                <input list="model-options" value={modelName} onChange={e=>setModelName(e.target.value)} placeholder="选择或输入模型名称" className="input-field font-mono text-xs flex-1" />
+                <datalist id="model-options">
+                  {modelOptions.map(m=><option key={m} value={m} />)}
+                </datalist>
+                <button onClick={fetchModels} disabled={modelFetchBusy || !apiKey} className="btn-secondary text-xs px-3 whitespace-nowrap">{modelFetchBusy?'获取中...':'获取模型'}</button>
+              </div>
+              {modelFetchErr&&<p className="text-red-500 text-[10px] mt-1">{modelFetchErr}</p>}
+              {modelOptions.length>0&&<p className="text-[10px] text-gray-400 mt-1">已获取 {modelOptions.length} 个模型，可从下拉中选择。</p>}
+            </div>
+          </div>
+        </div>
+
         {/* 游玩模式：在最开始选择，影响 token 消耗与扮演深度 */}
         <div className="grid grid-cols-2 gap-2 mb-4">
           <button onClick={()=>setPlayMode('lite')} className={`p-3 rounded-xl border text-left transition-all ${playMode==='lite'?'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-200':'border-gray-200 bg-white hover:border-gray-300'}`}>
@@ -423,31 +485,6 @@ export default function StartScreen(){
                 剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]} ｜ 角色系统：{GAME_SYSTEM_LABELS[gameSystem]}
                 <span className="text-emerald-600">（角色不绑定剧本，可自由选择）</span>
               </p>
-              {/* API配置 */}
-              <details className="group">
-                <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none">连接设置</summary>
-                <div className="mt-3 p-3 bg-gray-50 rounded-lg space-y-3 border border-gray-200">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">API地址</label>
-                    <input value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} placeholder="https://api.deepseek.com/v1" className="input-field font-mono text-xs" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">API Key</label>
-                    <div className="flex gap-2">
-                      <input type={showKey?'text':'password'} value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="sk-..." className="input-field font-mono" />
-                      <button onClick={()=>setShowKey(!showKey)} className="btn-secondary text-xs px-3">{showKey?'隐藏':'显示'}</button>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 items-end">
-                    <div className="flex-1">
-                      <label className="block text-xs text-gray-500 mb-1">模型</label>
-                      <input value={modelName} onChange={e=>setModelName(e.target.value)} className="input-field font-mono text-xs" />
-                    </div>
-                    <button onClick={()=>setModelName('deepseek-v4-pro')} className="btn-secondary text-xs px-3 py-2.5">默认</button>
-                  </div>
-                </div>
-              </details>
-
               {/* 基础信息 */}
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="block text-xs font-medium text-gray-600 mb-1">玩家</label><input value={username} onChange={e=>setUsername(e.target.value)} placeholder="你的名字" className="input-field" /></div>
@@ -702,7 +739,21 @@ export default function StartScreen(){
             <div className="space-y-5">
               <h2 className="text-lg font-bold text-gray-900">剧本选择与生成</h2>
 
-              {savedScenarios.length>0&&(
+              {/* 剧本模式：已有 / 切分 / AI 自动生成 */}
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  {id:'existing', label:'已有剧本', desc:'直接使用已保存剧本'},
+                  {id:'split', label:'本体切分', desc:'上传剧本文件后切分生成'},
+                  {id:'generate', label:'AI 自动生成', desc:'从描述生成全新剧本'},
+                ] as const).map(mode=>(
+                  <button key={mode.id} onClick={()=>setScenarioMode(mode.id)} className={`p-2.5 rounded-xl border text-left transition-all ${scenarioMode===mode.id?'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200':'border-gray-200 bg-white hover:border-gray-300'}`}>
+                    <div className="text-xs font-bold text-gray-800">{mode.label}</div>
+                    <div className="text-[9px] text-gray-500 mt-0.5">{mode.desc}</div>
+                  </button>
+                ))}
+              </div>
+
+              {scenarioMode==='existing'&&savedScenarios.length>0&&(
                 <div className="card p-3 bg-indigo-50/50 border-indigo-200">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-medium text-indigo-700">📁 已有剧本可直接使用（跳过世界生成）</span>
@@ -731,52 +782,57 @@ export default function StartScreen(){
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">世界描述</label>
-                <textarea value={worldDesc} onChange={e=>setWorldDesc(e.target.value)} placeholder="描述你想要的冒险..." rows={3} className="input-field resize-none" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">基调</label>
-                  <select value={worldTone} onChange={e=>setWorldTone(e.target.value)} className="input-field">
-                    {TONES.map(t=><option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">参考剧本</label>
-                  <textarea value={referenceScript} onChange={e=>setReferenceScript(e.target.value)} placeholder="粘贴参考文本..." rows={2} className="input-field resize-none" />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">备注</label>
-                <textarea value={worldNote} onChange={e=>setWorldNote(e.target.value)} placeholder="特殊规则、限制..." rows={2} className="input-field resize-none" />
-              </div>
-
-              {/* 规则系统选择 */}
-              <div className="bg-indigo-50/40 rounded-lg p-3 border border-indigo-100 space-y-2">
-                <label className="block text-xs font-medium text-gray-700 mb-1">角色规则系统（独立于剧本系统）</label>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {GAME_SYSTEM_OPTIONS.map(opt=>(
-                    <button key={opt.id} onClick={()=>setGameSystem(opt.id)} className={`p-2 rounded-lg border text-left text-xs transition-all ${
-                      gameSystem===opt.id?'border-indigo-400 bg-indigo-100 text-indigo-800':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                    }`}>
-                      <span className="font-bold">{opt.label}</span>
-                      <span className="block text-[9px] opacity-70">{opt.short} · {opt.description}</span>
-                    </button>
-                  ))}
-                </div>
-                {gameSystem==='custom'&&(
+              {scenarioMode==='generate'&&(
+                <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">自定义规则</label>
-                    <textarea value={customRules} onChange={e=>setCustomRules(e.target.value)} placeholder="粘贴你的自定义规则，例如属性名称、判定方式、特殊机制..." rows={3} className="input-field resize-none" />
+                    <label className="block text-xs font-medium text-gray-600 mb-1">世界描述</label>
+                    <textarea value={worldDesc} onChange={e=>setWorldDesc(e.target.value)} placeholder="描述你想要的冒险..." rows={3} className="input-field resize-none" />
                   </div>
-                )}
-                <p className="text-[10px] text-gray-400">生成时使用此规则系统；导入文件时也可让后端自动识别。</p>
-              </div>
 
-              {/* 文件导入：pdf / txt / docx / doc / md */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">基调</label>
+                      <select value={worldTone} onChange={e=>setWorldTone(e.target.value)} className="input-field">
+                        {TONES.map(t=><option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">参考剧本</label>
+                      <textarea value={referenceScript} onChange={e=>setReferenceScript(e.target.value)} placeholder="粘贴参考文本..." rows={2} className="input-field resize-none" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">备注</label>
+                    <textarea value={worldNote} onChange={e=>setWorldNote(e.target.value)} placeholder="特殊规则、限制..." rows={2} className="input-field resize-none" />
+                  </div>
+                </div>
+              )}
+
+              {scenarioMode!=='existing'&&(
+                <div className="bg-indigo-50/40 rounded-lg p-3 border border-indigo-100 space-y-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">角色规则系统（独立于剧本系统）</label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {GAME_SYSTEM_OPTIONS.map(opt=>(
+                      <button key={opt.id} onClick={()=>setGameSystem(opt.id)} className={`p-2 rounded-lg border text-left text-xs transition-all ${
+                        gameSystem===opt.id?'border-indigo-400 bg-indigo-100 text-indigo-800':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                      }`}>
+                        <span className="font-bold">{opt.label}</span>
+                        <span className="block text-[9px] opacity-70">{opt.short} · {opt.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {gameSystem==='custom'&&(
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">自定义规则</label>
+                      <textarea value={customRules} onChange={e=>setCustomRules(e.target.value)} placeholder="粘贴你的自定义规则，例如属性名称、判定方式、特殊机制..." rows={3} className="input-field resize-none" />
+                    </div>
+                  )}
+                  <p className="text-[10px] text-gray-400">生成时使用此规则系统；导入文件时也可让后端自动识别。</p>
+                </div>
+              )}
+
+              {scenarioMode==='split'&&(
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">上传剧本文件（pdf / txt / docx / doc / md）</label>
@@ -807,14 +863,15 @@ export default function StartScreen(){
                   </div>
                 </div>
 
-                {importBusy&&<p className="text-xs text-indigo-600 animate-pulse">⏳ 正在读取、切分并生成剧本（需要多次AI调用）...</p>}
+                {importBusy&&<p className="text-xs text-indigo-600 animate-pulse">正在读取、切分并生成剧本（需要多次AI调用）...</p>}
                 {importErr&&<p className="text-red-500 text-xs">{importErr}</p>}
               </div>
+              )}
 
-              {!selectedScenario&&(
+              {scenarioMode==='generate'&&!selectedScenario&&(
                 <button onClick={genWorld} disabled={worldGenBusy} className="w-full btn-primary">{worldGenBusy?'正在生成世界...':'生成世界大纲'}</button>
               )}
-              {selectedScenario&&(
+              {scenarioMode==='existing'&&selectedScenario&&(
                 <p className="text-xs text-gray-500 text-center">已加载已有剧本，无需生成。直接进入下一步。</p>
               )}
 

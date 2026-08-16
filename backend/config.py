@@ -9,13 +9,13 @@ load_dotenv()
 class Settings:
     """AI地下城主应用的全局配置。"""
 
-    # ── LLM 配置（默认使用 DeepSeek，兼容 OpenAI 协议）──
+    # ── LLM 配置（默认 OpenAI 兼容格式，不预设具体模型）──
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_BASE_URL: str = os.getenv(
         "LLM_BASE_URL",
-        "https://api.deepseek.com/v1",
+        "https://api.openai.com/v1",
     )
-    LLM_MODEL_NAME: str = os.getenv("LLM_MODEL_NAME", "deepseek-v4-pro")
+    LLM_MODEL_NAME: str = os.getenv("LLM_MODEL_NAME", "")
     MAX_OUTPUT_TOKENS: int = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.9"))
 

@@ -352,6 +352,8 @@ async def generate_scenario_from_text(
     api_key = api_key or settings.LLM_API_KEY
     base_url = base_url or settings.LLM_BASE_URL
     model = model_name or settings.LLM_MODEL_NAME
+    if not model:
+        raise ValueError("请提供模型名称")
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     if not system or system == "auto":

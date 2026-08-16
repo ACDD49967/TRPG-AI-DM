@@ -88,6 +88,9 @@ async def generate_world(request: WorldGenRequest):
 角色: {request.character_name}, {request.race} {request.char_class}, Lv.{request.character_level}
 描述: {request.description}"""
 
+    if not (request.model_name or settings.LLM_MODEL_NAME):
+        raise HTTPException(status_code=400, detail="请先选择或填写模型名称")
+
     outline_text, score, history, world_state = await build_world(
         player_input=player_input,
         reference_script=request.description,  # 玩家描述即为参考剧本
@@ -379,6 +382,28 @@ async def seed_knowledge():
     return {"seeded": True}
 
 
+@app.post("/api/models")
+async def fetch_models(payload: dict):
+    """从 OpenAI 兼容接口获取模型列表，用于前端下拉菜单。"""
+    import httpx
+    base_url = str(payload.get("base_url") or settings.LLM_BASE_URL).rstrip("/")
+    api_key = str(payload.get("api_key") or settings.LLM_API_KEY)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="请先填写 API Key")
+    try:
+        async with httpx.AsyncClient(timeout=15) as hc:
+            r = await hc.get(f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"})
+            if r.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"获取模型列表失败: HTTP {r.status_code}")
+            data = r.json()
+            models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+            return {"models": models, "base_url": base_url}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"获取模型列表失败: {e}") from e
+
+
 @app.get("/api/health")
 async def health_check():
     """健康检查端点。"""
@@ -403,6 +428,8 @@ async def generate_character(request: GenerateAttributesRequest):
     api_key = request.api_key or settings.LLM_API_KEY
     base_url = request.base_url or settings.LLM_BASE_URL
     model = request.model_name or settings.LLM_MODEL_NAME
+    if not model:
+        raise HTTPException(status_code=400, detail="请先选择或填写模型名称")
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     has_backstory = bool(request.backstory.strip())
