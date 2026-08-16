@@ -107,6 +107,9 @@ def create_save(state: GameSessionState, label: str = "手动存档", auto: bool
             "scenario_id": state.character_info.get("scenario_id", ""),
             "custom_rules": state.character_info.get("custom_rules", ""),
             "extension_ids": state.character_info.get("extension_ids", []),
+            "api_key": state.api_key,
+            "model_name": state.model_name,
+            "base_url": state.base_url,
         },
     }
     path = _save_path(username, save_id)
@@ -179,6 +182,9 @@ def restore_state_from_save(save_data: dict) -> tuple[GameSessionState, dict]:
         username=save_data.get("username", "default"),
     )
     state.response_cache = dict(session.get("response_cache", {}))
+    state.api_key = session.get("api_key")
+    state.model_name = session.get("model_name")
+    state.base_url = session.get("base_url")
 
     mem = MemorySystem()
     mem_data = session.get("memory", {})
