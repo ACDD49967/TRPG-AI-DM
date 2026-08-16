@@ -17,6 +17,12 @@ from backend.engine.world_state import WorldState, NpcEntry, PlotFlag
 from backend.engine.game_systems import build_system_rule_block, build_stat_glossary, get_system
 from backend.knowledge_base import get_knowledge_base
 from backend.save_manager import auto_save_if_needed
+from backend.skills import get_skill
+from backend.skills.prompts import (
+    COC_SYSTEM_PROMPT,
+    CUSTOM_SYSTEM_PROMPT,
+    DND4E_SYSTEM_PROMPT,
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -680,8 +686,9 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     outline = state.character_info.get("world_outline", "")
     world = state.character_info.get("world_context", "")
     scenario_summary = state.character_info.get("scenario_summary", "")
-    summary_limit = 300 if lite else 600
-    outline_limit = 800 if lite else 2000
+    skill = get_skill(_game_system(state))
+    summary_limit = 300 if lite else skill.summary_limit
+    outline_limit = 800 if lite else skill.outline_limit
     world_state_limit = 500 if lite else 100000
 
     summary_block = f"## 剧本总结\n{scenario_summary[:summary_limit]}" if scenario_summary else ""
@@ -705,14 +712,25 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     if backstory:
         backstory_block = f"\n## 角色背景（决策建议须参考此背景——建议的行动应符合角色的出身、性格和动机）\n{backstory[:200 if lite else 500]}"
 
+    # 使用规则系统技能包：非 DND5e 使用紧凑提示词，避免发送 DND5e 巨型规则
+    skill = get_skill(_game_system(state))
+    if skill.system_prompt is None:
+        base_prompt = SYSTEM_PROMPT.format(
+            character_info="",
+            memory_context="",
+            world_context="",
+            world_state_compact="",
+        )
+    elif skill.system_prompt == "DND4E":
+        base_prompt = DND4E_SYSTEM_PROMPT
+    elif skill.system_prompt == "COC":
+        base_prompt = COC_SYSTEM_PROMPT
+    else:
+        base_prompt = CUSTOM_SYSTEM_PROMPT
+
     # 固定规则前缀：所有静态规则放在前面，动态上下文统一追加到末尾，
     # 这样同一会话/模式的 system prompt 前缀保持稳定，更容易命中 LLM prompt cache。
-    sp = SYSTEM_PROMPT.format(
-        character_info="",
-        memory_context="",
-        world_context="",
-        world_state_compact="",
-    )
+    sp = base_prompt
     sp += DM_DECISION_PROMPT
     sp += _mode_instructions(state)
     sp += build_system_rule_block(
@@ -1198,10 +1216,10 @@ def _mode_instructions(s: GameSessionState) -> str:
 """
 
 
-async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2048):
+async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2048, temperature: float | None = None):
     stream = await client.chat.completions.create(
         model=model, messages=messages, tools=tools,
-        max_tokens=max_tokens, temperature=settings.TEMPERATURE, stream=True,
+        max_tokens=max_tokens, temperature=temperature if temperature is not None else settings.TEMPERATURE, stream=True,
     )
     content = ""; tc_map = {}
     had_tool_call = False  # P0-2修复：追踪工具调用边界
@@ -1238,7 +1256,8 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
     if getattr(state, 'world_state', None) is None:
         state.world_state = WorldState(session_id=state.session_id)
     lite = _play_mode(state) == "lite"
-    state.memory.max_active_turns = 5 if lite else 10
+    skill = get_skill(_game_system(state))
+    state.memory.max_active_turns = 5 if lite else skill.history_rounds
     state.memory.summary_trigger = state.memory.max_active_turns + 1
 
     # 重复信息问题直接返回缓存，避免重复调用 LLM
@@ -1254,12 +1273,12 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
     retrieved = get_knowledge_base().retrieve(
         player_input,
         system=_game_system(state),
-        top_k=3 if lite else 5,
+        top_k=3 if lite else skill.rag_top_k,
     )
     sp = build_system_prompt(state, retrieved_chunks=retrieved)
 
     messages = [{"role":"system","content":sp}]
-    active_turns = state.memory.turns[-5 if lite else -state.memory.max_active_turns:]
+    active_turns = state.memory.turns[-5 if lite else -skill.history_rounds:]
     for t in active_turns:
         messages.append({"role":"user","content":t.player_input})
         if t.dm_response: messages.append({"role":"assistant","content":t.dm_response})
@@ -1277,8 +1296,8 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
         while True:
             if state.aborted:
                 await push_event(state, "error", {"code":"ABORTED","msg":"已中断"}); break
-            max_tokens = 1024 if _play_mode(state) == "lite" else settings.MAX_OUTPUT_TOKENS
-            text, tcs = await _stream_with_tools(client, model, messages, DM_TOOLS, state, max_tokens)
+            max_tokens = 1024 if _play_mode(state) == "lite" else skill.max_tokens
+            text, tcs = await _stream_with_tools(client, model, messages, skill.tools, state, max_tokens, temperature=skill.temperature)
             full += text
             if not tcs: break
             asst = {"role":"assistant","content":text or None}
@@ -1346,8 +1365,9 @@ async def generate_opening_scene(state: GameSessionState) -> str:
     bs = state.character_info.get("backstory", "")
     wc = state.character_info.get("world_outline", "")
     scenario_summary = state.character_info.get("scenario_summary", "")
-    summary_limit = 300 if lite else 600
-    outline_limit = 800 if lite else 1600
+    skill = get_skill(_game_system(state))
+    summary_limit = 300 if lite else skill.summary_limit
+    outline_limit = 800 if lite else skill.outline_limit
     if scenario_summary:
         outline_part = _extract_outline(wc, max_chars=1200) if lite else wc[:outline_limit]
         wc = f"## 剧本总结\n{scenario_summary[:summary_limit]}\n\n## 冒险大纲\n{outline_part}" if wc else f"## 剧本总结\n{scenario_summary[:summary_limit]}"
@@ -1356,11 +1376,11 @@ async def generate_opening_scene(state: GameSessionState) -> str:
     prompt += _mode_instructions(state)
     prompt += build_system_rule_block(_game_system(state), state.character_info.get("custom_rules", ""))
     system_role = "你是克苏鲁的呼唤守密人（Keeper），负责营造神秘、恐怖与调查氛围。" if _game_system(state) == "coc" else "你是世界级D&D地下城主。"
-    max_tokens = 600 if _play_mode(state) == "lite" else 1000
+    max_tokens = 600 if _play_mode(state) == "lite" else min(1200, skill.max_tokens)
     try:
         stream = await client.chat.completions.create(
             model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],
-            max_tokens=max_tokens, temperature=0.95, stream=True,
+            max_tokens=max_tokens, temperature=skill.temperature, stream=True,
         )
         full = ""
         async for chunk in stream:
