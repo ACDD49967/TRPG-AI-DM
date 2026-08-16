@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from openai import AsyncOpenAI
 from backend.config import settings
 from backend.engine.world_state import NpcEntry, PlotFlag, LocationEntry, WorldState
+from backend.engine.game_systems import build_system_rule_block, get_system
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -214,6 +215,8 @@ async def build_world(
     base_url: str | None = None,
     target_score: int = 80,
     max_revisions: int = 2,
+    game_system: str = "dnd5e",
+    custom_rules: str = "",
 ) -> tuple[str, int, list, WorldState]:
     """多Agent分层生成世界大纲→自评→修订→提取世界状态。
 
@@ -227,6 +230,9 @@ async def build_world(
 
     ref = f"\n## 参考剧本\n{reference_script}" if reference_script.strip() else ""
     pi = f"## 玩家设定\n{player_input}"
+    sys_cfg = get_system(game_system)
+    system_block = build_system_rule_block(game_system, custom_rules)
+    pi += f"\n\n## 规则系统\n- 类型: {sys_cfg['label']}\n- 说明: {sys_cfg['description']}\n{system_block[:1800]}"
 
     # ── Step 1: 世界观与冲突核心 ──
     print("[WorldBuilder] Step 1/6: 世界观与冲突核心...")

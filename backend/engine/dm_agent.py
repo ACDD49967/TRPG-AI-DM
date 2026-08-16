@@ -1,6 +1,6 @@
 """AI地下城主——D&D 5e 生动戏剧风 + 反八股正则 + 特长 + 持久化"""
 
-import json, re
+import json, random, re
 from typing import Any
 from openai import AsyncOpenAI
 from backend.config import settings
@@ -14,6 +14,7 @@ from backend.engine.rules import (
 )
 from backend.engine.tools import DM_TOOLS
 from backend.engine.world_state import WorldState, NpcEntry, PlotFlag
+from backend.engine.game_systems import build_system_rule_block, get_system
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -527,6 +528,21 @@ OPENING_PROMPT = """你是D&D地下城主。为以下角色写开场白。开场
 # 辅助
 # ═══════════════════════════════════════════════════════════════
 
+def _roll_damage_simple(spec: str) -> int:
+    """解析 '2d6+3' 并掷出伤害。"""
+    try:
+        import re as _re
+        m = _re.match(r"(\d*)d(\d+)(?:\+(\d+))?", spec.strip().lower())
+        if not m:
+            return 0
+        num = int(m.group(1) or 1)
+        sides = int(m.group(2))
+        bonus = int(m.group(3) or 0)
+        return sum(random.randint(1, sides) for _ in range(num)) + bonus
+    except Exception:
+        return 0
+
+
 def ability_mod_for_skill(skill_name: str, attrs: dict) -> int:
     skill_lower = skill_name.lower()
     if any(w in skill_lower for w in ["潜行","躲藏","开锁","巧手","扒窃","特技","stealth","acrobatics","lockpick","远程","弓","弩"]):
@@ -623,6 +639,10 @@ def build_system_prompt(state: GameSessionState) -> str:
     )
     sp += DM_DECISION_PROMPT
     sp += _mode_instructions(state)
+    sp += build_system_rule_block(
+        _game_system(state),
+        state.character_info.get("custom_rules", ""),
+    )
     return sp
 
 
@@ -651,7 +671,33 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
 async def _exec_dice_roll(args: dict, state: GameSessionState) -> str:
     skill = args["skill_name"]
     dc = args.get("dc", 15)
-    # 自动计算modifier——含熟练加值
+    system = _game_system(state)
+
+    if system == "coc":
+        # COC 7e：d100 百分比检定
+        target = max(1, min(99, dc + int(args.get("modifier", 0) or 0)))
+        roll = random.randint(1, 100)
+        if roll <= 5 or (target > 0 and roll <= max(1, target // 5)):
+            result = "极限成功"
+        elif roll <= target // 2:
+            result = "困难成功"
+        elif roll <= target:
+            result = "成功"
+        elif roll >= 96 and roll > target:
+            result = "大失败"
+        else:
+            result = "失败"
+        await push_event(state, "dice_roll", {
+            "skill": skill, "dc": target, "roll": roll, "modifier": 0,
+            "result": result,
+        })
+        line = f"🎲 {skill}: d100={roll} vs {target}% → {result}"
+        if result in ("极限成功", "困难成功", "大失败"):
+            line += f" [{'克苏鲁神话在低语…' if result=='大失败' else '漂亮的检定！'}]"
+        await push_narrative_token(state, f"\n{line}\n")
+        return line
+
+    # dnd5e / dnd4e / custom：默认 d20 检定
     attrs = state.character_info.get("attributes", {})
     auto_mod = ability_mod_for_skill(skill, attrs)
     # 熟练加值：1-4级=+2, 5-8级=+3, 9-12级=+4
@@ -695,36 +741,54 @@ async def _exec_update_state(args: dict, state: GameSessionState) -> str:
     info = state.character_info
     applied: dict = {}
 
+    # 支持各规则系统的通用数值字段（delta 更新）
+    numeric_delta_fields = {
+        "hp", "max_hp", "mp", "max_mp", "san", "max_san", "luck",
+        "healing_surges", "max_healing_surges", "spell_slots", "spell_points",
+        "power_encounter", "power_daily", "temporary_hp",
+    }
+    direct_set_fields = {"gold", "level", "ac", "proficiency_bonus"}
+
     for k, v in changes.items():
-        if k == "hp":
-            info["hp"] = max(0, min(info.get("max_hp", 30), info.get("hp", 0) + v))
-            applied["hp"] = info["hp"]
-        elif k == "max_hp":
-            info["max_hp"] = max(1, info.get("max_hp", 30) + v)
-            applied["max_hp"] = info["max_hp"]
-        elif k == "gold":
-            info["gold"] = max(0, info.get("gold", 0) + v)
-            applied["gold"] = info["gold"]
+        if k in numeric_delta_fields:
+            min_val = 0
+            max_key = None
+            if k.startswith("max_"):
+                min_val = 1
+            elif k in ("hp", "mp", "san", "healing_surges", "spell_slots", "spell_points", "temporary_hp"):
+                max_key = "max_" + k if k != "temporary_hp" else None
+            if max_key:
+                current = info.get(k, 0) + v
+                current = max(min_val, min(info.get(max_key, current), current))
+            else:
+                current = max(min_val, info.get(k, 0) + v)
+            info[k] = current
+            applied[k] = current
+        elif k in direct_set_fields:
+            info[k] = max(0, int(v))
+            applied[k] = info[k]
         elif k == "xp":
             info["xp"] = max(0, info.get("xp", 0) + v)
             applied["xp"] = info["xp"]
-            # 自动升级
-            old_level = info.get("level", 1)
-            new_level = max(1, 1 + info["xp"] // 300)
-            if new_level > old_level:
-                info["level"] = new_level
-                applied["level"] = new_level
-                hp_gain = max(1, (info.get("attributes", {}).get("con", 10) - 10) // 2 + 5)
-                info["max_hp"] = info.get("max_hp", 30) + hp_gain
-                info["hp"] = min(info.get("max_hp", 30), info.get("hp", 0) + hp_gain)
-                applied["max_hp"] = info["max_hp"]
-                # 每2级触发特长选择
-                if new_level % 2 == 0:
-                    await push_event(state, "game_event", {
-                        "type": "feat_available",
-                        "description": f"🎯 升至{new_level}级！你可以选择一项新特长。",
-                        "extra": {"level": new_level},
-                    })
+            # 自动升级（仅 dnd 系适用；COC/自定义不强行套用）
+            if _game_system(state) in ("dnd5e", "dnd4e"):
+                old_level = info.get("level", 1)
+                new_level = max(1, 1 + info["xp"] // 300)
+                if new_level > old_level:
+                    info["level"] = new_level
+                    applied["level"] = new_level
+                    con = info.get("attributes", {}).get("con", 10)
+                    hp_gain = max(1, (con - 10) // 2 + 5)
+                    info["max_hp"] = info.get("max_hp", 30) + hp_gain
+                    info["hp"] = min(info.get("max_hp", 30), info.get("hp", 0) + hp_gain)
+                    applied["max_hp"] = info["max_hp"]
+                    # 每2级触发特长选择（5e 规则）
+                    if _game_system(state) == "dnd5e" and new_level % 2 == 0:
+                        await push_event(state, "game_event", {
+                            "type": "feat_available",
+                            "description": f"🎯 升至{new_level}级！你可以选择一项新特长。",
+                            "extra": {"level": new_level},
+                        })
         elif k == "inventory_add":
             items = info.setdefault("inventory", {}).setdefault("items", [])
             if v not in items: items.append(v)
@@ -748,13 +812,14 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
     e_mod = args.get("enemy_attack_modifier", 3)
     e_dice = args.get("enemy_damage_dice", "1d6")
     e_hp = args.get("enemy_hp", 20)
+    system = _game_system(state)
 
-    # 通用特长：巨武器大师 -5/+10
-    has_gwm = any(f.get("id") == "great_weapon_master" for f in state.character_info.get("feats", []))
-    ph, pd = combat_attack_roll("你", e_ac, p_mod, p_dice)
-    new_e_hp = max(0, e_hp - pd)
-    ed = 0
-    # 计算玩家AC（从属性+职业+种族）
+    # 通用特长：巨武器大师 -5/+10（仅 5e 有意义）
+    has_gwm = system == "dnd5e" and any(
+        f.get("id") == "great_weapon_master" for f in state.character_info.get("feats", [])
+    )
+
+    # 计算玩家防御/闪避基础值
     attrs = state.character_info.get("attributes", {})
     dex_mod = (attrs.get("dex", 10) - 10) // 2
     cc = state.character_info.get("char_class", "战士")
@@ -766,10 +831,58 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
     race_name = state.character_info.get("race", "")
     if '矮人' in race_name and '山地' in race_name: player_ac += 1
     player_ac = max(8, min(22, player_ac))
+
+    if system == "coc":
+        # COC：d100 战斗技能检定
+        p_skill = max(1, min(99, int(p_mod or 50)))
+        e_skill = max(1, min(99, int(e_mod or 40)))
+        pr = random.randint(1, 100)
+        if pr <= max(1, p_skill // 5) or pr <= 5:
+            p_hit = True
+            p_result = "极限成功"
+        elif pr <= p_skill:
+            p_hit = True
+            p_result = "成功"
+        else:
+            p_hit = False
+            p_result = "失败"
+        pd = _roll_damage_simple(p_dice) if p_hit else 0
+        new_e_hp = max(0, e_hp - pd)
+        ed = 0
+        if new_e_hp > 0:
+            er = random.randint(1, 100)
+            if er <= e_skill:
+                ed = _roll_damage_simple(e_dice)
+            lines = [
+                f"⚔️ 战斗结算（COC d100）",
+                f"你的{p_action}: d100={pr} vs {p_skill}% → {p_result}" + (f"，造成 {pd} 点伤害" if pd else ""),
+                f"{enemy}反击: d100={er} vs {e_skill}% → " + ("命中" if ed else "未命中"),
+            ]
+        else:
+            lines = [
+                f"⚔️ 战斗结算（COC d100）",
+                f"你的{p_action}: d100={pr} vs {p_skill}% → {p_result}" + (f"，造成 {pd} 点伤害" if pd else ""),
+            ]
+        if new_e_hp <= 0: lines.append(f"💀 {enemy}被击败！")
+        desc = "\n".join(lines)
+        extras = {"enemy_name": enemy, "enemy_hp_remaining": new_e_hp,
+                  "player_damage_taken": ed, "player_damage_dealt": pd,
+                  "enemy_dead": new_e_hp <= 0, "system": "coc"}
+        await push_narrative_token(state, f"\n{desc}\n")
+        await push_event(state, "game_event", {"type": "combat", "description": desc, "extra": extras})
+        if ed:
+            await _exec_update_state({"changes": {"hp": -ed}, "reason": f"{enemy}造成{ed}伤害"}, state)
+        return desc
+
+    # dnd5e / dnd4e / custom：d20 战斗
+    ph, pd = combat_attack_roll("你", e_ac, p_mod, p_dice)
+    new_e_hp = max(0, e_hp - pd)
+    ed = 0
     if new_e_hp > 0:
         _, ed = combat_attack_roll(enemy, player_ac, e_mod, e_dice)
 
-    lines = [f"⚔️ 战斗结算", f"攻击: d20={ph.roll}+{p_mod}={ph.total} vs AC{e_ac}→{ph.result.value}"]
+    system_hint = "D&D4e" if system == "dnd4e" else ("D&D5e" if system == "dnd5e" else "自定义")
+    lines = [f"⚔️ 战斗结算（{system_hint} d20）", f"攻击: d20={ph.roll}+{p_mod}={ph.total} vs AC{e_ac}→{ph.result.value}"]
     if pd: lines.append(f"造成 {pd} 点伤害 (敌人HP: {new_e_hp}/{e_hp})")
     if ed: lines.append(f"{enemy}反击: {ed} 点伤害")
     if new_e_hp <= 0: lines.append(f"💀 {enemy}被击败！")
@@ -778,7 +891,7 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
     desc = "\n".join(lines)
     extras = {"enemy_name": enemy, "enemy_hp_remaining": new_e_hp,
               "player_damage_taken": ed, "player_damage_dealt": pd,
-              "enemy_dead": new_e_hp <= 0}
+              "enemy_dead": new_e_hp <= 0, "system": system}
 
     # P1-3: 战斗结果强制内联
     await push_narrative_token(state, f"\n{desc}\n")
@@ -794,6 +907,11 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
 
 
 async def _exec_death_save(args: dict, state: GameSessionState) -> str:
+    if _game_system(state) == "coc":
+        desc = "💀 COC 没有 D&D 式死亡豁免：HP 降至 0 时角色重伤昏迷，由 AI 根据伤害来源决定是否濒死或死亡。"
+        await push_narrative_token(state, f"\n{desc}\n")
+        return desc
+
     ds = getattr(state, '_death_saves', DeathSaves())
     result = roll_death_save(ds)
     state._death_saves = ds
@@ -925,6 +1043,12 @@ def _play_mode(s: GameSessionState) -> str:
     """返回当前游玩模式：lite=精简模式，deep=深度模式。"""
     mode = (s.character_info or {}).get("play_mode", "deep")
     return mode if mode in ("lite", "deep") else "deep"
+
+
+def _game_system(s: GameSessionState) -> str:
+    """返回当前规则系统：dnd5e / dnd4e / coc / custom。"""
+    system = (s.character_info or {}).get("game_system", "dnd5e")
+    return system if system in ("dnd5e", "dnd4e", "coc", "custom") else "dnd5e"
 
 
 def _mode_instructions(s: GameSessionState) -> str:
@@ -1079,10 +1203,12 @@ async def generate_opening_scene(state: GameSessionState) -> str:
         wc = f"## 剧本总结\n{scenario_summary[:600]}\n\n## 冒险大纲\n{wc[:1600]}" if wc else f"## 剧本总结\n{scenario_summary[:600]}"
     prompt = OPENING_PROMPT.format(character_info=ci, backstory=bs or "暂无", world_context=wc[:2000] if wc else "暂无")
     prompt += _mode_instructions(state)
+    prompt += build_system_rule_block(_game_system(state), state.character_info.get("custom_rules", ""))
+    system_role = "你是克苏鲁的呼唤守密人（Keeper），负责营造神秘、恐怖与调查氛围。" if _game_system(state) == "coc" else "你是世界级D&D地下城主。"
     max_tokens = 600 if _play_mode(state) == "lite" else 1000
     try:
         stream = await client.chat.completions.create(
-            model=model, messages=[{"role":"system","content":"你是世界级D&D地下城主。"},{"role":"user","content":prompt}],
+            model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],
             max_tokens=max_tokens, temperature=0.95, stream=True,
         )
         full = ""

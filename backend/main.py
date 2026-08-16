@@ -94,6 +94,8 @@ async def generate_world(request: WorldGenRequest):
         api_key=request.api_key,
         model_name=request.model_name,
         base_url=request.base_url,
+        game_system=request.game_system,
+        custom_rules=request.custom_rules or "",
     )
 
     # 提取 NPC 和旗标摘要
@@ -125,9 +127,10 @@ async def generate_world(request: WorldGenRequest):
     summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
     saved = create_scenario(
         world_outline=outline_text, world_state_json=ws_json,
-        reference_script=request.description, notes="",
+        reference_script=request.description, custom_rules=request.custom_rules or "", notes="",
         title=outline_text.split("\n")[0].replace("#", "").strip()[:60],
-        description=request.description[:200], summary=summary, tone=request.tone,
+        description=request.description[:200], summary=summary,
+        system=request.game_system, tone=request.tone,
         character_name=request.character_name, race=request.race,
         char_class=request.char_class, level=request.character_level,
         score=score,
@@ -138,6 +141,7 @@ async def generate_world(request: WorldGenRequest):
         "scenario_id": scenario_id,
         "content": outline_text,
         "summary": summary,
+        "system": request.game_system,
         "score": score,
         "scores_detail": {},  # 多步生成不逐项返回详情
         "revision_history": history,
@@ -179,6 +183,8 @@ async def import_scenario(
     title: str = Form(""),
     description: str = Form(""),
     tone: str = Form("史诗奇幻"),
+    system: str | None = Form(None),
+    custom_rules: str = Form(""),
     character_name: str = Form("冒险者"),
     race: str = Form("人类"),
     char_class: str = Form("战士"),
@@ -190,13 +196,16 @@ async def import_scenario(
     """上传剧本文件（pdf/txt/docx/doc/md）→ 按所选切分器切分 → 生成并保存新剧本。
 
     支持 splitter=naive（切分器）或 splitter=semantic（语义切分）。
+    支持 system=dnd5e/dnd4e/coc/custom；缺省时自动识别。
     返回的剧本包含约400字总结、世界大纲、结构化世界状态和切分片段。
     """
     from backend.scenario_importer import (
+        detect_game_system,
         extract_text,
         generate_scenario_from_text,
         split_text,
     )
+    from backend.engine.game_systems import SYSTEM_TYPES
 
     if splitter not in ("naive", "semantic"):
         raise HTTPException(status_code=400, detail="splitter 仅支持 naive 或 semantic")
@@ -219,6 +228,11 @@ async def import_scenario(
     if not chunks:
         raise HTTPException(status_code=400, detail="切分后没有生成任何片段")
 
+    if not system or system == "auto":
+        system = detect_game_system(text, title)
+    if system not in SYSTEM_TYPES:
+        raise HTTPException(status_code=400, detail=f"未知规则系统: {system}，可选: {', '.join(SYSTEM_TYPES)}")
+
     try:
         result = await generate_scenario_from_text(
             source_text=text,
@@ -226,6 +240,8 @@ async def import_scenario(
             title=title,
             description=description,
             tone=tone,
+            system=system,
+            custom_rules=custom_rules,
             character_name=character_name,
             race=race,
             char_class=char_class,
@@ -254,7 +270,9 @@ async def get_scenario(scenario_id: str):
         "world_state_json": s.world_state_json,
         "reference_script": s.reference_script,
         "source_chunks": s.source_chunks,
+        "custom_rules": s.custom_rules,
         "summary": s.meta.summary,
+        "system": s.meta.system,
         "notes": s.notes,
     }
 
@@ -598,9 +616,27 @@ async def create_new_game(request: NewGameRequest):
             "reference_script": request.reference_script or "",
             "scenario_id": request.scenario_id or "",
             "scenario_summary": "",
+            "game_system": request.game_system,
+            "custom_rules": request.custom_rules or "",
             "new_world": request.new_world,
             "play_mode": request.play_mode,
         }
+
+        # 根据规则系统预填衍生数值
+        if request.game_system == "coc":
+            attrs_coc = character_info.get("attributes", {})
+            character_info["hp"] = max(1, (attrs_coc.get("con", 50) + attrs_coc.get("siz", 50)) // 2)
+            character_info["max_hp"] = character_info["hp"]
+            character_info["mp"] = attrs_coc.get("pow", 50)
+            character_info["max_mp"] = character_info["mp"]
+            character_info["san"] = attrs_coc.get("pow", 50) * 5
+            character_info["max_san"] = character_info["san"]
+            character_info["luck"] = 50
+        elif request.game_system == "dnd4e":
+            attrs_d4 = character_info.get("attributes", {})
+            con_mod = (attrs_d4.get("con", 10) - 10) // 2
+            character_info["healing_surges"] = max(1, character_info.get("level", 1) + con_mod)
+            character_info["max_healing_surges"] = character_info["healing_surges"]
 
         # 如果指定了已保存剧本ID且不是全新世界——加载剧本
         if request.scenario_id and not request.new_world:
@@ -611,6 +647,8 @@ async def create_new_game(request: NewGameRequest):
                 character_info["world_state_json"] = saved.world_state_json or character_info["world_state_json"]
                 character_info["scenario_id"] = request.scenario_id
                 character_info["scenario_summary"] = saved.meta.summary or character_info.get("scenario_summary", "")
+                character_info["game_system"] = saved.meta.system or character_info.get("game_system", "dnd5e")
+                character_info["custom_rules"] = saved.custom_rules or character_info.get("custom_rules", "")
                 saved.record_play()
 
         # 如果有剧本URL，尝试抓取

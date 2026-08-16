@@ -5,16 +5,20 @@ import { useGameStore } from '../store/gameStore';
 
 const ATTR_LABELS: Record<string, string> = {
   str: '力量', dex: '敏捷', con: '体质', int: '智力', wis: '感知', cha: '魅力',
+  pow: '意志', siz: '体型', edu: '教育',
 };
 const ATTR_ICONS: Record<string, string> = {
   str: '💪', dex: '🏃', con: '🛡️', int: '📚', wis: '👁️', cha: '👑',
+  pow: '🔥', siz: '📏', edu: '🎓',
 };
 
 export default function StatusPanel() {
   const { status, combat } = useGameStore();
+  const system = status.game_system || 'dnd5e';
 
   const hpPct = Math.max(0, status.maxHp > 0 ? (status.hp / status.maxHp) * 100 : 0);
   const mpPct = Math.max(0, status.maxMp > 0 ? (status.mp / status.maxMp) * 100 : 0);
+  const sanPct = Math.max(0, status.maxSan && status.maxSan > 0 ? ((status.san || 0) / status.maxSan) * 100 : 0);
 
   // 将背包物品分类
   const inventory = status.inventory || [];
@@ -43,7 +47,7 @@ export default function StatusPanel() {
           {status.race || '?'} {status.char_class || '?'}
         </p>
         <p className="text-[9px] text-gray-400 mt-0.5">
-          Lv.{status.level} · AC {status.ac}
+          {system === 'coc' ? `SAN ${status.san || 0} · LUCK ${status.luck || 0}` : `Lv.${status.level} · AC ${status.ac}`}
         </p>
       </div>
 
@@ -72,20 +76,42 @@ export default function StatusPanel() {
             />
           </div>
         </div>
-        <div>
+        {system === 'coc' ? (
+          <div>
+            <div className="flex justify-between text-[9px] mb-0.5">
+              <span className="text-gray-500">理智</span>
+              <span className={`font-mono ${sanPct < 30 ? 'text-red-600' : 'text-gray-600'}`}>{status.san}/{status.maxSan}</span>
+            </div>
+            <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <motion.div
+                className="h-full rounded-full"
+                style={{ background: sanPct < 30 ? 'linear-gradient(90deg, #7f1d1d, #ef4444)' : 'linear-gradient(90deg, #8b5cf6, #a78bfa)', width: `${sanPct}%` }}
+                animate={{ width: `${sanPct}%` }}
+                transition={{ duration: 0.4 }}
+              />
+            </div>
+          </div>
+        ) : system === 'dnd4e' ? (
           <div className="flex justify-between text-[9px] mb-0.5">
-            <span className="text-gray-500">魔力</span>
-            <span className="font-mono text-gray-600">{status.mp}/{status.maxMp}</span>
+            <span className="text-gray-500">回复力</span>
+            <span className="font-mono text-gray-600">{status.healing_surges}/{status.max_healing_surges}</span>
           </div>
-          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-            <motion.div
-              className="h-full rounded-full"
-              style={{ background: 'linear-gradient(90deg, #6366f1, #818cf8)', width: `${mpPct}%` }}
-              animate={{ width: `${mpPct}%` }}
-              transition={{ duration: 0.4 }}
-            />
+        ) : (
+          <div>
+            <div className="flex justify-between text-[9px] mb-0.5">
+              <span className="text-gray-500">魔力</span>
+              <span className="font-mono text-gray-600">{status.mp}/{status.maxMp}</span>
+            </div>
+            <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <motion.div
+                className="h-full rounded-full"
+                style={{ background: 'linear-gradient(90deg, #6366f1, #818cf8)', width: `${mpPct}%` }}
+                animate={{ width: `${mpPct}%` }}
+                transition={{ duration: 0.4 }}
+              />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* XP + 金币 */}

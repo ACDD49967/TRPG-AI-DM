@@ -24,6 +24,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from backend.config import settings
+from backend.engine.game_systems import detect_game_system
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -324,6 +325,8 @@ async def generate_scenario_from_text(
     title: str = "",
     description: str = "",
     tone: str = "史诗奇幻",
+    system: str | None = None,
+    custom_rules: str = "",
     character_name: str = "冒险者",
     race: str = "人类",
     char_class: str = "战士",
@@ -342,10 +345,14 @@ async def generate_scenario_from_text(
     model = model_name or settings.LLM_MODEL_NAME
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
+    if not system or system == "auto":
+        system = detect_game_system(source_text, title)
+
     player_input = (
         f"冒险基调: {tone}\n"
+        f"规则系统: {system}\n"
         f"角色: {character_name}, {race} {char_class}, Lv.{character_level}\n"
-        f"描述: {description or '根据导入的剧本生成一个完整D&D冒险'}"
+        f"描述: {description or '根据导入的剧本生成一个完整冒险'}"
     )
 
     # 将切分后的块交给世界生成器；块之间用分隔符保留语义边界
@@ -362,6 +369,8 @@ async def generate_scenario_from_text(
         api_key=api_key,
         model_name=model_name,
         base_url=base_url,
+        game_system=system,
+        custom_rules=custom_rules,
     )
 
     summary = await generate_summary(client, model, outline_text, source_text)
@@ -396,10 +405,12 @@ async def generate_scenario_from_text(
         world_state_json=world_state_json,
         reference_script=source_text,
         source_chunks=chunks,
+        custom_rules=custom_rules,
         notes=f"导入方式: {splitter} 切分 · 共 {len(chunks)} 个片段",
         title=title or (outline_text.split("\n")[0].replace("#", "").strip()[:60] or "导入冒险"),
         description=description or source_text[:200],
         summary=summary,
+        system=system,
         tone=tone,
         character_name=character_name,
         race=race,
@@ -416,6 +427,7 @@ async def generate_scenario_from_text(
         "scenario_id": saved.id,
         "title": saved.meta.title,
         "summary": summary,
+        "system": saved.meta.system,
         "content": outline_text,
         "score": score,
         "scores_detail": {},

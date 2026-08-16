@@ -40,6 +40,12 @@ export interface StateUpdateEvent {
   inventory?: { items: string[] };
   level?: number;
   seq?: number;
+  san?: number;
+  maxSan?: number;
+  luck?: number;
+  healing_surges?: number;
+  max_healing_surges?: number;
+  game_system?: 'dnd5e' | 'dnd4e' | 'coc' | 'custom';
 }
 
 /** DM给出的建议选项 */

@@ -18,6 +18,12 @@ export interface CharacterStatus {
   race?: string;
   char_class?: string;
   gender?: string;
+  game_system?: 'dnd5e' | 'dnd4e' | 'coc' | 'custom';
+  san?: number;
+  maxSan?: number;
+  luck?: number;
+  healing_surges?: number;
+  max_healing_surges?: number;
 }
 
 /** 场景信息（在顶栏显示） */

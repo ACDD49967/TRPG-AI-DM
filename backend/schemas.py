@@ -32,6 +32,8 @@ class NewGameRequest(BaseModel):
     feats: list[dict] | None = None
     new_world: bool = True                     # True=全新世界, False=老剧本开新局
     play_mode: str = Field(default="deep", pattern="^(lite|deep)$")  # lite=精简模式, deep=深度模式
+    game_system: str = Field(default="dnd5e", pattern="^(dnd5e|dnd4e|coc|custom)$")
+    custom_rules: str | None = None            # 自定义规则文本（game_system=custom 时使用）
 
 
 class GenerateBackstoryRequest(BaseModel):
@@ -72,6 +74,8 @@ class WorldGenRequest(BaseModel):
     char_class: str = Field(default="战士", max_length=32)
     character_level: int = Field(default=1, ge=1, le=20)
     tone: str = Field(default="史诗奇幻", max_length=64)  # 基调
+    game_system: str = Field(default="dnd5e", pattern="^(dnd5e|dnd4e|coc|custom)$")
+    custom_rules: str | None = None            # 自定义规则文本（game_system=custom 时使用）
     api_key: str | None = None
     model_name: str | None = None
     base_url: str | None = None

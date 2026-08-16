@@ -1,5 +1,6 @@
 """剧本导入模块的基础测试。"""
 
+from backend.engine.game_systems import detect_game_system
 from backend.scenario_importer import (
     extract_text,
     split_text_naive,
@@ -28,3 +29,10 @@ def test_split_text_semantic_returns_nonempty():
     chunks = split_text_semantic(text, max_chunk_size=120, min_chunk_size=30)
     assert len(chunks) >= 1
     assert all(c.strip() for c in chunks)
+
+
+def test_detect_game_system():
+    assert detect_game_system("调查员在古宅中发现理智值下降") == "coc"
+    assert detect_game_system("D&D 4e 威能与回复力") == "dnd4e"
+    assert detect_game_system("5e 法术位与死亡豁免") == "dnd5e"
+    assert detect_game_system("完全自定义的蒸汽朋克规则") == "custom"

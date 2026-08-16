@@ -15,6 +15,7 @@ class ScenarioMeta:
     title: str = ""                 # 剧本标题
     description: str = ""           # 简短描述
     summary: str = ""               # 400字左右的剧本总结
+    system: str = "dnd5e"           # 规则系统: dnd5e/dnd4e/coc/custom
     tone: str = "史诗奇幻"          # 基调
     character_name: str = ""        # 创建时的角色名（参考）
     race: str = ""
@@ -41,6 +42,7 @@ class Scenario:
     world_state_json: str = ""      # 结构化世界状态JSON
     reference_script: str = ""      # 玩家原始参考
     source_chunks: list[str] = field(default_factory=list)  # 导入剧本切分后的分块
+    custom_rules: str = ""          # 自定义规则文本（system=custom 时使用）
     notes: str = ""                 # 玩家备注
 
     @classmethod
@@ -55,6 +57,7 @@ class Scenario:
         s.world_state_json = data.get("world_state_json", "")
         s.reference_script = data.get("reference_script", "")
         s.source_chunks = data.get("source_chunks", []) or []
+        s.custom_rules = data.get("custom_rules", "")
         s.notes = data.get("notes", "")
         meta_data = data.get("meta", {})
         s.meta = ScenarioMeta(
@@ -62,6 +65,7 @@ class Scenario:
             title=meta_data.get("title", ""),
             description=meta_data.get("description", ""),
             summary=meta_data.get("summary", ""),
+            system=meta_data.get("system", "dnd5e"),
             tone=meta_data.get("tone", "史诗奇幻"),
             character_name=meta_data.get("character_name", ""),
             race=meta_data.get("race", ""),
@@ -83,6 +87,7 @@ class Scenario:
             "world_state_json": self.world_state_json,
             "reference_script": self.reference_script,
             "source_chunks": self.source_chunks,
+            "custom_rules": self.custom_rules,
             "notes": self.notes,
             "meta": self.meta.to_dict(),
         }
@@ -111,6 +116,7 @@ def list_scenarios() -> list[dict]:
                 "title": s.meta.title or "(无标题)",
                 "description": s.meta.description or "",
                 "summary": s.meta.summary or "",
+                "system": s.meta.system or "dnd5e",
                 "tone": s.meta.tone,
                 "score": s.meta.score,
                 "created_at": s.meta.created_at,
@@ -135,8 +141,9 @@ def delete_scenario(sid: str) -> bool:
 
 def create_scenario(world_outline: str = "", world_state_json: str = "",
                     reference_script: str = "", source_chunks: list[str] | None = None,
-                    notes: str = "",
-                    title: str = "", description: str = "", summary: str = "", tone: str = "",
+                    custom_rules: str = "", notes: str = "",
+                    title: str = "", description: str = "", summary: str = "",
+                    system: str = "dnd5e", tone: str = "",
                     character_name: str = "", race: str = "", char_class: str = "",
                     level: int = 1, score: int = 0) -> Scenario:
     """创建并保存新剧本。"""
@@ -147,10 +154,11 @@ def create_scenario(world_outline: str = "", world_state_json: str = "",
         world_state_json=world_state_json,
         reference_script=reference_script,
         source_chunks=source_chunks or [],
+        custom_rules=custom_rules,
         notes=notes,
         meta=ScenarioMeta(
             id=sid, title=title or "未命名冒险",
-            description=description, summary=summary, tone=tone, score=score,
+            description=description, summary=summary, system=system, tone=tone, score=score,
             character_name=character_name, race=race, char_class=char_class,
             level=level, created_at=datetime.now().isoformat(),
             total_sessions=0, last_played="",

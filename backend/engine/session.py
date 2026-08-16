@@ -161,6 +161,12 @@ async def sse_event_generator(
         "race": info.get("race", ""),
         "char_class": info.get("char_class", ""),
         "gender": info.get("gender", ""),
+        "game_system": info.get("game_system", "dnd5e"),
+        "san": info.get("san", info.get("max_san", 0)),
+        "maxSan": info.get("max_san", info.get("san", 0)),
+        "luck": info.get("luck", 0),
+        "healing_surges": info.get("healing_surges", 0),
+        "max_healing_surges": info.get("max_healing_surges", 0),
     })
 
     # 将 end_of_turn 推入队列（排在叙事token之后）
