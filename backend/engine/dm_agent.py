@@ -805,6 +805,13 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
 - 不要滥用权限替玩家做决定；不要暴露 DM 后台信息给玩家。
 - 每次修改后通过 update_scene / journal_update 保持玩家可见信息同步。
 """
+    if getattr(state, "resumed", False):
+        sp += """
+## 会话状态：读档继续
+- 这是从存档恢复的会话，已有完整记忆上下文。
+- 请基于记忆中的剧情、NPC、地点和当前场景继续推进，不要重新开场、不要重置剧情。
+- 玩家看到的“冒险继续”只是恢复提示，不代表新冒险。
+"""
 
     # 动态上下文统一放在静态规则之后
     mem_text = mem if mem.strip() else "冒险刚启。篝火刚点起来，第一颗骰子还在你的掌心。"
