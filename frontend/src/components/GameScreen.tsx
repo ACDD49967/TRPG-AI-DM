@@ -47,6 +47,9 @@ export default function GameScreen() {
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
   const [dmMap, setDmMap] = useState({ name: '', description: '' });
   const [dmBeast, setDmBeast] = useState({ name: '', description: '', stats: '' });
+  const [dmNpcImage, setDmNpcImage] = useState<File | null>(null);
+  const [dmMapImage, setDmMapImage] = useState<File | null>(null);
+  const [dmBeastImage, setDmBeastImage] = useState<File | null>(null);
 
   useEffect(() => {
     const u = status.username || 'default';
@@ -79,7 +82,14 @@ export default function GameScreen() {
         body: JSON.stringify(dmNpc),
       });
       if (!r.ok) return;
+      if (dmNpcImage) {
+        const fd = new FormData();
+        fd.append('npc_name', dmNpc.name.trim());
+        fd.append('file', dmNpcImage);
+        await fetch(`/api/game/${sessionId}/npc/image`, { method: 'POST', body: fd });
+      }
       setDmNpc({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
+      setDmNpcImage(null);
     } catch {}
   };
   const addDmMap = async () => {
@@ -87,11 +97,24 @@ export default function GameScreen() {
     try {
       const u = status.username || 'default';
       const sid = status.scenario_id || '';
-      await fetch('/api/maps', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: u, name: dmMap.name, description: dmMap.description, system: status.game_system || 'custom', scenario_id: sid }),
-      });
+      const sys = status.game_system || 'custom';
+      if (dmMapImage) {
+        const fd = new FormData();
+        fd.append('file', dmMapImage);
+        fd.append('username', u);
+        fd.append('name', dmMap.name.trim());
+        fd.append('description', dmMap.description);
+        fd.append('system', sys);
+        fd.append('scenario_id', sid);
+        await fetch('/api/maps/upload', { method: 'POST', body: fd });
+      } else {
+        await fetch('/api/maps', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, name: dmMap.name, description: dmMap.description, system: sys, scenario_id: sid }),
+        });
+      }
       setDmMap({ name: '', description: '' });
+      setDmMapImage(null);
       useGameStore.getState().bumpMediaVersion();
     } catch {}
   };
@@ -100,13 +123,27 @@ export default function GameScreen() {
     try {
       const u = status.username || 'default';
       const sid = status.scenario_id || '';
+      const sys = status.game_system || 'custom';
       let stats: Record<string,string> = {};
       try { stats = dmBeast.stats ? JSON.parse(dmBeast.stats) : {}; } catch {}
-      await fetch('/api/bestiary', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: u, name: dmBeast.name, description: dmBeast.description, system: status.game_system || 'custom', stats, scenario_id: sid }),
-      });
+      if (dmBeastImage) {
+        const fd = new FormData();
+        fd.append('file', dmBeastImage);
+        fd.append('username', u);
+        fd.append('name', dmBeast.name.trim());
+        fd.append('description', dmBeast.description);
+        fd.append('system', sys);
+        fd.append('stats', JSON.stringify(stats));
+        fd.append('scenario_id', sid);
+        await fetch('/api/bestiary/upload', { method: 'POST', body: fd });
+      } else {
+        await fetch('/api/bestiary', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, name: dmBeast.name, description: dmBeast.description, system: sys, stats, scenario_id: sid }),
+        });
+      }
       setDmBeast({ name: '', description: '', stats: '' });
+      setDmBeastImage(null);
       useGameStore.getState().bumpMediaVersion();
     } catch {}
   };
@@ -482,6 +519,7 @@ export default function GameScreen() {
                   <input type="number" value={dmNpc.ac} onChange={e=>setDmNpc({...dmNpc,ac:Number(e.target.value)||10})} placeholder="AC" className="input-field text-xs" />
                 </div>
               </div>
+              <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmNpcImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-gray-500" />
               <button onClick={addDmNpc} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增角色</button>
             </div>
 
@@ -492,6 +530,7 @@ export default function GameScreen() {
                 <input value={dmMap.name} onChange={e=>setDmMap({...dmMap,name:e.target.value})} placeholder="地点名称 *" className="input-field text-xs" />
                 <textarea value={dmMap.description} onChange={e=>setDmMap({...dmMap,description:e.target.value})} placeholder="描述" rows={2} className="input-field text-xs resize-none" />
               </div>
+              <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmMapImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-gray-500" />
               <button onClick={addDmMap} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增地点</button>
             </div>
 
@@ -503,6 +542,7 @@ export default function GameScreen() {
                 <textarea value={dmBeast.description} onChange={e=>setDmBeast({...dmBeast,description:e.target.value})} placeholder="描述" rows={2} className="input-field text-xs resize-none" />
                 <textarea value={dmBeast.stats} onChange={e=>setDmBeast({...dmBeast,stats:e.target.value})} placeholder='数值 JSON，如 {"HP":"30","AC":"15","力量":"16"}' rows={2} className="input-field text-xs resize-none font-mono" />
               </div>
+              <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmBeastImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-gray-500" />
               <button onClick={addDmBeast} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增生物</button>
             </div>
           </div>

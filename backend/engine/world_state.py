@@ -98,6 +98,7 @@ class NpcEntry:
     attributes: dict = field(default_factory=dict)   # 六维/COC属性等
     skills: list = field(default_factory=list)       # 技能列表
     traits: list = field(default_factory=list)       # 特性/动作/专长等
+    image_path: str = ""
     visibility: NpcVisibility = field(default_factory=NpcVisibility)
 
     def to_player_view(self) -> dict:
@@ -128,6 +129,7 @@ class NpcEntry:
         result["attributes"] = self.attributes
         result["skills"] = self.skills
         result["traits"] = self.traits
+        result["image_path"] = self.image_path
 
         # 统计隐藏字段数
         hidden_count = sum(
@@ -230,7 +232,7 @@ class WorldState:
                                   if k in ["name","race","role","location","attitude",
                                            "alive","appearance","personality","motivation",
                                            "secret","relation_to_plot","notes",
-                                           "level","ac","hp","max_hp","attributes","skills","traits"]})
+                                           "level","ac","hp","max_hp","attributes","skills","traits","image_path"]})
                 npc.visibility = NpcVisibility.from_dict(vis_data)
                 ws.npcs.append(npc)
 

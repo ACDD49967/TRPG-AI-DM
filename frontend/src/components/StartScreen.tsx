@@ -596,11 +596,14 @@ export default function StartScreen(){
 
   const loadSaveGame=async(saveId:string)=>{
     try{
-      const r=await fetch('/api/saves/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username||'default',save_id:saveId})});
-      if(!r.ok)return;
+      const r=await fetch('/api/saves/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        username:username||'default', save_id:saveId,
+        api_key:apiKey||undefined, model_name:modelName||undefined, base_url:baseUrl||undefined,
+      })});
+      if(!r.ok){const e=await r.json().catch(()=>({}));setError(e.detail||'载入存档失败');return;}
       const d=await r.json();
       setSession(d.session_id);
-    }catch{}
+    }catch(e:unknown){setError(e instanceof Error?e.message:'载入存档失败');}
   };
 
   const deleteSave=async(saveId:string)=>{
@@ -903,7 +906,7 @@ export default function StartScreen(){
         </div>
 
         <div className="flex gap-1 mb-5">
-          {['剧本','角色创建','冒险准备','知识库'].map((s,i)=>(
+          {['剧本','角色创建','冒险准备','知识库','存档'].map((s,i)=>(
             <button key={i} onClick={()=>setStep(i+1)} className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
               step===i+1?'bg-indigo-600 text-white shadow-sm':step>i+1?'bg-indigo-50 text-indigo-600':'bg-gray-100 text-gray-400'}`}>{s}</button>
           ))}
@@ -1743,24 +1746,27 @@ export default function StartScreen(){
                 </div>
               </div>
 
-              {/* 存档管理 */}
-              <div className="border-t border-gray-200 pt-4 space-y-3">
-                <p className="text-xs font-bold text-gray-800">存档与载入（每轮自动存档，另可手动存档）</p>
-                <div className="space-y-1.5">
-                  {saves.length===0&&<p className="text-xs text-gray-400">暂无存档。开始游戏后每轮会自动存档。</p>}
-                  {saves.map(s=>(
-                    <div key={s.id} className="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-200">
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-gray-800">{s.label} {s.auto?'(自动)':'(手动)'}</p>
-                        <p className="text-[10px] text-gray-500">{s.character_name} · {GAME_SYSTEM_LABELS[(s.game_system as GameSystem)||'dnd5e']} · {formatTime(s.created_at)}</p>
-                      </div>
-                      <div className="flex gap-1">
-                        <button onClick={()=>loadSaveGame(s.id)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">载入</button>
-                        <button onClick={()=>deleteSave(s.id)} className="text-[10px] px-2 py-1 bg-red-50 text-red-600 rounded-lg border border-red-200 hover:bg-red-100">删除</button>
-                      </div>
+            </div>
+          )}
+
+          {step===5&&(
+            <div className="space-y-5">
+              <h2 className="text-lg font-bold text-gray-900">存档</h2>
+              <p className="text-[10px] text-gray-400 bg-gray-50 rounded-lg p-2 border border-gray-200">每轮自动存档，也可手动存档；这里只管理存档，不与其他内容混杂。</p>
+              <div className="space-y-1.5">
+                {saves.length===0&&<p className="text-xs text-gray-400">暂无存档。开始游戏后每轮会自动存档。</p>}
+                {saves.map(s=>(
+                  <div key={s.id} className="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-200">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-gray-800">{s.label} {s.auto?'(自动)':'(手动)'}</p>
+                      <p className="text-[10px] text-gray-500">{s.character_name} · {GAME_SYSTEM_LABELS[(s.game_system as GameSystem)||'dnd5e']} · {formatTime(s.created_at)}</p>
                     </div>
-                  ))}
-                </div>
+                    <div className="flex gap-1">
+                      <button onClick={()=>loadSaveGame(s.id)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">载入</button>
+                      <button onClick={()=>deleteSave(s.id)} className="text-[10px] px-2 py-1 bg-red-50 text-red-600 rounded-lg border border-red-200 hover:bg-red-100">删除</button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

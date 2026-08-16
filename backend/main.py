@@ -749,10 +749,16 @@ async def load_save_api(payload: dict):
     save_data = load_save(username, save_id)
     if save_data is None:
         raise HTTPException(status_code=404, detail="存档不存在")
-    saved_model = save_data.get("session", {}).get("model_name") or settings.LLM_MODEL_NAME
-    if not saved_model:
-        raise HTTPException(status_code=400, detail="存档未包含模型配置，请重新开始并选择模型")
     state, session_id = restore_state_from_save(save_data)
+    # 用前端当前配置覆盖/补全存档中的模型配置，避免旧存档缺模型导致无法读档
+    if payload.get("model_name"):
+        state.model_name = str(payload["model_name"])
+    if payload.get("api_key"):
+        state.api_key = str(payload["api_key"])
+    if payload.get("base_url"):
+        state.base_url = str(payload["base_url"])
+    if not (state.model_name or settings.LLM_MODEL_NAME):
+        raise HTTPException(status_code=400, detail="存档未包含模型配置，请重新开始并选择模型")
     session_manager._sessions[session_id] = state
     # 载入存档后重新激活扩展包，确保 RAG 知识库中有对应内容
     if state.character_info.get("extension_ids"):
@@ -921,6 +927,26 @@ async def add_npc_api(session_id: str, payload: dict):
     state.world_state = ws
     await push_event(state, "journal_update", ws.to_player_journal())
     return {"npc": {"name": npc.name, "role": npc.role}}
+
+
+@app.post("/api/game/{session_id}/npc/image")
+async def upload_npc_image(session_id: str, npc_name: str = Form(...), file: UploadFile = File(...)):
+    """为当前剧本中的 NPC 上传自定义图片。"""
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    from backend.media_manager import save_image
+    from backend.engine.world_state import WorldState
+    ws = getattr(state, "world_state", None) or WorldState(session_id=session_id)
+    npc = ws.get_npc(npc_name)
+    if npc is None:
+        raise HTTPException(status_code=404, detail="NPC 不存在")
+    image_path = save_image(state.username, await file.read(), file.filename or "npc.png")
+    npc.image_path = image_path
+    ws.save()
+    state.world_state = ws
+    await push_event(state, "journal_update", ws.to_player_journal())
+    return {"image_path": image_path}
 
 
 @app.post("/api/models")
@@ -1515,7 +1541,7 @@ async def create_new_game(request: NewGameRequest):
                                          if k in ["name","race","role","location","attitude",
                                                   "alive","personality","motivation","secret",
                                                   "relation_to_plot","notes",
-                                                  "level","ac","hp","max_hp","attributes","skills","traits"]}))
+                                                  "level","ac","hp","max_hp","attributes","skills","traits","image_path"]}))
                 for p in ws_data.get("plot_flags", []):
                     ws.plot_flags.append(PF(**{k: v for k, v in p.items()
                                                if k in ["key","status","description","consequence"]}))

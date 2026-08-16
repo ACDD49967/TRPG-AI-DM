@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 
 interface CharNote { target:string;comment:string;clue?:string;turn:number; }
-interface NpcView { name:string;race:string;role:string;attitude:string;alive:boolean|null;appearance:string;personality:string;motivation:string;secret:string;relation_to_plot:string;location:string;level?:number;ac?:number;hp?:number;max_hp?:number;attributes?:Record<string,number>;skills?:string[];traits?:string[];_hidden_fields:number;_fully_revealed:boolean; }
+interface NpcView { name:string;race:string;role:string;attitude:string;alive:boolean|null;appearance:string;personality:string;motivation:string;secret:string;relation_to_plot:string;location:string;level?:number;ac?:number;hp?:number;max_hp?:number;attributes?:Record<string,number>;skills?:string[];traits?:string[];image_path?:string;_hidden_fields:number;_fully_revealed:boolean; }
 interface JournalData {
   scene:{location:string;time:string;weather:string;atmosphere:string;npcs_here:string[]};
   npcs:{allies:NpcView[];enemies:NpcView[];neutrals:NpcView[];total:number};
@@ -24,7 +24,7 @@ function NpcCard({npc,cat}:{npc:NpcView;cat:string}){
     <motion.div initial={{opacity:0,y:2}} animate={{opacity:1,y:0}} className={`rounded-lg border p-1.5 ${colors[cat]||colors.neutral} text-[10px]`}>
       <div className="flex items-center justify-between cursor-pointer" onClick={()=>setExp(!exp)}>
         <div className="flex items-center gap-1 min-w-0">
-          <span className="text-[9px]">{icons[cat]||'⚪'}</span>
+          {npc.image_path ? <img src={npc.image_path} alt={npc.name} className="w-5 h-5 rounded object-cover border border-gray-200" /> : <span className="text-[9px]">{icons[cat]||'⚪'}</span>}
           <span className="font-medium text-gray-700 truncate">{npc.name}</span>
           {npc._hidden_fields>0&&!exp&&<span className="text-[8px] text-indigo-500 bg-indigo-50 px-1 rounded">{npc._hidden_fields}隐藏</span>}
         </div>
