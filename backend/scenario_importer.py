@@ -53,17 +53,21 @@ def extract_text(filename: str, data: bytes) -> str:
 
 def _extract_pdf(data: bytes) -> str:
     from pypdf import PdfReader
-    reader = PdfReader(io.BytesIO(data))
-    pages = []
-    for page in reader.pages:
-        try:
-            pages.append(page.extract_text() or "")
-        except Exception:
-            continue
-    text = "\n\n".join(pages)
-    if not text.strip():
-        raise ValueError("PDF 中没有可提取的文本（可能是扫描件，请改用文字版 PDF）")
-    return text
+    from pypdf.errors import PdfStreamError
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        pages = []
+        for page in reader.pages:
+            try:
+                pages.append(page.extract_text() or "")
+            except Exception:
+                continue
+        text = "\n\n".join(pages)
+        if not text.strip():
+            raise ValueError("PDF 中没有可提取的文本（可能是扫描件，请改用文字版 PDF）")
+        return text
+    except (PdfStreamError, Exception) as e:
+        raise ValueError(f"PDF 解析失败：文件可能损坏或不是有效 PDF（{e}）") from e
 
 
 def _extract_docx(data: bytes) -> str:
