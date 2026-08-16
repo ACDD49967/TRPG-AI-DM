@@ -205,6 +205,36 @@ def _with_knowledge(prompt: str, query: str, system: str, top_k: int = 3) -> str
     return prompt
 
 
+def _programmatic_score(outline: str, ws) -> int:
+    """基于剧本结构完整性的程序化评分，避免 LLM 稳定输出同一分数。"""
+    score = 0
+    if len(outline) >= 1000:
+        score += 10
+    if len(outline) >= 3000:
+        score += 10
+    if len(outline) >= 5000:
+        score += 5
+    if re.search(r"第[一二三]幕|第一幕|第二幕|第三幕", outline):
+        score += 20
+    if re.search(r"^#|^##", outline, re.M):
+        score += 5
+    npc_count = len(ws.npcs)
+    loc_count = len(ws.locations)
+    flag_count = len(ws.plot_flags)
+    score += min(npc_count, 5) * 3
+    score += min(loc_count, 5) * 2
+    score += min(flag_count, 5) * 2
+    if ws.world_rules:
+        score += 5
+    if npc_count >= 3:
+        score += 5
+    if loc_count >= 3:
+        score += 5
+    if flag_count >= 5:
+        score += 5
+    return min(100, score)
+
+
 def _dedupe_headings(text: str) -> str:
     """合并后处理：去除连续/重复出现的相同 Markdown 标题。"""
     seen: set[str] = set()
@@ -409,4 +439,8 @@ async def build_world(
     except Exception:
         pass  # 提取失败不影响核心流程
 
-    return outline, score, history, ws
+    # 程序化评分与 LLM 评分混合，避免“永远 88 分”的假象
+    prog_score = _programmatic_score(outline, ws)
+    final_score = round((score + prog_score) / 2)
+    history.append({"iteration": "final", "score": final_score, "programmatic": prog_score})
+    return outline, final_score, history, ws
