@@ -905,14 +905,27 @@ async def fetch_models(payload: dict):
         api_key = ensure_valid_api_key(api_key)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    candidates = [f"{base_url}/models"]
+    if not base_url.endswith("/v1"):
+        candidates.append(f"{base_url}/v1/models")
+    last_err = None
     try:
-        async with httpx.AsyncClient(timeout=15) as hc:
-            r = await hc.get(f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"})
-            if r.status_code != 200:
-                raise HTTPException(status_code=502, detail=f"获取模型列表失败: HTTP {r.status_code}")
-            data = r.json()
-            models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
-            return {"models": models, "base_url": base_url}
+        async with httpx.AsyncClient(timeout=20, verify=False) as hc:
+            for url in candidates:
+                try:
+                    r = await hc.get(url, headers={"Authorization": f"Bearer {api_key}"})
+                    if r.status_code == 200:
+                        data = r.json()
+                        models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+                        return {"models": models, "base_url": base_url}
+                    if r.status_code in (401, 403):
+                        raise HTTPException(status_code=502, detail="认证失败：API Key 无效或没有权限")
+                    last_err = f"HTTP {r.status_code}"
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    last_err = str(e)
+        raise HTTPException(status_code=502, detail=f"无法获取模型列表，请检查 API 地址与 Key（{last_err}）")
     except HTTPException:
         raise
     except Exception as e:
