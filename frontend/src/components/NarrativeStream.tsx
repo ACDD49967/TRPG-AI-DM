@@ -65,7 +65,7 @@ function DiceBadge({ data }: { data: { skill: string; dc: number; roll: number; 
   const ok = data.result === '成功' || data.result === '大成功';
   return (
     <div className="flex items-center gap-2 flex-wrap mb-1">
-      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${isCrit?(ok?'bg-amber-100 text-amber-700 border border-amber-200':'bg-red-100 text-red-700 border border-red-200'):(ok?'bg-emerald-100 text-emerald-700 border border-emerald-200':'bg-gray-100 text-gray-500 border border-gray-200')}`}>{isCrit?(ok?'🌟':'💥'):(ok?'✓':'✗')} {data.result}</span>
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${isCrit?(ok?'bg-amber-100 text-amber-700 border border-amber-200':'bg-red-100 text-red-700 border border-red-200'):(ok?'bg-emerald-100 text-emerald-700 border border-emerald-200':'bg-gray-100 text-gray-500 border border-gray-200')}`}>{data.result}</span>
       <span className="text-xs text-gray-500">{data.skill}: <span className="font-bold text-gray-700">d20={data.roll}</span>{data.modifier!==0&&<span>+{data.modifier}</span>} <span className="text-gray-400">vs DC{data.dc}</span></span>
     </div>
   );

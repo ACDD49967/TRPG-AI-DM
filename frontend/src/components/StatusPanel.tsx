@@ -36,11 +36,11 @@ export default function StatusPanel() {
   );
 
   return (
-    <div className="w-48 bg-gray-50/80 border-r border-gray-200 p-2.5 flex flex-col gap-2 overflow-y-auto text-[10px]">
+    <div className="w-52 bg-white border-r border-gray-200 p-3 flex flex-col gap-2 overflow-y-auto text-[10px]">
       {/* 角色身份 */}
       <div className="text-center pb-2 border-b border-gray-200">
-        {status.character_image && <img src={status.character_image} alt="角色" className="w-14 h-14 object-cover rounded-lg border border-gray-200 mx-auto mb-1" />}
-        <h3 className="text-xs font-bold text-gray-800 truncate">
+        {status.character_image && <img src={status.character_image} alt="角色" className="w-16 h-16 object-cover rounded-xl border border-gray-200 mx-auto mb-1 shadow-sm" />}
+        <h3 className="text-sm font-bold text-gray-900 truncate">
           {status.character_name || '冒险者'}
         </h3>
         <p className="text-[9px] text-gray-500">
@@ -126,7 +126,7 @@ export default function StatusPanel() {
 
       {/* 属性 */}
       <div className="pt-1.5 border-t border-gray-200">
-        <p className="text-[9px] text-gray-400 mb-1">属性</p>
+        <p className="section-label mb-1">属性</p>
         <div className="grid grid-cols-2 gap-0.5">
           {Object.entries(ATTR_LABELS).map(([k, label]) => {
             const v = status.attributes[k] || 10;
@@ -177,7 +177,7 @@ export default function StatusPanel() {
 
       {/* 装备与物品 */}
       <div className="pt-1.5 border-t border-gray-200 flex-1">
-        <p className="text-[9px] text-gray-400 mb-1">装备与物品 ({inventory.length})</p>
+        <p className="section-label mb-1">装备与物品 ({inventory.length})</p>
 
         {inventory.length === 0 && (
           <p className="text-[9px] text-gray-300 italic">背包空空如也</p>
@@ -212,7 +212,7 @@ export default function StatusPanel() {
 
         {misc.length > 0 && (
           <div className="mb-1">
-            <p className="text-[8px] text-gray-400 font-medium mb-0.5">📦 杂物</p>
+            <p className="text-[8px] text-gray-400 font-medium mb-0.5">杂物</p>
             {misc.slice(0, 6).map((item, i) => (
               <p key={i} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate" title={item}>{item}</p>
             ))}

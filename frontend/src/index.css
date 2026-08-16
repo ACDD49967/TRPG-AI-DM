@@ -57,4 +57,32 @@
   .tag-green { @apply tag bg-emerald-50 text-emerald-700 border border-emerald-200; }
   .tag-red { @apply tag bg-red-50 text-red-700 border border-red-200; }
   .tag-gray { @apply tag bg-gray-100 text-gray-600 border border-gray-200; }
+
+  .panel {
+    @apply bg-white border border-gray-200/80 rounded-xl shadow-sm;
+  }
+  .panel-header {
+    @apply px-4 py-2.5 border-b border-gray-100 flex items-center justify-between;
+  }
+  .panel-title {
+    @apply text-xs font-bold text-gray-800 tracking-wide;
+  }
+  .panel-body {
+    @apply p-4;
+  }
+  .section-label {
+    @apply text-[10px] font-semibold uppercase tracking-wider text-gray-400;
+  }
+  .stat-card {
+    @apply bg-gray-50 rounded-lg border border-gray-200 px-2 py-1.5;
+  }
+  .stat-label {
+    @apply text-[9px] text-gray-400;
+  }
+  .stat-value {
+    @apply text-sm font-bold text-gray-800;
+  }
+  .divider {
+    @apply border-t border-gray-100 my-3;
+  }
 }
