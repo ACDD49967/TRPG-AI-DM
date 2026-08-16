@@ -335,6 +335,8 @@ async def generate_scenario_from_text(
     model_name: str | None = None,
     base_url: str | None = None,
     splitter: str = "naive",
+    target_score: int = 80,
+    max_revisions: int = 2,
 ) -> dict[str, Any]:
     """读取文本→切分→多Agent生成新剧本→生成总结→保存到 scenarios/。"""
     from backend.engine.world_builder import build_world
@@ -371,6 +373,8 @@ async def generate_scenario_from_text(
         base_url=base_url,
         game_system=system,
         custom_rules=custom_rules,
+        target_score=target_score,
+        max_revisions=max_revisions,
     )
 
     summary = await generate_summary(client, model, outline_text, source_text)

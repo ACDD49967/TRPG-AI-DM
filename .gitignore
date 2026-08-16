@@ -45,3 +45,6 @@ dsh-routing-suite/
 # 日志
 *.log
 npm-debug.log*
+
+# 评估产生的原始 JSON（保留 Markdown 报告即可）
+eval_results/*.json

@@ -1,5 +1,6 @@
 """剧本导入模块的基础测试。"""
 
+from backend.engine.world_builder import _dedupe_headings
 from backend.engine.game_systems import (
     detect_game_system,
     get_coc_derived,
@@ -83,3 +84,10 @@ def test_roll_coc_characteristics_ranges():
     attrs = roll_coc_characteristics()
     assert set(attrs.keys()) == {"str", "con", "dex", "int", "pow", "cha", "siz", "edu"}
     assert all(1 <= attrs[k] <= 99 for k in attrs)
+
+
+def test_dedupe_headings():
+    text = "# 标题\n内容\n# 标题\n内容二\n## 子标题\n## 子标题\n内容三"
+    cleaned = _dedupe_headings(text)
+    assert cleaned.count("# 标题") == 1
+    assert cleaned.count("## 子标题") == 1

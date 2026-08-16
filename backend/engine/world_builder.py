@@ -191,6 +191,20 @@ async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
         return ""
 
 
+def _dedupe_headings(text: str) -> str:
+    """合并后处理：去除连续/重复出现的相同 Markdown 标题。"""
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#") and stripped in seen:
+            continue
+        if stripped.startswith("#"):
+            seen.add(stripped)
+        out.append(line)
+    return "\n".join(out)
+
+
 def _extract_json(text: str) -> dict:
     """从可能含有markdown包裹的文本中提取JSON。"""
     t = text.strip()
@@ -230,6 +244,8 @@ async def build_world(
 
     ref = f"\n## 参考剧本\n{reference_script}" if reference_script.strip() else ""
     pi = f"## 玩家设定\n{player_input}"
+    if ref:
+        pi += "\n\n## 改编约束（重要）\n- 必须保留参考剧本中的专有名词、核心反派、怪物、地点、关键事件与氛围。\n- 可以扩展细节和分支，但不得把原剧本的核心元素替换成其他作品/其他模组的元素。\n- 如果参考剧本信息不足，可以合理补全，但不能与原文明显冲突。"
     sys_cfg = get_system(game_system)
     system_block = build_system_rule_block(game_system, custom_rules)
     pi += f"\n\n## 规则系统\n- 类型: {sys_cfg['label']}\n- 说明: {sys_cfg['description']}\n{system_block[:1800]}"
@@ -343,6 +359,7 @@ async def build_world(
         history.append({"iteration": rev, "score": score})
 
     # ── Step 6: 提取结构化世界状态 ──
+    outline = _dedupe_headings(outline)
     print("[WorldBuilder] Step 6/6: 提取结构化世界状态...")
     ws = WorldState(world_outline=outline)
     try:
