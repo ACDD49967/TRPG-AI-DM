@@ -3,7 +3,11 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 
-function itemDescription(name: string): string {
+type InvItem = string | { name: string; description?: string; quantity?: number; type?: string; properties?: Record<string, unknown> };
+function itemName(it: InvItem): string { return typeof it === 'string' ? it : it.name || '未知物品'; }
+function itemDesc(it: InvItem): string {
+  if (typeof it === 'object' && it.description) return it.description;
+  const name = itemName(it);
   if (/剑|斧|弓|弩|匕首|矛|锤|杖|棍|鞭|刀|枪|戟|链枷|战|刃/.test(name)) return '武器：近战/远程攻击工具。具体伤害与效果由主持人在叙事中判定。';
   if (/甲|盾|袍|披风|头盔|护|铠|锁子|皮|板/.test(name)) return '防具：提供防护。具体 AC 与效果由主持人在叙事中判定。';
   if (/药水|药剂|瓶|毒|油|圣水/.test(name)) return '消耗品：使用后产生效果，具体由主持人判定。';
@@ -23,7 +27,7 @@ const ATTR_ICONS: Record<string, string> = {
 export default function StatusPanel() {
   const { status, combat } = useGameStore();
   const system = status.game_system || 'dnd5e';
-  const [selectedItem, setSelectedItem] = useState<string | null>(null);
+  const [selectedItem, setSelectedItem] = useState<InvItem | null>(null);
 
   const hpPct = Math.max(0, status.maxHp > 0 ? (status.hp / status.maxHp) * 100 : 0);
   const mpPct = Math.max(0, status.maxMp > 0 ? (status.mp / status.maxMp) * 100 : 0);
@@ -32,13 +36,13 @@ export default function StatusPanel() {
   // 将背包物品分类
   const inventory = status.inventory || [];
   const weapons = inventory.filter(i =>
-    /剑|斧|弓|弩|匕首|矛|锤|杖|棍|鞭|刀|枪|戟|链枷|战|刃/.test(i)
+    /剑|斧|弓|弩|匕首|矛|锤|杖|棍|鞭|刀|枪|戟|链枷|战|刃/.test(itemName(i))
   );
   const armor = inventory.filter(i =>
-    /甲|盾|袍|披风|头盔|护|铠|锁子|皮|板/.test(i)
+    /甲|盾|袍|披风|头盔|护|铠|锁子|皮|板/.test(itemName(i))
   );
   const potions = inventory.filter(i =>
-    /药水|药剂|瓶|毒|油|圣水/.test(i)
+    /药水|药剂|瓶|毒|油|圣水/.test(itemName(i))
   );
   const misc = inventory.filter(i =>
     !weapons.includes(i) && !armor.includes(i) && !potions.includes(i)
@@ -169,7 +173,7 @@ export default function StatusPanel() {
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">武器</p>
             {weapons.map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{item}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemName(item)}</button>
             ))}
           </div>
         )}
@@ -178,7 +182,7 @@ export default function StatusPanel() {
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">防具</p>
             {armor.map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{item}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemName(item)}</button>
             ))}
           </div>
         )}
@@ -187,7 +191,7 @@ export default function StatusPanel() {
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">药水</p>
             {potions.map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{item}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemName(item)}</button>
             ))}
           </div>
         )}
@@ -196,7 +200,7 @@ export default function StatusPanel() {
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">杂物</p>
             {misc.slice(0, 6).map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{item}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemName(item)}</button>
             ))}
             {misc.length > 6 && <p className="text-[8px] text-gray-400">...还有{misc.length - 6}件</p>}
           </div>
@@ -221,10 +225,12 @@ export default function StatusPanel() {
         <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={()=>setSelectedItem(null)}>
           <div className="bg-white rounded-xl max-w-sm w-full p-4 shadow-xl" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-bold text-gray-900">{selectedItem}</h3>
+              <h3 className="text-sm font-bold text-gray-900">{itemName(selectedItem)}</h3>
               <button onClick={()=>setSelectedItem(null)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
             </div>
-            <p className="text-xs text-gray-600 leading-relaxed">{itemDescription(selectedItem)}</p>
+            {typeof selectedItem === 'object' && selectedItem.quantity ? <p className="text-[10px] text-gray-400 mb-1">数量：{selectedItem.quantity}</p> : null}
+            {typeof selectedItem === 'object' && selectedItem.type ? <p className="text-[10px] text-gray-400 mb-1">类型：{selectedItem.type}</p> : null}
+            <p className="text-xs text-gray-600 leading-relaxed">{itemDesc(selectedItem)}</p>
           </div>
         </div>
       )}

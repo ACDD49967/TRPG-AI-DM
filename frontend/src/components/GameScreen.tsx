@@ -12,6 +12,10 @@ import DiceRollOverlay from './DiceRoll';
 import DecisionPanel from './DecisionPanel';
 import RulebookModal from './RulebookModal';
 
+function invName(it: string | { name: string }): string {
+  return typeof it === 'string' ? it : it.name || '未知物品';
+}
+
 export default function GameScreen() {
   const { sessionId, goToStart, sceneInfo, status, mediaVersion } = useGameStore();
   useSSE(sessionId);
@@ -229,7 +233,7 @@ export default function GameScreen() {
             {status.inventory?.length>0 && (
               <div className="mb-4">
                 <p className="text-[10px] text-gray-400 font-medium mb-1">背包</p>
-                <div className="flex flex-wrap gap-1">{status.inventory.map((it,i)=><span key={i} className="text-[10px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{it}</span>)}</div>
+                <div className="flex flex-wrap gap-1">{status.inventory.map((it,i)=><span key={i} className="text-[10px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{invName(it)}</span>)}</div>
               </div>
             )}
           </div>
@@ -317,15 +321,26 @@ export default function GameScreen() {
                     </div>
                   </div>
 
-                  {/* 六维 */}
-                  <div className="grid grid-cols-3 gap-1 mt-2 border-t border-amber-900/10 pt-2">
-                    {abilities.map(([k,v])=>(
-                      <div key={k} className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 text-center">
-                        <span className="text-[8px] text-gray-400 font-semibold">{k}</span>
-                        <div className="text-xs font-bold">{v}</div>
-                      </div>
-                    ))}
-                  </div>
+                  {/* 六维 / COC 关键数值 */}
+                  {b.system === 'coc' ? (
+                    <div className="grid grid-cols-2 gap-1 mt-2 border-t border-amber-900/10 pt-2">
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-gray-400">HP</span> <b className="text-xs">{get('HP','hp','生命')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-gray-400">MP</span> <b className="text-xs">{get('MP','mp','魔法')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-gray-400">伤害加值</span> <b className="text-xs">{get('伤害加值','DB','damage_bonus')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-gray-400">护甲</span> <b className="text-xs">{get('护甲','装甲','armor')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 col-span-2"><span className="text-[8px] text-gray-400">技能</span> <b className="text-xs">{get('技能','Skills','skills')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 col-span-2"><span className="text-[8px] text-gray-400">理智损失</span> <b className="text-xs">{get('理智损失','SAN Loss','sanity')}</b></div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-1 mt-2 border-t border-amber-900/10 pt-2">
+                      {abilities.map(([k,v])=>(
+                        <div key={k} className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 text-center">
+                          <span className="text-[8px] text-gray-400 font-semibold">{k}</span>
+                          <div className="text-xs font-bold">{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   {/* 标准字段 */}
                   {(skills!=='—'||senses!=='—'||languages!=='—'||challenge!=='—') && (

@@ -2,6 +2,25 @@
 
 import asyncio, json, random, re
 from typing import Any
+
+
+def _normalize_item(item: Any) -> dict:
+    """将背包条目统一为结构化对象：{name, description, quantity, type, properties}。"""
+    if isinstance(item, dict):
+        return {
+            "name": str(item.get("name") or item.get("item") or "未命名物品"),
+            "description": str(item.get("description") or ""),
+            "quantity": int(item.get("quantity") or 1),
+            "type": str(item.get("type") or "misc"),
+            "properties": item.get("properties") or {},
+        }
+    return {
+        "name": str(item),
+        "description": "",
+        "quantity": 1,
+        "type": "misc",
+        "properties": {},
+    }
 from openai import AsyncOpenAI
 from backend.config import ensure_valid_api_key, settings
 from backend.engine.session import (
@@ -472,7 +491,14 @@ M3. 示例输出（符合所有L+M节规则）——注意：决策建议不写�
 {memory_context}
 {world_context}
 {character_info}
-{world_state_compact}"""
+{world_state_compact}
+
+# 内部思考流程（DM思维，绝不展示给玩家）
+1. 先解析玩家行动的真实意图与可能触发的规则。
+2. 判断是否需要检定/战斗/场景更新/记忆/状态变更。
+3. 先调用工具取得权威数值，再写叙事。
+4. 叙事只呈现结果、感官细节与角色能感知的信息，不暴露推理步骤。
+5. 若玩家信息不足，让角色通过行动/检定去发现，而不是直接告诉答案。"""
 
 
 DM_DECISION_PROMPT = """
@@ -694,7 +720,8 @@ def build_character_info(state: GameSessionState) -> str:
 
     items_list = inv.get("items", [])
     if items_list:
-        lines.append(f"背包: {', '.join(items_list)}")
+        names = [i.get("name", str(i)) if isinstance(i, dict) else str(i) for i in items_list]
+        lines.append(f"背包: {', '.join(names)}")
 
     return "\n".join(lines)
 
@@ -948,11 +975,14 @@ async def _exec_update_state(args: dict, state: GameSessionState) -> str:
                         })
         elif k == "inventory_add":
             items = info.setdefault("inventory", {}).setdefault("items", [])
-            if v not in items: items.append(v)
+            item = _normalize_item(v)
+            if not any((i.get("name") if isinstance(i, dict) else i) == item["name"] for i in items):
+                items.append(item)
             applied["inventory"] = {"items": items}
         elif k == "inventory_remove":
             items = info.setdefault("inventory", {}).setdefault("items", [])
-            if v in items: items.remove(v)
+            name = v if isinstance(v, str) else (v.get("name") if isinstance(v, dict) else str(v))
+            items[:] = [i for i in items if (i.get("name") if isinstance(i, dict) else i) != name]
             applied["inventory"] = {"items": items}
 
     if applied:
