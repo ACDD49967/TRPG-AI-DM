@@ -241,6 +241,7 @@ export default function StartScreen(){
       if(d.system)setScenarioSystem(d.system as GameSystem);
       if(d.source_chunks)setSourceChunks(d.source_chunks);
       fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
+      loadKb();
     }catch(e:unknown){setWorldGenErr(e instanceof Error?e.message:'生成失败');clearInterval(timer);}
     finally{setWorldGenBusy(false);}
   };
@@ -284,6 +285,7 @@ export default function StartScreen(){
       setSourceChunks(d.source_chunks||[]);
       setSelectedScenario(d.scenario_id);setShowScenarioList(false);
       fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
+      loadKb();
     }catch(e:unknown){setImportErr(e instanceof Error?e.message:'导入失败');}
     finally{setImportBusy(false);}
   };
