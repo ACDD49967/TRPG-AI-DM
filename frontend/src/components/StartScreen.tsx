@@ -183,12 +183,27 @@ export default function StartScreen(){
   const callAI=async(backstoryOnly:boolean)=>{
     setAiBusy(true);setAiErr('');
     try{
-      const body:Record<string,unknown>={character_name:charName||'冒险者',gender,race:rc.name,char_class:cc.name,api_key:apiKey||undefined,model_name:modelName||undefined,base_url:baseUrl||undefined};
-      if(backstoryOnly)body.attributes=attrs;else if(backstoryText.trim())body.backstory=backstoryText.trim();
+      const isCoc=gameSystem==='coc';
+      const body:Record<string,unknown>={
+        character_name:charName||'冒险者',
+        gender,
+        race:isCoc?'调查员':rc.name,
+        char_class:isCoc?occupation:cc.name,
+        game_system:gameSystem,
+        scenario_summary:scenarioSummary||undefined,
+        custom_rules:gameSystem==='custom'?customRules:undefined,
+        api_key:apiKey||undefined,
+        model_name:modelName||undefined,
+        base_url:baseUrl||undefined,
+      };
+      if(backstoryOnly)body.attributes=isCoc?cocAttrs:attrs;
+      else if(backstoryText.trim())body.backstory=backstoryText.trim();
       const r=await fetch('/api/generate/character',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       if(!r.ok)throw new Error('生成失败');
       const d=await r.json();
-      if(backstoryOnly)d.attributes=attrs;
+      if(backstoryOnly){
+        d.attributes=isCoc?cocAttrs:attrs;
+      }
       setAiGen(d);
     }catch(e:unknown){setAiErr(e instanceof Error?e.message:'生成失败');}
     finally{setAiBusy(false);}
@@ -555,6 +570,16 @@ export default function StartScreen(){
                     <div>🧠 SAN: <b>{(cocAttrs.pow||50)*5}</b></div>
                     <div>🍀 幸运: <b>{cocLuck}</b></div>
                   </div>
+                  <button onClick={()=>callAI(true)} disabled={aiBusy} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
+                    {aiBusy?'⏳ 生成中...':'✨ 基于属性+剧本总结生成沉浸式背景'}
+                  </button>
+                  {aiErr&&<p className="text-red-500 text-xs">{aiErr}</p>}
+                  {aiGen?.backstory&&(
+                    <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                      <p className="text-[10px] text-gray-500 font-medium mb-1">背景故事</p>
+                      <p className="text-xs text-gray-700 leading-relaxed">{aiGen.backstory}</p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -570,8 +595,24 @@ export default function StartScreen(){
                       </div>
                     ))}
                   </div>
+                  <button onClick={()=>callAI(true)} disabled={aiBusy} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
+                    {aiBusy?'⏳ 生成中...':'✨ 基于属性+剧本总结生成沉浸式背景'}
+                  </button>
+                  {aiErr&&<p className="text-red-500 text-xs">{aiErr}</p>}
+                  {aiGen?.backstory&&(
+                    <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                      <p className="text-[10px] text-gray-500 font-medium mb-1">背景故事</p>
+                      <p className="text-xs text-gray-700 leading-relaxed">{aiGen.backstory}</p>
+                    </div>
+                  )}
                 </div>
               )}
+
+              {/* 自行填写背景（所有规则系统通用） */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">角色背景（可选，可自行填写）</label>
+                <textarea value={backstoryText} onChange={e=>setBackstoryText(e.target.value)} placeholder="在这里直接写下你的角色过往；也可以留空并使用上方 AI 生成" rows={4} className="input-field resize-none" />
+              </div>
 
               <div className="flex gap-2">
                 <button onClick={()=>setStep(1)} className="flex-1 btn-secondary">← 返回剧本</button>

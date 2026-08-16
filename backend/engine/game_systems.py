@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import random
 import re
 
 
@@ -215,6 +216,29 @@ def get_dnd4_defenses(char_class: str, attributes: dict, level: int = 1,
     }
 
 
+def roll_coc_characteristics() -> dict:
+    """COC 7e 官方随机属性：3d6×5 与 (2d6+6)×5。"""
+    def d3():
+        return sum(random.randint(1, 6) for _ in range(3)) * 5
+    def d2_plus_6():
+        return (sum(random.randint(1, 6) for _ in range(2)) + 6) * 5
+    return {
+        "str": d3(),
+        "con": d3(),
+        "dex": d3(),
+        "int": d3(),
+        "pow": d3(),
+        "cha": d3(),
+        "siz": d2_plus_6(),
+        "edu": d2_plus_6(),
+    }
+
+
+def roll_coc_luck() -> int:
+    """COC 7e 幸运：3d6×5。"""
+    return sum(random.randint(1, 6) for _ in range(3)) * 5
+
+
 def get_coc_derived(attributes: dict, luck: int = 50) -> dict:
     """COC 7e 衍生值固定计算。"""
     con = int(attributes.get("con", 50) or 50)
@@ -286,6 +310,33 @@ def detect_game_system(text: str, title: str = "") -> str:
         return "dnd5e"
 
     return "custom"
+
+
+def get_style_directive(system_id: str) -> str:
+    """返回与世界背景相符的叙事文风指令，提升沉浸感与 DM 风范。"""
+    if system_id == "coc":
+        return """文风与沉浸要求（COC 守密人口吻）：
+- 以克苏鲁式恐怖为底色：日常逐渐崩坏、未知令人不安、理智脆弱。
+- 使用潮湿、陈旧、昏暗、霉味、远处的汽笛/钟声等感官细节。
+- 不要急于抛出怪物；先营造“不对劲”的氛围。
+- NPC 说话带时代感与地方感，不滥用现代网络用语。
+- 你既是叙述者也是守密人：克制、冷静、带一点宿命感，不主动拯救调查员。"""
+    if system_id == "dnd4e":
+        return """文风与沉浸要求（D&D 4e DM 口吻）：
+- 西幻史诗风格：英雄气概、古老帝国、战场荣光与魔法文明。
+- 战斗描写强调“威能”的华丽与力量感，但保持具体物理细节。
+- NPC 与地名带有中世纪/奇幻风味，避免现代词汇。
+- 你是地下城主：公正、有戏剧张力，让玩家感到自己正身处剑与魔法的世界。"""
+    if system_id == "custom":
+        return """文风与沉浸要求（自定义世界）：
+- 严格贴合玩家提供的自定义规则与世界设定。
+- 若剧本包含明确风格（蒸汽朋克/末日废土/东方武侠等），优先使用该风格。
+- 保持叙事内部一致，不混入 D&D/COC 的默认设定。"""
+    return """文风与沉浸要求（D&D 5e DM 口吻）：
+- 西幻史诗风格：酒馆、古堡、龙与地下城、英雄旅程。
+- 使用具体感官细节和物理量，避免现代词汇与网络梗。
+- 战斗描写兼具动作感与后果，NPC 有符合身份的说话方式。
+- 你是地下城主：公正、有戏剧张力，让世界显得真实而危险。"""
 
 
 def build_stat_glossary(system_id: str) -> str:

@@ -8,6 +8,7 @@ from backend.engine.game_systems import (
     get_dnd5_derived,
     get_dnd5_proficiency_bonus,
     get_dnd5_spell_slots,
+    roll_coc_characteristics,
 )
 from backend.scenario_importer import (
     extract_text,
@@ -76,3 +77,9 @@ def test_dnd4_defenses_and_coc_derived():
     assert coc["hp"] == 55  # (50+60)//2
     assert coc["san"] == 275
     assert coc["luck"] == 65
+
+
+def test_roll_coc_characteristics_ranges():
+    attrs = roll_coc_characteristics()
+    assert set(attrs.keys()) == {"str", "con", "dex", "int", "pow", "cha", "siz", "edu"}
+    assert all(1 <= attrs[k] <= 99 for k in attrs)

@@ -57,6 +57,9 @@ class GenerateAttributesRequest(BaseModel):
     char_class: str = Field(default="战士", max_length=32)
     backstory: str = Field(default="", max_length=2000)
     attributes: dict[str, int] | None = None  # 可选：已有属性时仅生成背景
+    game_system: str = Field(default="dnd5e", pattern="^(dnd5e|dnd4e|coc|custom)$")
+    scenario_summary: str | None = None        # 预生成剧本总结，用于沉浸式背景生成
+    custom_rules: str | None = None            # 自定义规则文本
     api_key: str | None = None
     model_name: str | None = None
     base_url: str | None = None

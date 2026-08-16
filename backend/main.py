@@ -325,6 +325,23 @@ async def generate_character(request: GenerateAttributesRequest):
 
     has_backstory = bool(request.backstory.strip())
     has_attrs = bool(request.attributes and len(request.attributes) >= 6)
+    system = request.game_system or "dnd5e"
+    scenario_summary = request.scenario_summary or ""
+    custom_rules = request.custom_rules or ""
+
+    from backend.engine.game_systems import (
+        get_style_directive,
+        roll_coc_characteristics,
+        roll_coc_luck,
+    )
+    style_block = get_style_directive(system)
+    scenario_block = f"\n\n## 已选剧本总结（必须自然融入角色背景）\n{scenario_summary[:1200]}" if scenario_summary else ""
+    custom_block = f"\n\n## 自定义规则（背景须符合）\n{custom_rules[:1500]}" if custom_rules and system == "custom" else ""
+
+    # COC 的数值必须由程序随机生成，不允许 LLM 编造属性
+    if system == "coc" and not has_attrs:
+        request.attributes = roll_coc_characteristics()
+        has_attrs = True
 
     gender = request.gender or "未指定"
     # 归一化性别值（支持中英文）
@@ -343,70 +360,98 @@ async def generate_character(request: GenerateAttributesRequest):
         gender_pronoun = "她"
 
     if has_backstory and not has_attrs:
-        # 模式1：有背景故事 → 推断属性
-        user_prompt = f"""请根据以下角色背景故事推断D&D六维属性值。
+        # 模式1：有背景故事 → 推断属性（仅 D&D 系）
+        user_prompt = f"""请根据以下角色背景故事推断{ 'D&D 六维' if system != 'coc' else 'COC 八维' }属性值。
 
 角色名: {request.character_name}
 {gender_hint}种族: {request.race}
 职业: {request.char_class}
 背景故事: {request.backstory}
+{scenario_block}
 
-根据故事中描述的角色特点分配属性（使用标准数组[15,14,13,12,10,8]范围3-18）。
+根据故事中描述的角色特点分配属性。D&D 使用标准数组[15,14,13,12,10,8]范围3-18；COC 使用1-99百分比。
+{style_block}
 
 只返回JSON：
 {{"str": 数字, "dex": 数字, "con": 数字, "int": 数字, "wis": 数字, "cha": 数字, "backstory": "润色后的背景(150-250字)"}}"""
     elif has_attrs and not has_backstory:
-        # 模式2：有属性 → 根据属性生成生动背景
-        attrs = request.attributes
-        str_val = attrs.get('str', 12)
-        dex_val = attrs.get('dex', 12)
-        int_val = attrs.get('int', 12)
-        cha_val = attrs.get('cha', 12)
-        wis_val = attrs.get('wis', 12)
-        con_val = attrs.get('con', 12)
+        # 模式2：有属性 → 根据属性+剧本总结生成沉浸式背景
+        attrs = request.attributes or {}
+        if system == "coc":
+            attr_names = [("str","力量"),("con","体质"),("dex","敏捷"),("int","智力"),("pow","意志"),("cha","魅力"),("siz","体型"),("edu","教育")]
+            attr_line = " | ".join(f"{label}:{attrs.get(key, 50)}" for key, label in attr_names)
+            role_hint = "调查员"
+        else:
+            str_val = attrs.get('str', 12)
+            dex_val = attrs.get('dex', 12)
+            int_val = attrs.get('int', 12)
+            cha_val = attrs.get('cha', 12)
+            wis_val = attrs.get('wis', 12)
+            con_val = attrs.get('con', 12)
+            attr_line = f"力{str_val} 敏{dex_val} 体{con_val} 智{int_val} 感{wis_val} 魅{cha_val}"
+            role_hint = "冒险者"
 
-        # 角色特质描述——反公式化
-        traits = []
-        if str_val >= 15: traits.append("天生神力，肌肉线条分明")
-        elif str_val <= 9: traits.append("身形瘦弱，但用技巧弥补力量的不足")
-        if dex_val >= 15: traits.append("动作如行云流水，从不失手")
-        elif dex_val <= 9: traits.append("手脚笨拙，经常打翻东西，但这让ta更谨慎")
-        if int_val >= 15: traits.append("过目不忘，对奥秘有着近乎痴迷的钻研")
-        if cha_val >= 15: traits.append("天生有一种让人无法拒绝的感染力")
-        elif cha_val <= 9: traits.append("不善言辞，沉默寡言到让人误以为是傲慢")
-
-        trait_line = "。".join(traits[:3]) if traits else "一个看似平凡但命运暗藏波澜的冒险者"
-
-        user_prompt = f"""你是一位小说家，正在为你的新主角写人物小传。这个角色不是在填表格——ta是一个活过的人，身上有伤疤、有执念、有不为人知的秘密。
+        user_prompt = f"""你是沉浸式角色背景作者。这个角色不是填表格——ta是一个活过的人，身上有伤疤、有执念、有不为人知的秘密。
 
 角色名: {request.character_name}
 {gender_hint}种族: {request.race}
-职业: {request.char_class}
-六维: 力{str_val} 敏{dex_val} 体{con_val} 智{int_val} 感{wis_val} 魅{cha_val}
-
-关键特质线索（以此为起点，不要照搬，融入故事中）: {trait_line}
+职业/身份: {request.char_class}
+{role_hint}属性: {attr_line}
+{scenario_block}
+{custom_block}
 
 写一段200-350字的人物小传。必须遵循:
 1. 不要写"ta从小就"、"命运的齿轮"、"踏上冒险之路"等模板开头
 2. 从一个具体时刻切入——ta正在做什么？手上沾着什么？闻到什么味道？
 3. 属性值只是骨架。最重要的数字是ta在哪个时刻做了什么选择——那个选择的后果至今未消
 4. 给出一个具体伤疤、一个坏习惯、一个ta对别人撒过的谎（或者别人对ta撒的谎）
-5. 避免"孤独的童年""家族的秘密""神秘的力量"等奇幻人物传记高频元素。写一个更像《巫师》杰洛特或者《博德之门3》影心的角色——有缺陷，有灰色地带，不是你一眼就能看透的
-6. 角色的性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词。性别必须体现在故事中——外貌特征、动作习惯、对话语气、身体描写等
+5. **必须与已选剧本总结的世界观自然衔接**，让角色看起来属于这个世界
+6. 角色的性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词。性别必须体现在故事中
 7. **格式要求**：必须分段。2-3个自然段，段与段之间用空行分隔。不要写成一大坨连在一起的文字
+8. 文风要求：{style_block}
 
 只返回JSON: {{"backstory": "..."}}"""
     else:
-        # 模式3：自动生成属性+背景
-        user_prompt = f"""你是一位小说家，正在为你的新主角写人物小传。这个角色不是在填表格——ta是一个活过的人，身上有伤疤、有执念、有不为人知的秘密。
+        # 模式3：自动生成属性+背景（COC 属性已由程序随机生成）
+        attrs = request.attributes or {}
+        if system == "coc":
+            attr_names = [("str","力量"),("con","体质"),("dex","敏捷"),("int","智力"),("pow","意志"),("cha","魅力"),("siz","体型"),("edu","教育")]
+            attr_line = " | ".join(f"{label}:{attrs.get(key, 50)}" for key, label in attr_names)
+            role_hint = "调查员"
+            user_prompt = f"""你是克苏鲁式调查员背景作者。
+
+角色名: {request.character_name}
+{gender_hint}职业/身份: {request.char_class}
+调查员属性: {attr_line}
+{scenario_block}
+
+写一段200-350字的人物小传。要求:
+1. 从调查员日常或某个具体时刻切入，不要模板开头
+2. 给出一个具体伤疤、一个坏习惯、一个不愿提及的往事
+3. 必须与剧本总结中的世界观自然衔接
+4. 角色性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词
+5. 分段，2-3个自然段，段间空行
+6. 文风要求：{style_block}
+
+只返回JSON: {{"backstory": "..."}}"""
+        else:
+            str_val = attrs.get('str', 12)
+            dex_val = attrs.get('dex', 12)
+            int_val = attrs.get('int', 12)
+            cha_val = attrs.get('cha', 12)
+            wis_val = attrs.get('wis', 12)
+            con_val = attrs.get('con', 12)
+            attr_line = f"力{str_val} 敏{dex_val} 体{con_val} 智{int_val} 感{wis_val} 魅{cha_val}"
+            user_prompt = f"""你是一位小说家，正在为你的新主角写人物小传。这个角色不是在填表格——ta是一个活过的人，身上有伤疤、有执念、有不为人知的秘密。
 
 角色名: {request.character_name}
 {gender_hint}种族: {request.race}
 职业: {request.char_class}
+六维: {attr_line}
+{scenario_block}
+{custom_block}
 
 第一步：根据种族特点和职业需求，分配六维属性（3-18范围）。
-{request.race}的职业倾向：战士应偏向力量体质、游荡者偏向敏捷、法师偏向智力、牧师偏向感知、吟游诗人偏向魅力。但不一定按最优配——有时候低属性会催生最好的故事。
-
 第二步：基于这组属性，写一段200-350字的人物小传。要求:
 1. 不要写"ta从小就"、"命运的齿轮"、"踏上冒险之路"等模板开头
 2. 从一个具体时刻切入——ta正在做什么？手上沾着什么？闻到什么味道？
@@ -415,6 +460,7 @@ async def generate_character(request: GenerateAttributesRequest):
 5. 属性值只是骨架。最重要的数字是ta在哪个时刻做了什么选择
 6. 角色的性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词。性别必须体现在故事中
 7. **格式要求**：必须分段。2-3个自然段，段与段之间用空行分隔
+8. 文风要求：{style_block}
 
 只返回JSON: {{"str":数字,"dex":数字,"con":数字,"int":数字,"wis":数字,"cha":数字,"backstory":"..."}}"""
 
@@ -422,7 +468,11 @@ async def generate_character(request: GenerateAttributesRequest):
         resp = await client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": f"你是一位天才D&D角色设计师和奇幻小说家。只返回合法JSON，不要其他文本。角色性别是{gender_normalized}，使用'{gender_pronoun}'作为人称代词。背景故事要有具体伤疤、坏习惯和灰色地带，避免模板化叙事。"},
+                {"role": "system", "content": (
+                    f"你是一位沉浸式角色背景设计师。只返回合法JSON，不要其他文本。"
+                    f"角色性别是{gender_normalized}，使用'{gender_pronoun}'作为人称代词。"
+                    f"背景故事要有具体伤疤、坏习惯和灰色地带，避免模板化叙事。\n\n{style_block}"
+                )},
                 {"role": "user", "content": user_prompt},
             ],
             max_tokens=1000,
