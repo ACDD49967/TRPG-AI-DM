@@ -108,9 +108,30 @@ UPDATE_CITY_TOOL = _tool("update_city_entry",
      "reason": {"type": "string"}},
     ["name", "changes", "reason"])
 
+GENERATE_NAME_TOOL = _tool("generate_name",
+    "生成一个符合种族/背景的 NPC 名字。",
+    {"race": {"type": "string", "description": "种族，如人类/精灵/矮人"}},
+    ["race"])
+
+ROLL_TREASURE_TOOL = _tool("roll_treasure",
+    "根据挑战等级（CR）生成一组财宝掉落。",
+    {"cr": {"type": "integer", "description": "怪物挑战等级"}},
+    ["cr"])
+
+NPC_QUIRK_TOOL = _tool("npc_quirk",
+    "为 NPC 生成一个随机怪癖/习惯，让角色更鲜活。",
+    {}, [])
+
+SEARCH_KNOWLEDGE_TOOL = _tool("search_knowledge",
+    "主动检索知识库中的规则/生物/法术/物品/城市资料。用于需要准确细节时。",
+    {"query": {"type": "string", "description": "检索关键词"},
+     "top_k": {"type": "integer", "description": "返回数量，默认3"}},
+    ["query"])
+
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, ADD_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
     UPDATE_WORLD_STATE_TOOL, REVEAL_INFO_TOOL, UPDATE_SCENE_TOOL,
     ADD_CHARACTER_NOTE_TOOL, UPDATE_BESTIARY_TOOL, UPDATE_CITY_TOOL,
+    GENERATE_NAME_TOOL, ROLL_TREASURE_TOOL, NPC_QUIRK_TOOL, SEARCH_KNOWLEDGE_TOOL,
 ]

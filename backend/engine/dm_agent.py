@@ -18,6 +18,12 @@ from backend.engine.game_systems import build_system_rule_block, build_stat_glos
 from backend.knowledge_base import get_knowledge_base
 from backend.save_manager import auto_save_if_needed
 from backend.skills import get_skill
+from backend.dm_toolbox import (
+    generate_name,
+    npc_quirk,
+    roll_treasure,
+    search_knowledge,
+)
 from backend.skills.prompts import (
     COC_SYSTEM_PROMPT,
     CUSTOM_SYSTEM_PROMPT,
@@ -784,6 +790,10 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "add_character_note": _exec_character_note,
         "update_bestiary_entry": _exec_update_bestiary,
         "update_city_entry": _exec_update_city,
+        "generate_name": lambda a,s: generate_name(a.get("race","人类")),
+        "roll_treasure": lambda a,s: "、".join(roll_treasure(int(a.get("cr",1)))),
+        "npc_quirk": lambda a,s: npc_quirk(),
+        "search_knowledge": lambda a,s: str(search_knowledge(a.get("query",""), _game_system(s), int(a.get("top_k",3)))),
     }
     fn = handlers.get(name)
     return await fn(args, state) if fn else f"未知: {name}"
