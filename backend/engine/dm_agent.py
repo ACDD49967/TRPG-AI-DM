@@ -14,7 +14,7 @@ from backend.engine.rules import (
 )
 from backend.engine.tools import DM_TOOLS
 from backend.engine.world_state import WorldState, NpcEntry, PlotFlag
-from backend.engine.game_systems import build_system_rule_block, get_system
+from backend.engine.game_systems import build_system_rule_block, build_stat_glossary, get_system
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -524,6 +524,35 @@ OPENING_PROMPT = """你是D&D地下城主。为以下角色写开场白。开场
 （请在叙事正文后直接结束。决策建议通过suggest_choices工具调用发送——不要在叙事正文中写"**决策建议**"。）"""
 
 
+COC_OPENING_PROMPT = """你是克苏鲁的呼唤守密人（Keeper）。为以下调查员写开场白。
+
+角色信息：
+{character_info}
+背景故事：
+{backstory}
+世界设定：
+{world_context}
+
+规则（按顺序执行）：
+1. 写150-300字开场叙事：
+   - 第二人称"你"
+   - 从调查员正在进行的日常或调查动作开始（翻档案、走访、在雨天等车、整理旧物等）
+   - 使用具体感官细节：潮湿、霉味、灯光、远处的汽笛等
+   - 营造“表面正常但隐约不安”的氛围，不要一开场就出现不可名状的怪物
+   - 如果世界设定非空，从剧本中的起始地点/第一幕切入
+2. 输出当前场景行：**当前场景**：地点 · 时间 · 天气 · 在场人物
+3. 输出2-3个调查方向，格式：
+   - [行动] | 风险：xxx | 回报：xxx
+4. 时间压力：事件正在发生或即将发生，调查员没有无限时间。
+
+示例格式（决策建议不写在正文中）：
+[开场叙事150-300字]
+
+**当前场景**：阿卡姆图书馆 · 傍晚 · 阴雨 · 管理员、两名学生
+
+（请在叙事正文后直接结束。决策建议通过suggest_choices工具调用发送。）"""
+
+
 # ═══════════════════════════════════════════════════════════════
 # 辅助
 # ═══════════════════════════════════════════════════════════════
@@ -631,11 +660,13 @@ def build_system_prompt(state: GameSessionState) -> str:
     if backstory:
         backstory_block = f"\n## 角色背景（决策建议须参考此背景——建议的行动应符合角色的出身、性格和动机）\n{backstory[:500]}"
 
+    # 固定规则前缀：所有静态规则放在前面，动态上下文统一追加到末尾，
+    # 这样同一会话/模式的 system prompt 前缀保持稳定，更容易命中 LLM prompt cache。
     sp = SYSTEM_PROMPT.format(
-        character_info=char_info + backstory_block,
-        memory_context=mem if mem.strip() else "冒险刚启。篝火刚点起来，第一颗骰子还在你的掌心。",
-        world_context=wc,
-        world_state_compact=wsc,
+        character_info="",
+        memory_context="",
+        world_context="",
+        world_state_compact="",
     )
     sp += DM_DECISION_PROMPT
     sp += _mode_instructions(state)
@@ -643,6 +674,17 @@ def build_system_prompt(state: GameSessionState) -> str:
         _game_system(state),
         state.character_info.get("custom_rules", ""),
     )
+
+    # 动态上下文统一放在静态规则之后
+    mem_text = mem if mem.strip() else "冒险刚启。篝火刚点起来，第一颗骰子还在你的掌心。"
+    sp += f"\n\n## 当前角色\n{char_info}"
+    sp += f"\n\n## 数值含义速查\n{build_stat_glossary(_game_system(state))}"
+    sp += backstory_block
+    sp += f"\n\n## 记忆上下文\n{mem_text}"
+    if wc:
+        sp += f"\n\n## 世界上下文\n{wc}"
+    if wsc:
+        sp += f"\n\n## 世界状态精简\n{wsc}"
     return sp
 
 
@@ -1201,7 +1243,8 @@ async def generate_opening_scene(state: GameSessionState) -> str:
     scenario_summary = state.character_info.get("scenario_summary", "")
     if scenario_summary:
         wc = f"## 剧本总结\n{scenario_summary[:600]}\n\n## 冒险大纲\n{wc[:1600]}" if wc else f"## 剧本总结\n{scenario_summary[:600]}"
-    prompt = OPENING_PROMPT.format(character_info=ci, backstory=bs or "暂无", world_context=wc[:2000] if wc else "暂无")
+    opening_template = COC_OPENING_PROMPT if _game_system(state) == "coc" else OPENING_PROMPT
+    prompt = opening_template.format(character_info=ci, backstory=bs or "暂无", world_context=wc[:2000] if wc else "暂无")
     prompt += _mode_instructions(state)
     prompt += build_system_rule_block(_game_system(state), state.character_info.get("custom_rules", ""))
     system_role = "你是克苏鲁的呼唤守密人（Keeper），负责营造神秘、恐怖与调查氛围。" if _game_system(state) == "coc" else "你是世界级D&D地下城主。"

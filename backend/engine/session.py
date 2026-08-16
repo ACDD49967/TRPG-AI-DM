@@ -167,6 +167,7 @@ async def sse_event_generator(
         "luck": info.get("luck", 0),
         "healing_surges": info.get("healing_surges", 0),
         "max_healing_surges": info.get("max_healing_surges", 0),
+        "surge_value": info.get("surge_value", 0),
     })
 
     # 将 end_of_turn 推入队列（排在叙事token之后）

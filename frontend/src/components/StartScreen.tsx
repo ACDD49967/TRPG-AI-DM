@@ -11,6 +11,11 @@ import {
   GAME_SYSTEM_LABELS,
   GAME_SYSTEM_OPTIONS,
   GAME_SYSTEM_SHORT,
+  getDnd4Derived,
+  getDnd5Derived,
+  rollCocAttributes,
+  rollCocLuck,
+  rollDndAttributes,
   type GameSystem,
 } from '../gameSystems';
 
@@ -138,6 +143,7 @@ export default function StartScreen(){
   const [cocAttrs,setCocAttrs]=useState<Record<string,number>>({str:50,con:50,dex:50,int:50,pow:50,cha:50,siz:50,edu:50});
   const [occupation,setOccupation]=useState('学者');
   const [cocSkillPicks,setCocSkillPicks]=useState<string[]>([]);
+  const [cocLuck,setCocLuck]=useState(50);
   const [customAttrs,setCustomAttrs]=useState<Record<string,number>>({str:10,dex:10,con:10,int:10,wis:10,cha:10});
   const [splitter,setSplitter]=useState<'naive'|'semantic'>('naive');
   const [chunkSize,setChunkSize]=useState(900);
@@ -166,6 +172,8 @@ export default function StartScreen(){
   },[attrs,aiGen,gameSystem,cocAttrs,customAttrs]);
   const rc=RACES[race]||RACES['人类'];
   const cc=CLASSES[charClass]||CLASSES['战士'];
+  const d5Derived = getDnd5Derived(cc.name, finalAttrs, 1);
+  const d4Derived = getDnd4Derived(cc.name, finalAttrs);
 
   const inc=useCallback((k:string)=>setAttrs(p=>{const c=p[k];if(c>=MAX)return p;const nv=c+1;if(spent(p)+(COST[nv]||0)-(COST[c]||0)>TOTAL)return p;return{...p,[k]:nv};}),[]);
   const dec=useCallback((k:string)=>setAttrs(p=>p[k]<=MIN?p:{...p,[k]:p[k]-1}),[]);
@@ -274,6 +282,7 @@ export default function StartScreen(){
         play_mode:playMode,
         game_system:gameSystem,
         custom_rules:gameSystem==='custom'?customRules:undefined,
+        luck:gameSystem==='coc'?cocLuck:undefined,
       })});
       if(!r.ok){const e=await r.json();throw new Error(e.detail||'创建失败');}
       setSession((await r.json()).session_id);
@@ -464,6 +473,7 @@ export default function StartScreen(){
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-xs font-medium text-gray-600">属性分配</label>
                     <div className="flex gap-1">
+                      <button onClick={()=>{setAttrs(rollDndAttributes()); setAttrMode('manual');}} className="text-[10px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-gray-300">🎲 随机</button>
                       <button onClick={()=>setAttrMode('manual')} className={`text-[10px] px-2.5 py-1 rounded-lg border ${attrMode==='manual'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-400'}`}>手动</button>
                       <button onClick={()=>setAttrMode('ai')} className={`text-[10px] px-2.5 py-1 rounded-lg border ${attrMode==='ai'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-400'}`}>自动</button>
                     </div>
@@ -526,7 +536,10 @@ export default function StartScreen(){
 
               {gameSystem==='coc'&&(
                 <div>
-                  <label className="text-xs font-medium text-gray-600 mb-2">调查员属性（1-99）</label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-medium text-gray-600">调查员属性（1-99）</label>
+                    <button onClick={()=>{setCocAttrs(rollCocAttributes()); setCocLuck(rollCocLuck());}} className="text-[10px] px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100">🎲 随机生成</button>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     {COC_ATTRIBUTES.map(a=>(
                       <div key={a.key} className="flex items-center gap-2 p-2 rounded-lg border border-gray-200 bg-white">
@@ -540,7 +553,7 @@ export default function StartScreen(){
                     <div>❤️ HP: <b>{(Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/2))}</b></div>
                     <div>🔮 MP: <b>{cocAttrs.pow||50}</b></div>
                     <div>🧠 SAN: <b>{(cocAttrs.pow||50)*5}</b></div>
-                    <div>🍀 幸运: <b>50</b>（可由剧本/规则调整）</div>
+                    <div>🍀 幸运: <b>{cocLuck}</b></div>
                   </div>
                 </div>
               )}
@@ -756,8 +769,9 @@ export default function StartScreen(){
                     </>
                   ):(
                     <>
-                      <span>❤️ HP:30</span>
+                      <span>❤️ HP:{gameSystem==='dnd4e'?d4Derived.hp:gameSystem==='dnd5e'?d5Derived.hp:30}</span>
                       <span>🛡️ AC:12</span>
+                      {gameSystem==='dnd4e'&&<span>💗 回复力:{d4Derived.healingSurges}</span>}
                     </>
                   )}
                   <span>{playMode==='lite'?'⚡精简模式':'🐉深度模式'}</span>

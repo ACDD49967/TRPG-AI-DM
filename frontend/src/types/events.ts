@@ -45,6 +45,7 @@ export interface StateUpdateEvent {
   luck?: number;
   healing_surges?: number;
   max_healing_surges?: number;
+  surge_value?: number;
   game_system?: 'dnd5e' | 'dnd4e' | 'coc' | 'custom';
 }
 

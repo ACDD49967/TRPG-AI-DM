@@ -24,6 +24,7 @@ export interface CharacterStatus {
   luck?: number;
   healing_surges?: number;
   max_healing_surges?: number;
+  surge_value?: number;
 }
 
 /** 场景信息（在顶栏显示） */

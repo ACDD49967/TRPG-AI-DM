@@ -92,9 +92,12 @@ export default function StatusPanel() {
             </div>
           </div>
         ) : system === 'dnd4e' ? (
-          <div className="flex justify-between text-[9px] mb-0.5">
-            <span className="text-gray-500">回复力</span>
-            <span className="font-mono text-gray-600">{status.healing_surges}/{status.max_healing_surges}</span>
+          <div>
+            <div className="flex justify-between text-[9px] mb-0.5">
+              <span className="text-gray-500">回复力</span>
+              <span className="font-mono text-gray-600">{status.healing_surges}/{status.max_healing_surges}</span>
+            </div>
+            <p className="text-[8px] text-gray-400">每次恢复 {status.surge_value || 0} HP</p>
           </div>
         ) : (
           <div>
@@ -141,6 +144,35 @@ export default function StatusPanel() {
           })}
         </div>
       </div>
+
+      {/* 数值说明 */}
+      <details className="pt-1.5 border-t border-gray-200 text-[8px]">
+        <summary className="text-gray-400 cursor-pointer select-none">📖 数值说明</summary>
+        {system === 'coc' ? (
+          <ul className="mt-1 text-gray-500 space-y-0.5">
+            <li>HP = (体质+体型)/2</li>
+            <li>MP = 意志</li>
+            <li>SAN = 意志×5</li>
+            <li>技能：d100 ≤ 技能值成功</li>
+          </ul>
+        ) : system === 'dnd4e' ? (
+          <ul className="mt-1 text-gray-500 space-y-0.5">
+            <li>回复力每日次数=职业基础+体质调整</li>
+            <li>每次回复 1/4 最大HP</li>
+            <li>攻击 d20 vs 四类防御</li>
+          </ul>
+        ) : system === 'custom' ? (
+          <ul className="mt-1 text-gray-500 space-y-0.5">
+            <li>以自定义规则文本为准</li>
+          </ul>
+        ) : (
+          <ul className="mt-1 text-gray-500 space-y-0.5">
+            <li>AC：敌人攻击需 ≥ AC 命中</li>
+            <li>熟练加值：1-4级+2，5-8级+3</li>
+            <li>HP 归 0 进入死亡豁免</li>
+          </ul>
+        )}
+      </details>
 
       {/* 装备与物品 */}
       <div className="pt-1.5 border-t border-gray-200 flex-1">

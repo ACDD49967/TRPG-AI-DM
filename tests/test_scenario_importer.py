@@ -1,6 +1,6 @@
 """剧本导入模块的基础测试。"""
 
-from backend.engine.game_systems import detect_game_system
+from backend.engine.game_systems import detect_game_system, get_dnd4_derived, get_dnd5_derived
 from backend.scenario_importer import (
     extract_text,
     split_text_naive,
@@ -36,3 +36,18 @@ def test_detect_game_system():
     assert detect_game_system("D&D 4e 威能与回复力") == "dnd4e"
     assert detect_game_system("5e 法术位与死亡豁免") == "dnd5e"
     assert detect_game_system("完全自定义的蒸汽朋克规则") == "custom"
+
+
+def test_dnd4_derived_formula():
+    d = get_dnd4_derived("战士", {"con": 14})
+    # 战士 1 级 HP = 15 + 体质值 = 29；回复力 = 9 + 体质调整(+2) = 11
+    assert d["max_hp"] == 29
+    assert d["healing_surges"] == 11
+    assert d["surge_value"] == 7  # 29 // 4
+
+
+def test_dnd5_derived_formula():
+    d = get_dnd5_derived("战士", {"con": 14}, level=1)
+    # 战士 1 级 HP = d10 最大值 10 + 体质调整(+2) = 12
+    assert d["max_hp"] == 12
+    assert d["hit_die"] == "1d10"

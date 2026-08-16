@@ -34,6 +34,7 @@ class NewGameRequest(BaseModel):
     play_mode: str = Field(default="deep", pattern="^(lite|deep)$")  # lite=精简模式, deep=深度模式
     game_system: str = Field(default="dnd5e", pattern="^(dnd5e|dnd4e|coc|custom)$")
     custom_rules: str | None = None            # 自定义规则文本（game_system=custom 时使用）
+    luck: int | None = Field(default=None, ge=1, le=99)  # COC 幸运值（可选）
 
 
 class GenerateBackstoryRequest(BaseModel):

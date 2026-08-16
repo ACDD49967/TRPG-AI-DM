@@ -623,7 +623,13 @@ async def create_new_game(request: NewGameRequest):
         }
 
         # 根据规则系统预填衍生数值
-        if request.game_system == "coc":
+        if request.game_system == "dnd5e":
+            from backend.engine.game_systems import get_dnd5_derived
+            d5 = get_dnd5_derived(character_info.get("char_class", "战士"), character_info.get("attributes", {}), character_info.get("level", 1))
+            character_info["hp"] = d5["hp"]
+            character_info["max_hp"] = d5["max_hp"]
+            character_info["hit_die"] = d5["hit_die"]
+        elif request.game_system == "coc":
             attrs_coc = character_info.get("attributes", {})
             character_info["hp"] = max(1, (attrs_coc.get("con", 50) + attrs_coc.get("siz", 50)) // 2)
             character_info["max_hp"] = character_info["hp"]
@@ -631,12 +637,15 @@ async def create_new_game(request: NewGameRequest):
             character_info["max_mp"] = character_info["mp"]
             character_info["san"] = attrs_coc.get("pow", 50) * 5
             character_info["max_san"] = character_info["san"]
-            character_info["luck"] = 50
+            character_info["luck"] = request.luck or 50
         elif request.game_system == "dnd4e":
-            attrs_d4 = character_info.get("attributes", {})
-            con_mod = (attrs_d4.get("con", 10) - 10) // 2
-            character_info["healing_surges"] = max(1, character_info.get("level", 1) + con_mod)
-            character_info["max_healing_surges"] = character_info["healing_surges"]
+            from backend.engine.game_systems import get_dnd4_derived
+            d4 = get_dnd4_derived(character_info.get("char_class", "战士"), character_info.get("attributes", {}))
+            character_info["hp"] = d4["hp"]
+            character_info["max_hp"] = d4["max_hp"]
+            character_info["healing_surges"] = d4["healing_surges"]
+            character_info["max_healing_surges"] = d4["max_healing_surges"]
+            character_info["surge_value"] = d4["surge_value"]
 
         # 如果指定了已保存剧本ID且不是全新世界——加载剧本
         if request.scenario_id and not request.new_world:

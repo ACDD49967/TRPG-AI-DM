@@ -51,6 +51,69 @@ def get_system(system_id: str | None) -> dict:
     return SYSTEM_TYPES["dnd5e"]
 
 
+# D&D 4e 职业基础数据（近似 SRD/核心书常用值）
+DND4_CLASS_HP = {
+    "战士": 15, "圣武士": 15, "野蛮人": 15,
+    "游侠": 12, "游荡者": 12, "牧师": 12, "邪术师": 12,
+    "吟游诗人": 12, "德鲁伊": 12, "武僧": 12, "术士": 12,
+    "法师": 10,
+}
+DND4_CLASS_SURGES = {
+    "战士": 9, "圣武士": 9, "野蛮人": 9,
+    "游侠": 6, "游荡者": 6, "牧师": 7, "邪术师": 6,
+    "吟游诗人": 7, "德鲁伊": 7, "武僧": 7, "术士": 6,
+    "法师": 6,
+}
+
+
+DND5_CLASS_HD = {
+    "战士": 10, "圣武士": 10, "野蛮人": 12, "游侠": 10, "武僧": 8,
+    "游荡者": 8, "吟游诗人": 8, "牧师": 8, "德鲁伊": 8, "邪术师": 8,
+    "法师": 6, "术士": 6,
+}
+
+
+def get_dnd5_derived(char_class: str, attributes: dict, level: int = 1) -> dict:
+    """按 D&D 5e 常用公式计算 1 级及升级后的 HP（取生命骰平均值）。
+
+    - 1级 HP = 生命骰最大值 + 体质调整值
+    - 之后每级增加 = 生命骰平均值 + 体质调整值
+    """
+    con = int(attributes.get("con", 10) or 10)
+    con_mod = (con - 10) // 2
+    hd = DND5_CLASS_HD.get(char_class, 8)
+    avg_hd = hd // 2 + 1
+    max_hp = hd + con_mod + max(0, level - 1) * (avg_hd + con_mod)
+    return {
+        "max_hp": max_hp,
+        "hp": max_hp,
+        "hit_die": f"1d{hd}",
+    }
+
+
+def get_dnd4_derived(char_class: str, attributes: dict) -> dict:
+    """按 D&D 4e 常用公式计算 HP / 回复力。
+
+    - 1级 HP = 职业基础HP + 体质值
+    - 每日回复力 = 职业基础回复力 + 体质调整值
+    - 单次回复力治疗量 = 最大HP / 4（向下取整）
+    """
+    con = int(attributes.get("con", 10) or 10)
+    con_mod = (con - 10) // 2
+    base_hp = DND4_CLASS_HP.get(char_class, 12)
+    base_surges = DND4_CLASS_SURGES.get(char_class, 6)
+    max_hp = base_hp + con
+    healing_surges = max(1, base_surges + con_mod)
+    surge_value = max(1, max_hp // 4)
+    return {
+        "max_hp": max_hp,
+        "hp": max_hp,
+        "healing_surges": healing_surges,
+        "max_healing_surges": healing_surges,
+        "surge_value": surge_value,
+    }
+
+
 def detect_game_system(text: str, title: str = "") -> str:
     """自动识别剧本所属规则系统。
 
@@ -89,6 +152,36 @@ def detect_game_system(text: str, title: str = "") -> str:
         return "dnd5e"
 
     return "custom"
+
+
+def build_stat_glossary(system_id: str) -> str:
+    """返回当前规则系统的数值语义说明，帮助 DM 理解每个数字代表什么。"""
+    if system_id == "dnd5e":
+        return """数值含义速查（D&D 5e）：
+- 属性 8-20：10 为凡人平均；调整值=(属性-10)//2。
+- HP：生命值；归 0 进入濒死并开始死亡豁免。
+- AC：护甲等级；敌人攻击 d20+加值 ≥ AC 命中。
+- 熟练加值：1-4级+2，5-8级+3，9-12级+4，13-16级+5，17-20级+6。
+- 法术位：施法者每日可用法术次数；短休/长休按规则恢复。
+- 技能熟练：在对应属性检定上额外加熟练加值。"""
+    if system_id == "dnd4e":
+        return """数值含义速查（D&D 4e）：
+- 属性 8-20：10 为平均；调整值=(属性-10)//2。
+- HP：生命值；降到一半以下进入“血竭(Bloodied)”，归 0 进入濒死。
+- 回复力(Healing Surge)：每日可用次数；每次使用恢复 1/4 最大 HP。
+- AC/强韧/反射/意志：四种防御；攻击 d20+加值 vs 对应防御。
+- 威能：随意(at-will)可无限用，遭遇(encounter)每场一次，每日(daily)每日一次。"""
+    if system_id == "coc":
+        return """数值含义速查（COC 7e）：
+- 属性为 1-99 百分比：50 为普通人水平，越高越好。
+- HP=(CON+SIZ)//2；归 0 时重伤昏迷，可能死亡。
+- MP=意志(POW)；施法消耗魔法值。
+- SAN=意志(POW)×5；遭遇神话损失理智，归 0 永久疯狂。
+- LUCK=幸运值；可用于重掷或改变处境，由守密人酌情消耗。
+- 技能检定：d100 ≤ 技能值=成功；≤技能值/2=困难成功；≤技能值/5=极限成功。"""
+    return """数值含义速查（自定义）：
+- 属性代表角色在该维度上的基础能力；数值越高通常越有利。
+- 具体计算规则以玩家提供的自定义规则文本为准。"""
 
 
 def build_system_rule_block(system_id: str, custom_rules: str = "") -> str:
