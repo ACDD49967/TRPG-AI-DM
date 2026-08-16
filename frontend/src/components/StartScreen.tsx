@@ -552,6 +552,7 @@ export default function StartScreen(){
   };
 
   const start=async()=>{
+    if(!modelName.trim()){setError('请先选择或填写模型名称');return;}
     if(!charName.trim()){setError('请输入角色名称');return;}
     setLoading(true);setError('');
     try{

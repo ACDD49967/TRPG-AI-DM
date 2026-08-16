@@ -173,23 +173,31 @@ EXTRACT_STATE_PROMPT = """请从以下D&D冒险大纲中提取关键的结构化
 
 async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
                max_tokens: int = 4000, temp: float = 0.85, timeout: float = 90.0) -> str:
-    """单次LLM调用，带超时保护。超时时返回空字符串由调用方降级处理。"""
+    """单次LLM调用，带超时保护与一次重试，尽量避免降级。"""
     import asyncio
-    try:
-        resp = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=model,
-                messages=[{"role":"system","content":system},{"role":"user","content":user}],
-                max_tokens=max_tokens, temperature=temp),
-            timeout=timeout,
-        )
-        return resp.choices[0].message.content.strip()
-    except asyncio.TimeoutError:
-        print(f"[WorldBuilder] LLM调用超时({timeout}s)，降级处理")
-        return ""
-    except Exception as e:
-        print(f"[WorldBuilder] LLM调用失败: {e}")
-        return ""
+    last_err = None
+    for attempt in range(1, 3):
+        try:
+            resp = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=[{"role":"system","content":system},{"role":"user","content":user}],
+                    max_tokens=max_tokens, temperature=temp),
+                timeout=timeout,
+            )
+            content = resp.choices[0].message.content
+            if content and content.strip():
+                return content.strip()
+            raise RuntimeError("空响应")
+        except asyncio.TimeoutError as e:
+            last_err = f"超时({timeout}s)"
+            print(f"[WorldBuilder] LLM调用第{attempt}次超时({timeout}s)")
+        except Exception as e:
+            last_err = str(e)
+            print(f"[WorldBuilder] LLM调用第{attempt}次失败: {e}")
+        await asyncio.sleep(1)
+    print(f"[WorldBuilder] LLM调用最终失败: {last_err}，降级处理")
+    return ""
 
 
 def _with_knowledge(prompt: str, query: str, system: str, top_k: int = 3) -> str:

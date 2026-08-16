@@ -967,19 +967,30 @@ async def generate_character(request: GenerateAttributesRequest):
 只返回JSON: {{"str":数字,"dex":数字,"con":数字,"int":数字,"wis":数字,"cha":数字,"backstory":"..."}}"""
 
     try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": (
-                    f"你是一位沉浸式角色背景设计师。只返回合法JSON，不要其他文本。"
-                    f"角色性别是{gender_normalized}，使用'{gender_pronoun}'作为人称代词。"
-                    f"背景故事要有具体伤疤、坏习惯和灰色地带，避免模板化叙事。\n\n{style_block}"
-                )},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_tokens=1000,
-            temperature=0.9,
-        )
+        import asyncio as _asyncio
+        last_err = None
+        for attempt in range(1, 3):
+            try:
+                resp = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": (
+                            f"你是一位沉浸式角色背景设计师。只返回合法JSON，不要其他文本。"
+                            f"角色性别是{gender_normalized}，使用'{gender_pronoun}'作为人称代词。"
+                            f"背景故事要有具体伤疤、坏习惯和灰色地带，避免模板化叙事。\n\n{style_block}"
+                        )},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_tokens=1000,
+                    temperature=0.9,
+                )
+                break
+            except Exception as e:
+                last_err = e
+                print(f"[CharacterGen] 第{attempt}次调用失败: {e}")
+                await _asyncio.sleep(1)
+        else:
+            raise last_err or RuntimeError("背景生成失败")
 
         text = resp.choices[0].message.content.strip()
         if text.startswith("```"):

@@ -288,6 +288,30 @@ SUMMARY_PROMPT = """你是一位D&D模组编辑。请为以下冒险剧本写一
 """
 
 
+def _fallback_summary(outline: str, max_chars: int = 450) -> str:
+    """从大纲中提取结构化摘要：每个章节取标题+首句，避免直接截断。"""
+    lines = outline.split("\n")
+    parts: list[str] = []
+    current_heading = ""
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            current_heading = stripped.lstrip("#").strip()
+            if current_heading:
+                parts.append(current_heading)
+            continue
+        # 非标题行：若还没有该节内容，取第一句作为该节摘要
+        if current_heading and (not parts or parts[-1] != current_heading):
+            sentence = re.split(r"(?<=[。！？!?；;])", stripped)[0][:80]
+            parts.append(sentence)
+            current_heading = ""
+    fallback = "；".join(parts) if parts else outline.strip().replace("#", "").replace("*", "")
+    fallback = re.sub(r"\s+", " ", fallback).strip()
+    return fallback[:max_chars] or "（暂无剧本总结）"
+
+
 async def generate_summary(
     client: AsyncOpenAI,
     model: str,
@@ -295,35 +319,38 @@ async def generate_summary(
     source_text: str,
     max_chars: int = 450,
 ) -> str:
-    """调用 LLM 生成剧本总结；失败时降级为大纲截断。"""
-    try:
-        import asyncio
-        resp = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "你是一位严谨的D&D模组编辑，擅长写出高信息密度的中文剧本总结。"},
-                    {"role": "user", "content": SUMMARY_PROMPT.format(
-                        outline=outline[:8000],
-                        source=source_text[:4000],
-                    )},
-                ],
-                max_tokens=800,
-                temperature=0.4,
-            ),
-            timeout=60,
-        )
-        summary = (resp.choices[0].message.content or "").strip()
-        if len(summary) > max_chars * 1.4:
-            summary = summary[:max_chars]
-        if summary:
-            return summary
-    except Exception as e:
-        print(f"[ScenarioImporter] 总结生成失败，使用降级摘要: {e}")
-    # 降级：截取大纲开头作为简要总结
-    fallback = outline.strip().replace("#", "").replace("*", "")
-    fallback = re.sub(r"\s+", " ", fallback)
-    return fallback[:max_chars] or "（暂无剧本总结）"
+    """调用 LLM 生成剧本总结；失败时使用结构化降级摘要，而不是简单截断。"""
+    import asyncio
+    last_err = None
+    for attempt in range(1, 3):
+        try:
+            resp = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "你是一位严谨的D&D模组编辑，擅长写出高信息密度的中文剧本总结。"},
+                        {"role": "user", "content": SUMMARY_PROMPT.format(
+                            outline=outline[:8000],
+                            source=source_text[:4000],
+                        )},
+                    ],
+                    max_tokens=800,
+                    temperature=0.4,
+                ),
+                timeout=60,
+            )
+            summary = (resp.choices[0].message.content or "").strip()
+            if len(summary) > max_chars * 1.4:
+                summary = summary[:max_chars]
+            if summary:
+                return summary
+            raise RuntimeError("空响应")
+        except Exception as e:
+            last_err = str(e)
+            print(f"[ScenarioImporter] 总结生成第{attempt}次失败: {e}")
+        await asyncio.sleep(1)
+    print(f"[ScenarioImporter] 总结生成最终失败: {last_err}，使用结构化降级摘要")
+    return _fallback_summary(outline, max_chars)
 
 
 # ═══════════════════════════════════════════════════════════════

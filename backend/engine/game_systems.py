@@ -140,7 +140,7 @@ def get_dnd5_derived(char_class: str, attributes: dict, level: int = 1) -> dict:
     - 1级 HP = 生命骰最大值 + 体质调整值
     - 之后每级增加 = 生命骰平均值 + 体质调整值
     """
-    con = int(attributes.get("con", 10) or 10)
+    con = max(1, min(30, int(attributes.get("con", 10) or 10)))
     con_mod = (con - 10) // 2
     hd = DND5_CLASS_HD.get(char_class, 8)
     avg_hd = hd // 2 + 1
@@ -159,7 +159,7 @@ def get_dnd4_derived(char_class: str, attributes: dict) -> dict:
     - 每日回复力 = 职业基础回复力 + 体质调整值
     - 单次回复力治疗量 = 最大HP / 4（向下取整）
     """
-    con = int(attributes.get("con", 10) or 10)
+    con = max(1, min(30, int(attributes.get("con", 10) or 10)))
     con_mod = (con - 10) // 2
     base_hp = DND4_CLASS_HP.get(char_class, 12)
     base_surges = DND4_CLASS_SURGES.get(char_class, 6)
@@ -241,10 +241,10 @@ def roll_coc_luck() -> int:
 
 def get_coc_derived(attributes: dict, luck: int = 50) -> dict:
     """COC 7e 衍生值固定计算。"""
-    con = int(attributes.get("con", 50) or 50)
-    siz = int(attributes.get("siz", 50) or 50)
-    pow_ = int(attributes.get("pow", 50) or 50)
-    str_ = int(attributes.get("str", 50) or 50)
+    con = max(1, min(99, int(attributes.get("con", 50) or 50)))
+    siz = max(1, min(99, int(attributes.get("siz", 50) or 50)))
+    pow_ = max(1, min(99, int(attributes.get("pow", 50) or 50)))
+    str_ = max(1, min(99, int(attributes.get("str", 50) or 50)))
     total = str_ + siz
 
     if total <= 64:
