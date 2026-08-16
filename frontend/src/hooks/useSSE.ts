@@ -160,6 +160,16 @@ export function useSSE(sessionId: string | null) {
         }
       },
 
+      history: (data) => {
+        const turns = data.turns as Array<{ player_input: string; dm_response: string }> | undefined;
+        if (!Array.isArray(turns)) return;
+        const st = useGameStore.getState();
+        for (const t of turns) {
+          if (t.player_input) st.addPlayerMessage(t.player_input);
+          if (t.dm_response) st.appendNarrativeText(t.dm_response);
+        }
+      },
+
       maps_updated: () => {
         store.getState().bumpMediaVersion();
       },
@@ -196,7 +206,7 @@ export function useSSE(sessionId: string | null) {
     const eventTypes = [
       'intro', 'narrative', 'narrative_flush', 'dice_roll',
       'state_update', 'choices', 'game_event', 'error', 'end_of_turn',
-      'journal_update', 'scene_update', 'maps_updated', 'bestiary_updated',
+      'journal_update', 'scene_update', 'maps_updated', 'bestiary_updated', 'history',
     ];
 
     for (const eventType of eventTypes) {

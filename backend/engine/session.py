@@ -152,16 +152,12 @@ async def sse_event_generator(
     from backend.engine.dm_agent import generate_opening_scene
 
     if getattr(state, "resumed", False):
-        # 读档恢复：跳过重新生成开场白，但从记忆中生成上下文回顾，避免“上下文缺失”
-        mem = state.memory
-        if mem and mem.summary:
-            resume_text = f"【冒险继续】{mem.summary}"
-        elif mem and mem.turns:
-            last = mem.turns[-1]
-            resume_text = f"【冒险继续】{last.dm_response[:300]}"
-        else:
-            resume_text = f"欢迎回来，{state.character_name}。冒险继续。"
-        await push_narrative_token(state, resume_text)
+        # 读档恢复：直接推送完整对话历史，前端原样渲染，不生成新开场
+        turns = [
+            {"player_input": t.player_input, "dm_response": t.dm_response}
+            for t in state.memory.turns
+        ]
+        await push_event(state, "history", {"turns": turns})
     else:
         try:
             await asyncio.wait_for(generate_opening_scene(state), timeout=60)
