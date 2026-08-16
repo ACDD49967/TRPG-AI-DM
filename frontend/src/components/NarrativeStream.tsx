@@ -36,21 +36,35 @@ export default function NarrativeStream() {
       )}
 
       <AnimatePresence>
-        {narrative.map((line) => (
-          <motion.div key={line.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
-            className={`${
-              line.isDiceRoll ? 'bg-indigo-50 border border-indigo-100 rounded-lg p-2.5' :
-              line.isGameEvent ? 'bg-amber-50 border border-amber-100 rounded-lg p-2.5' :
-              ''
-            }`}
-          >
-            {line.isDiceRoll && line.diceData && <DiceBadge data={line.diceData} />}
-            {line.isGameEvent && line.gameEventData && (
-              <div><span className="font-bold text-amber-600">{line.gameEventData.type === 'combat' ? '战斗' : '事件'}</span><p className="mt-1 text-sm text-amber-700">{line.gameEventData.description}</p></div>
-            )}
-            {!line.isDiceRoll && !line.isGameEvent && <NarrativeBlock text={line.text} />}
-          </motion.div>
-        ))}
+        {narrative.map((line) => {
+          if (line.role === 'player') {
+            return (
+              <motion.div key={line.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
+                className="flex justify-end"
+              >
+                <div className="max-w-[85%] bg-indigo-50 border border-indigo-100 rounded-2xl rounded-br-sm px-3 py-2">
+                  <p className="text-[9px] text-indigo-400 font-medium mb-0.5">你</p>
+                  <p className="text-sm text-gray-800 whitespace-pre-line leading-relaxed">{line.text}</p>
+                </div>
+              </motion.div>
+            );
+          }
+          return (
+            <motion.div key={line.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
+              className={`${
+                line.isDiceRoll ? 'bg-indigo-50 border border-indigo-100 rounded-lg p-2.5' :
+                line.isGameEvent ? 'bg-amber-50 border border-amber-100 rounded-lg p-2.5' :
+                ''
+              }`}
+            >
+              {line.isDiceRoll && line.diceData && <DiceBadge data={line.diceData} />}
+              {line.isGameEvent && line.gameEventData && (
+                <div><span className="font-bold text-amber-600">{line.gameEventData.type === 'combat' ? '战斗' : '事件'}</span><p className="mt-1 text-sm text-amber-700">{line.gameEventData.description}</p></div>
+              )}
+              {!line.isDiceRoll && !line.isGameEvent && <NarrativeBlock text={line.text} />}
+            </motion.div>
+          );
+        })}
       </AnimatePresence>
 
       {currentTokenBuffer && <p className="text-gray-700 text-sm leading-relaxed whitespace-pre-line">{currentTokenBuffer}<span className="text-indigo-400 animate-pulse">▎</span></p>}

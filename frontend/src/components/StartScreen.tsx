@@ -1180,7 +1180,10 @@ export default function StartScreen(){
                     <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200">角色系统：{GAME_SYSTEM_LABELS[gameSystem]}</span>
                     {gameSystem==='custom'&&customRules&&<span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200">自定义规则已填写</span>}
                   </div>
-                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 max-h-64 overflow-y-auto"><pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">{worldOutline.slice(0,2500)}{worldOutline.length>2500?'...':''}</pre></div>
+                  <details className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                    <summary className="text-xs text-gray-500 cursor-pointer select-none">展开完整大纲（含剧透，仅供创建时确认）</summary>
+                    <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed mt-2 max-h-64 overflow-y-auto">{worldOutline.slice(0,2500)}{worldOutline.length>2500?'...':''}</pre>
+                  </details>
                   {sourceChunks.length>0&&(
                     <p className="text-[10px] text-gray-400">已切分为 {sourceChunks.length} 个片段 · 切分方式: {splitter==='semantic'?'语义切分':'切分器'}</p>
                   )}

@@ -150,7 +150,7 @@ async def sse_event_generator(
     from backend.engine.dm_agent import generate_opening_scene
 
     try:
-        await asyncio.wait_for(generate_opening_scene(state), timeout=30)
+        await asyncio.wait_for(generate_opening_scene(state), timeout=60)
     except Exception:
         await push_narrative_token(state, f"欢迎，{state.character_name}。冒险开始了…")
 

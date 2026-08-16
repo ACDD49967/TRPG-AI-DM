@@ -178,21 +178,25 @@ EXTRACT_STATE_PROMPT = """请从以下TRPG冒险大纲中提取关键的结构�
 
 async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
                max_tokens: int = 4000, temp: float = 0.85, timeout: float = 90.0) -> str:
-    """单次LLM调用，带超时保护与一次重试，尽量避免降级。"""
+    """单次LLM调用，带超时保护与重试；第二次自动提高 max_tokens 以兼容推理模型。"""
     import asyncio
     last_err = None
     for attempt in range(1, 3):
+        current_max_tokens = max_tokens if attempt == 1 else max(max_tokens * 2, 8000)
         try:
             resp = await asyncio.wait_for(
                 client.chat.completions.create(
                     model=model,
                     messages=[{"role":"system","content":system},{"role":"user","content":user}],
-                    max_tokens=max_tokens, temperature=temp),
+                    max_tokens=current_max_tokens, temperature=temp),
                 timeout=timeout,
             )
             content = resp.choices[0].message.content
             if content and content.strip():
                 return content.strip()
+            # DeepSeek 等推理模型可能把 token 全花在 reasoning_content 上，导致 content 为空
+            reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
+            print(f"[WorldBuilder] LLM调用第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
             raise RuntimeError("空响应")
         except asyncio.TimeoutError as e:
             last_err = f"超时({timeout}s)"

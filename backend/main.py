@@ -911,6 +911,8 @@ async def generate_character(request: GenerateAttributesRequest):
 根据故事中描述的角色特点分配属性。D&D 使用标准数组[15,14,13,12,10,8]范围3-18；COC 使用1-99百分比。
 {style_block}
 
+润色后的背景必须保留原故事核心，分段（2-3段，段间空行），结尾留一个未解决的钩子。
+
 只返回JSON：
 {{"str": 数字, "dex": 数字, "con": 数字, "int": 数字, "wis": 数字, "cha": 数字, "backstory": "润色后的背景(150-250字)"}}"""
     elif system == "coc" and has_backstory and has_attrs:
@@ -931,7 +933,7 @@ async def generate_character(request: GenerateAttributesRequest):
 2. 从调查员日常或某个具体时刻切入，不要模板开头
 3. 必须与剧本总结中的世界观自然衔接
 4. 角色性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词
-5. 分段，2-3个自然段，段间空行
+5. 分段，2-3个自然段，段间空行；第一段写具体场景，第二段写关键往事，结尾留一个未解决的钩子
 6. 文风要求：{style_block}
 
 只返回JSON: {{"backstory": "..."}}"""
@@ -969,7 +971,9 @@ async def generate_character(request: GenerateAttributesRequest):
 5. **必须与已选剧本总结的世界观自然衔接**，让角色看起来属于这个世界
 6. 角色的性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词。性别必须体现在故事中
 7. **格式要求**：必须分段。2-3个自然段，段与段之间用空行分隔。不要写成一大坨连在一起的文字
-8. 文风要求：{style_block}
+8. **段落结构**：第一段写一个正在进行的具体场景；第二段写导致现状的关键往事/选择；第三段（如有）写一个未解决的钩子或执念
+9. **导语钩子**：结尾必须留一个让玩家想知道“接下来会怎样”的悬念或邀请，不要写成总结性结尾
+10. 文风要求：{style_block}
 
 只返回JSON: {{"backstory": "..."}}"""
     else:
@@ -991,7 +995,7 @@ async def generate_character(request: GenerateAttributesRequest):
 2. 给出一个具体伤疤、一个坏习惯、一个不愿提及的往事
 3. 必须与剧本总结中的世界观自然衔接
 4. 角色性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词
-5. 分段，2-3个自然段，段间空行
+5. 分段，2-3个自然段，段间空行；第一段写具体场景，第二段写关键往事，结尾留一个未解决的钩子
 6. 文风要求：{style_block}
 
 只返回JSON: {{"backstory": "..."}}"""
@@ -1021,14 +1025,18 @@ async def generate_character(request: GenerateAttributesRequest):
 5. 属性值只是骨架。最重要的数字是ta在哪个时刻做了什么选择
 6. 角色的性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词。性别必须体现在故事中
 7. **格式要求**：必须分段。2-3个自然段，段与段之间用空行分隔
-8. 文风要求：{style_block}
+8. **段落结构**：第一段写一个正在进行的具体场景；第二段写导致现状的关键往事/选择；结尾留一个未解决的钩子或执念
+9. **导语钩子**：结尾必须留一个让玩家想知道“接下来会怎样”的悬念或邀请，不要写成总结性结尾
+10. 文风要求：{style_block}
 
 只返回JSON: {{"str":数字,"dex":数字,"con":数字,"int":数字,"wis":数字,"cha":数字,"backstory":"..."}}"""
 
     try:
         import asyncio as _asyncio
         last_err = None
+        text = ""
         for attempt in range(1, 3):
+            current_max_tokens = 3000 if attempt == 1 else 6000
             try:
                 resp = await client.chat.completions.create(
                     model=model,
@@ -1040,10 +1048,15 @@ async def generate_character(request: GenerateAttributesRequest):
                         )},
                         {"role": "user", "content": user_prompt},
                     ],
-                    max_tokens=3000,
+                    max_tokens=current_max_tokens,
                     temperature=0.9,
                 )
-                break
+                text = (resp.choices[0].message.content or "").strip()
+                if text:
+                    break
+                reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
+                print(f"[CharacterGen] 第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
+                raise RuntimeError("空响应")
             except Exception as e:
                 last_err = e
                 print(f"[CharacterGen] 第{attempt}次调用失败: {e}")
@@ -1051,7 +1064,6 @@ async def generate_character(request: GenerateAttributesRequest):
         else:
             raise last_err or RuntimeError("背景生成失败")
 
-        text = resp.choices[0].message.content.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1]
             if text.endswith("```"):

@@ -1,6 +1,6 @@
 """AI 跑团主持核心——D&D 5e 生动戏剧风 + 反八股正则 + 特长 + 持久化"""
 
-import json, random, re
+import asyncio, json, random, re
 from typing import Any
 from openai import AsyncOpenAI
 from backend.config import ensure_valid_api_key, settings
@@ -1456,38 +1456,52 @@ async def generate_opening_scene(state: GameSessionState) -> str:
     prompt += build_system_rule_block(_game_system(state), state.character_info.get("custom_rules", ""))
     system_role = "你是克苏鲁的呼唤守密人（Keeper），负责营造神秘、恐怖与调查氛围。" if _game_system(state) == "coc" else "你是世界级D&D地下城主。"
     max_tokens = 1500 if _play_mode(state) == "lite" else min(3000, skill.max_tokens)
-    try:
-        stream = await client.chat.completions.create(
-            model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],
-            max_tokens=max_tokens, temperature=skill.temperature, stream=True,
-        )
-        full = ""
-        async for chunk in stream:
-            if state.aborted: await stream.close(); break
-            d = chunk.choices[0].delta if chunk.choices else None
-            if d and d.content: full += d.content; await push_narrative_token(state, d.content)
+    full = ""
+    last_err = None
+    for attempt in range(1, 3):
+        current_max_tokens = max_tokens if attempt == 1 else min(max_tokens * 2, 8000)
+        try:
+            stream = await client.chat.completions.create(
+                model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],
+                max_tokens=current_max_tokens, temperature=skill.temperature, stream=True,
+            )
+            full = ""
+            async for chunk in stream:
+                if state.aborted: await stream.close(); break
+                d = chunk.choices[0].delta if chunk.choices else None
+                if d and d.content: full += d.content; await push_narrative_token(state, d.content)
 
-        full = sanitize_narrative(full) or f"欢迎，{state.character_name}。"
+            full = sanitize_narrative(full)
+            if full:
+                break
+            # stream 响应没有 reasoning_content 汇总；这里仅打印空响应便于排查
+            print(f"[Opening] 第{attempt}次空响应 (max_tokens={current_max_tokens})")
+            raise RuntimeError("空响应")
+        except Exception as e:
+            last_err = e
+            print(f"[Opening] 第{attempt}次失败: {e}")
+            if attempt == 1:
+                await asyncio.sleep(1)
 
-        # 从开场叙事中提取场景信息并写入WorldState，确保Journal立即可用
-        ws = getattr(state, 'world_state', None)
-        if ws:
-            scene_match = re.search(r'\*\*当前场景\*\*[：:]\s*(.+?)(?:\n|$)', full)
-            if scene_match:
-                parts = [p.strip() for p in scene_match.group(1).split('·')]
-                if len(parts) >= 1 and parts[0]:
-                    ws.scene.current_location = parts[0]
-                if len(parts) >= 2 and parts[1]:
-                    ws.scene.current_time = parts[1]
-                if len(parts) >= 3 and parts[2]:
-                    ws.scene.weather = parts[2]
-                if len(parts) >= 4 and parts[3]:
-                    ws.scene.visible_npcs_here = [n.strip() for n in parts[3].split('、') if n.strip()]
-                ws.save()
-                print(f"[Opening] 场景已写入: {ws.scene.current_location}")
+    if not full:
+        full = f"欢迎，{state.character_name}。"
+        await push_narrative_token(state, full)
 
-        return full
-    except Exception:
-        fallback = f"欢迎，{state.character_name}。"
-        await push_narrative_token(state, fallback)
-        return fallback
+    # 从开场叙事中提取场景信息并写入WorldState，确保Journal立即可用
+    ws = getattr(state, 'world_state', None)
+    if ws:
+        scene_match = re.search(r'\*\*当前场景\*\*[：:]\s*(.+?)(?:\n|$)', full)
+        if scene_match:
+            parts = [p.strip() for p in scene_match.group(1).split('·')]
+            if len(parts) >= 1 and parts[0]:
+                ws.scene.current_location = parts[0]
+            if len(parts) >= 2 and parts[1]:
+                ws.scene.current_time = parts[1]
+            if len(parts) >= 3 and parts[2]:
+                ws.scene.weather = parts[2]
+            if len(parts) >= 4 and parts[3]:
+                ws.scene.visible_npcs_here = [n.strip() for n in parts[3].split('、') if n.strip()]
+            ws.save()
+            print(f"[Opening] 场景已写入: {ws.scene.current_location}")
+
+    return full

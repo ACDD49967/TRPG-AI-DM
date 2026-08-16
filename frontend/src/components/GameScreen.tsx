@@ -145,7 +145,19 @@ export default function GameScreen() {
                   <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">MP</p><p className="text-sm font-bold">{status.mp}/{status.maxMp}</p></div>
                   <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">熟练加值</p><p className="text-sm font-bold">{status.proficiency_bonus||2}</p></div>
                   <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">金币</p><p className="text-sm font-bold">{status.gold}</p></div>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">法术位</p><p className="text-sm font-bold">{Array.isArray(status.spell_slots) ? status.spell_slots.join('/') : (typeof status.spell_slots==='object' && status.spell_slots ? JSON.stringify(status.spell_slots) : '-')}</p></div>
+                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">法术位</p><p className="text-sm font-bold">{(() => {
+                    const ss = status.spell_slots;
+                    if (Array.isArray(ss)) return ss.join('/');
+                    if (ss && typeof ss === 'object') {
+                      const arr = (ss as { spell_slots?: number[] }).spell_slots;
+                      const pact = (ss as { pact_slots?: number }).pact_slots;
+                      const parts: string[] = [];
+                      if (Array.isArray(arr)) parts.push(arr.join('/'));
+                      if (pact) parts.push(`契约${pact}`);
+                      return parts.join(' · ') || '-';
+                    }
+                    return '-';
+                  })()}</p></div>
                 </>
               )}
             </div>

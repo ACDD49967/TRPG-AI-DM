@@ -58,6 +58,7 @@ export interface SceneInfo {
 export interface NarrativeLine {
   id: number;
   text: string;
+  role?: 'player' | 'dm';
   isDiceRoll?: boolean;
   diceData?: {
     skill: string;
@@ -129,6 +130,8 @@ interface GameState {
   flushBuffer: () => void;
   /** 强制设置叙事文本（用于narrative_flush和intro） */
   appendNarrativeText: (text: string) => void;
+  /** 添加玩家输入消息（用于对话轮次区分） */
+  addPlayerMessage: (text: string) => void;
   /** 添加骰子结果行 */
   appendDiceRoll: (data: {
     skill: string;
@@ -256,7 +259,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!buf.trim()) return;
     const id = get().narrativeId;
     set((s) => ({
-      narrative: [...s.narrative, { id, text: buf }],
+      narrative: [...s.narrative, { id, text: buf, role: 'dm' }],
       currentTokenBuffer: '',
       narrativeId: id + 1,
     }));
@@ -271,7 +274,15 @@ export const useGameStore = create<GameState>((set, get) => ({
     // 追加新文本
     const id = get().narrativeId;
     set((s) => ({
-      narrative: [...s.narrative, { id, text }],
+      narrative: [...s.narrative, { id, text, role: 'dm' }],
+      narrativeId: id + 1,
+    }));
+  },
+
+  addPlayerMessage: (text) => {
+    const id = get().narrativeId;
+    set((s) => ({
+      narrative: [...s.narrative, { id, text, role: 'player' }],
       narrativeId: id + 1,
     }));
   },
@@ -289,6 +300,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         {
           id,
           text: `检定：${data.skill} d20=${data.roll}${data.modifier ? `+${data.modifier}` : ''} vs DC${data.dc} → ${data.result}`,
+          role: 'dm',
           isDiceRoll: true,
           diceData: data,
         },
@@ -311,6 +323,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         {
           id,
           text: `事件：${data.description}`,
+          role: 'dm',
           isGameEvent: true,
           gameEventData: data,
         },

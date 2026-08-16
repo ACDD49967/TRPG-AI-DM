@@ -13,7 +13,7 @@ export default function InputArea() {
     const text = input.trim();
     if (!text || isProcessing || !sessionId) return;
     const store = useGameStore.getState();
-    store.appendNarrativeText(text);
+    store.addPlayerMessage(text);
     store.setProcessing(true); store.setChoices([]); store.setDecisionSuggestions([]);
     setInput('');
     try {

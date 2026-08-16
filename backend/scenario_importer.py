@@ -339,6 +339,7 @@ async def generate_summary(
     import asyncio
     last_err = None
     for attempt in range(1, 3):
+        current_max_tokens = 2000 if attempt == 1 else 4000
         try:
             resp = await asyncio.wait_for(
                 client.chat.completions.create(
@@ -350,7 +351,7 @@ async def generate_summary(
                             source=source_text[:4000],
                         )},
                     ],
-                    max_tokens=2000,
+                    max_tokens=current_max_tokens,
                     temperature=0.4,
                 ),
                 timeout=60,
@@ -360,6 +361,8 @@ async def generate_summary(
                 summary = summary[:max_chars]
             if summary:
                 return summary
+            reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
+            print(f"[ScenarioImporter] 总结生成第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
             raise RuntimeError("空响应")
         except Exception as e:
             last_err = str(e)
