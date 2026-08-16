@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -39,6 +40,32 @@ def _tokenize(text: str) -> list[str]:
     return [cleaned[i:i + 2] for i in range(len(cleaned) - 1)]
 
 
+def _safe_source(source: str) -> str:
+    """去除知识库来源中的本地路径/文件名等敏感信息，统一为类别。"""
+    source = source or ""
+    if source.startswith("local:"):
+        return "用户导入资料"
+    if source.startswith("srd:"):
+        return source
+    if source.startswith("scenario:"):
+        return "剧本"
+    if source.startswith("extension:"):
+        return "扩展包"
+    if source.startswith("builtin"):
+        return source
+    if "\\" in source or "/" in source or source.lower().endswith((".pdf", ".docx", ".doc", ".txt", ".md", ".chm")):
+        return "用户导入资料"
+    return source or "未知来源"
+
+
+def _safe_title(title: str) -> str:
+    """去除标题中的本地文件名前缀，统一为可读名称。"""
+    title = title or ""
+    if title.startswith("本地资料："):
+        return "导入资料"
+    return title or "未命名知识"
+
+
 class KnowledgeBase:
     def __init__(self, path: str | Path = DEFAULT_KB_PATH):
         self.path = Path(path)
@@ -52,6 +79,17 @@ class KnowledgeBase:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
                 self.documents = data.get("documents", [])
+                # 按内容去重（统一化处理）
+                seen: set[str] = set()
+                deduped = []
+                for d in self.documents:
+                    h = hashlib.md5((d.get("content", "") or "").encode("utf-8", errors="replace")).hexdigest()
+                    if h not in seen:
+                        seen.add(h)
+                        deduped.append(d)
+                if len(deduped) != len(self.documents):
+                    self.documents = deduped
+                    self.save()
             except Exception:
                 self.documents = []
         else:
@@ -81,10 +119,10 @@ class KnowledgeBase:
             chunks = [content.strip()] if content.strip() else []
         doc = {
             "id": uuid.uuid4().hex[:16],
-            "title": title or "未命名知识",
+            "title": _safe_title(title),
             "content": content,
             "chunks": chunks,
-            "source": source,
+            "source": _safe_source(source),
             "system": system,
             "tags": tags or [],
             "created_at": datetime.now().isoformat(),
@@ -110,11 +148,11 @@ class KnowledgeBase:
         return [
             {
                 "id": d["id"],
-                "title": d["title"],
-                "source": d["source"],
-                "system": d["system"],
-                "tags": d["tags"],
-                "chunk_count": len(d["chunks"]),
+                "title": _safe_title(d.get("title", "")),
+                "source": _safe_source(d.get("source", "")),
+                "system": d.get("system", "custom"),
+                "tags": d.get("tags", []),
+                "chunk_count": len(d.get("chunks", [])),
                 "created_at": d.get("created_at", ""),
             }
             for d in self.documents
@@ -166,8 +204,8 @@ class KnowledgeBase:
             if score > 0:
                 scored.append({
                     "doc_id": doc["id"],
-                    "title": doc["title"],
-                    "source": doc.get("source", ""),
+                    "title": _safe_title(doc.get("title", "")),
+                    "source": _safe_source(doc.get("source", "")),
                     "system": doc.get("system", ""),
                     "chunk_index": idx,
                     "text": chunk,

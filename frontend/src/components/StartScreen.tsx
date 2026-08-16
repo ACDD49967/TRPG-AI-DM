@@ -165,6 +165,7 @@ export default function StartScreen(){
   const [worldGenStage,setWorldGenStage]=useState(-1);
   const [worldGenDetail,setWorldGenDetail]=useState('');
   const [savedScenarios,setSavedScenarios]=useState<Array<{id:string;title:string;description:string;summary?:string;system?:string;tone:string;score:number;total_sessions:number;character_name?:string;race?:string;char_class?:string}>>([]);
+  const [classicScenarios,setClassicScenarios]=useState<Array<{name:string;system:string;tone:string;summary:string;source:string;outline:string[]}>>([]);
   const [selectedScenario,setSelectedScenario]=useState('');
   const [showScenarioList,setShowScenarioList]=useState(false);
   const [scenarioText,setScenarioText]=useState('');
@@ -229,6 +230,7 @@ export default function StartScreen(){
   // 自动加载已保存剧本
   useEffect(()=>{
     fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
+    fetch('/api/classic-scenarios').then(r=>r.json()).then(d=>setClassicScenarios(d.scenarios||[])).catch(()=>{});
     fetch('/api/knowledge').then(r=>r.json()).then(d=>setKbDocs(d.documents||[])).catch(()=>{});
     fetch(`/api/extensions?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setExtList(d.extensions||[])).catch(()=>{});
     fetch(`/api/maps?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setMaps(d.maps||[])).catch(()=>{});
@@ -1314,6 +1316,29 @@ export default function StartScreen(){
                     <label className="block text-xs font-medium text-gray-600 mb-1">世界描述</label>
                     <textarea value={worldDesc} onChange={e=>setWorldDesc(e.target.value)} placeholder="描述你想要的冒险..." rows={3} className="input-field resize-none" />
                   </div>
+
+                  {classicScenarios.length>0 && (
+                    <details className="bg-amber-50/60 border border-amber-200 rounded-lg p-3">
+                      <summary className="text-xs text-amber-800 font-medium cursor-pointer">经典剧本参考（公开/免费，点击展开）</summary>
+                      <div className="mt-2 space-y-2">
+                        {classicScenarios.map(cs=>(
+                          <div key={cs.name} className="bg-white border border-amber-100 rounded-lg p-2">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="text-xs font-bold text-gray-800">{cs.name}</p>
+                                <p className="text-[9px] text-gray-400">{cs.system} · {cs.tone} · {cs.source}</p>
+                              </div>
+                              <button
+                                onClick={()=>{ setWorldDesc(cs.summary); setWorldTone(cs.tone); setGameSystem((cs.system==='coc'||cs.system==='dnd5e'||cs.system==='dnd4e'||cs.system==='custom')?cs.system as GameSystem:'dnd5e'); }}
+                                className="text-[10px] px-2 py-1 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100"
+                              >使用此背景</button>
+                            </div>
+                            <p className="text-[10px] text-gray-500 mt-1">{cs.summary}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>

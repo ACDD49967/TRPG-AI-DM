@@ -3,6 +3,10 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo ============================================================
+:: 修复 npm 缓存写入系统目录导致的 EPERM
+if not defined LOCALAPPDATA set "LOCALAPPDATA=%USERPROFILE%\AppData\Local"
+set "NPM_CONFIG_CACHE=%LOCALAPPDATA%\npm-cache"
+if not exist "%NPM_CONFIG_CACHE%" mkdir "%NPM_CONFIG_CACHE%"
 echo   TRPG AI 跑团主持 - 一键启动器
 echo ============================================================
 echo.

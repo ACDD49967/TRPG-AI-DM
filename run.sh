@@ -5,6 +5,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# 修复 npm 缓存写入系统目录导致的 EPERM
+export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$HOME/.npm-cache}"
+mkdir -p "$NPM_CONFIG_CACHE"
+
 echo "============================================================"
 echo "  TRPG AI 跑团主持 - 一键启动器"
 echo "============================================================"

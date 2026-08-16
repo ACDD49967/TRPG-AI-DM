@@ -319,6 +319,13 @@ async def list_scenarios():
     return {"scenarios": ls()}
 
 
+@app.get("/api/classic-scenarios")
+async def classic_scenarios():
+    """列出公开/免费的经典剧本参考（仅名称与简介，不包含受版权保护的完整正文）。"""
+    from backend.classic_scenarios import list_classic_scenarios
+    return {"scenarios": list_classic_scenarios()}
+
+
 @app.post("/api/scenarios/import")
 async def import_scenario(
     file: UploadFile = File(...),
