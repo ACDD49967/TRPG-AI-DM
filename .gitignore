@@ -60,3 +60,6 @@ extensions/*.json
 # 用户媒体资源（地图/生物/角色图片）
 media/*
 !media/.gitkeep
+
+# 临时/下载数据
+data/

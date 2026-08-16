@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from backend.default_content import CLASSIC_BESTIARY, COMMON_CITIES
+
 MEDIA_ROOT = Path("media")
 
 
@@ -43,6 +45,35 @@ def _save_meta(username: str, kind: str, items: list[dict]):
     p.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def ensure_seeded(username: str):
+    """为指定用户写入一次内置经典生物与城市背景（幂等）。"""
+    user_dir = _user_media_dir(username)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    marker = user_dir / "seeded.json"
+    if marker.exists():
+        return
+    for beast in CLASSIC_BESTIARY:
+        add_bestiary(
+            username=username,
+            name=beast["name"],
+            system=beast["system"],
+            description=beast["description"],
+            stats=beast.get("stats", {}),
+            image_path="",
+            tags=beast.get("tags", []),
+        )
+    for city in COMMON_CITIES:
+        add_map(
+            username=username,
+            name=city["name"],
+            description=city["description"],
+            image_path="",
+            locations=city.get("locations", []),
+            system=city.get("system", "custom"),
+        )
+    marker.write_text("1", encoding="utf-8")
+
+
 def save_image(username: str, data: bytes, filename: str) -> str:
     ext = Path(filename).suffix.lower() or ".png"
     if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
@@ -71,6 +102,7 @@ def add_map(username: str, name: str, description: str, image_path: str,
 
 
 def list_maps(username: str) -> list[dict]:
+    ensure_seeded(username)
     return _load_meta(username, "maps")
 
 
@@ -102,6 +134,7 @@ def add_bestiary(username: str, name: str, system: str, description: str,
 
 
 def list_bestiary(username: str) -> list[dict]:
+    ensure_seeded(username)
     return _load_meta(username, "bestiary")
 
 
