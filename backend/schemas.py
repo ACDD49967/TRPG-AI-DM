@@ -37,6 +37,9 @@ class NewGameRequest(BaseModel):
     luck: int | None = Field(default=None, ge=1, le=99)  # COC 幸运值（可选）
     extension_ids: list[str] = Field(default_factory=list)  # 启用的扩展包 ID 列表
     character_image: str | None = None                     # 角色图片路径（可选）
+    custom_classes: list[str] = Field(default_factory=list)  # 剧本专属职业/身份
+    custom_skills: list[str] = Field(default_factory=list)   # 剧本专属技能
+    extra_attributes: dict[str, str] = Field(default_factory=dict)  # 额外属性
 
 
 class GenerateBackstoryRequest(BaseModel):
@@ -82,6 +85,9 @@ class WorldGenRequest(BaseModel):
     tone: str = Field(default="史诗奇幻", max_length=64)  # 基调
     game_system: str = Field(default="dnd5e", pattern="^(dnd5e|dnd4e|coc|custom)$")
     custom_rules: str | None = None            # 自定义规则文本（game_system=custom 时使用）
+    custom_classes: list[str] = Field(default_factory=list)  # 剧本专属职业/身份
+    custom_skills: list[str] = Field(default_factory=list)   # 剧本专属技能
+    extra_attributes: dict[str, str] = Field(default_factory=dict)  # 额外属性
     api_key: str | None = None
     model_name: str | None = None
     base_url: str | None = None

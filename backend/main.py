@@ -106,6 +106,9 @@ async def generate_world(request: WorldGenRequest):
         base_url=request.base_url,
         game_system=request.game_system,
         custom_rules=request.custom_rules or "",
+        custom_classes=request.custom_classes,
+        custom_skills=request.custom_skills,
+        extra_attributes=request.extra_attributes,
         target_score=75,
         max_revisions=1,
     )
@@ -139,7 +142,9 @@ async def generate_world(request: WorldGenRequest):
     summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
     saved = create_scenario(
         world_outline=outline_text, world_state_json=ws_json,
-        reference_script=request.description, custom_rules=request.custom_rules or "", notes="",
+        reference_script=request.description, custom_rules=request.custom_rules or "",
+        custom_classes=request.custom_classes, custom_skills=request.custom_skills,
+        extra_attributes=request.extra_attributes, notes="",
         title=outline_text.split("\n")[0].replace("#", "").strip()[:60],
         description=request.description[:200], summary=summary,
         system=request.game_system, tone=request.tone,
@@ -204,6 +209,9 @@ async def generate_world_stream(request: WorldGenRequest):
                     base_url=request.base_url,
                     game_system=request.game_system,
                     custom_rules=request.custom_rules or "",
+                    custom_classes=request.custom_classes,
+                    custom_skills=request.custom_skills,
+                    extra_attributes=request.extra_attributes,
                     target_score=75,
                     max_revisions=1,
                     progress_callback=progress,
@@ -243,7 +251,9 @@ async def generate_world_stream(request: WorldGenRequest):
             summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
             saved = create_scenario(
                 world_outline=outline_text, world_state_json=ws_json,
-                reference_script=request.description, custom_rules=request.custom_rules or "", notes="",
+                reference_script=request.description, custom_rules=request.custom_rules or "",
+                custom_classes=request.custom_classes, custom_skills=request.custom_skills,
+                extra_attributes=request.extra_attributes, notes="",
                 title=outline_text.split("\n")[0].replace("#", "").strip()[:60],
                 description=request.description[:200], summary=summary,
                 system=request.game_system, tone=request.tone,
@@ -302,6 +312,9 @@ async def import_scenario(
     tone: str = Form("史诗奇幻"),
     system: str | None = Form(None),
     custom_rules: str = Form(""),
+    custom_classes: str = Form("[]"),
+    custom_skills: str = Form("[]"),
+    extra_attributes: str = Form("{}"),
     character_name: str = Form("冒险者"),
     race: str = Form("人类"),
     char_class: str = Form("战士"),
@@ -350,6 +363,14 @@ async def import_scenario(
     if system not in SYSTEM_TYPES:
         raise HTTPException(status_code=400, detail=f"未知规则系统: {system}，可选: {', '.join(SYSTEM_TYPES)}")
 
+    import json as _json
+    try:
+        custom_classes_list = _json.loads(custom_classes or "[]") or []
+        custom_skills_list = _json.loads(custom_skills or "[]") or []
+        extra_attributes_dict = _json.loads(extra_attributes or "{}") or {}
+    except Exception:
+        custom_classes_list, custom_skills_list, extra_attributes_dict = [], [], {}
+
     try:
         result = await generate_scenario_from_text(
             source_text=text,
@@ -359,6 +380,9 @@ async def import_scenario(
             tone=tone,
             system=system,
             custom_rules=custom_rules,
+            custom_classes=custom_classes_list,
+            custom_skills=custom_skills_list,
+            extra_attributes=extra_attributes_dict,
             character_name=character_name,
             race=race,
             char_class=char_class,
@@ -390,6 +414,9 @@ async def get_scenario(scenario_id: str):
         "reference_script": s.reference_script,
         "source_chunks": s.source_chunks,
         "custom_rules": s.custom_rules,
+        "custom_classes": s.custom_classes,
+        "custom_skills": s.custom_skills,
+        "extra_attributes": s.extra_attributes,
         "summary": s.meta.summary,
         "system": s.meta.system,
         "notes": s.notes,
@@ -1148,6 +1175,9 @@ async def create_new_game(request: NewGameRequest):
             "new_world": request.new_world,
             "play_mode": request.play_mode,
             "extension_ids": request.extension_ids,
+            "custom_classes": request.custom_classes,
+            "custom_skills": request.custom_skills,
+            "extra_attributes": request.extra_attributes,
         }
 
         # 根据规则系统预填衍生数值
@@ -1202,6 +1232,12 @@ async def create_new_game(request: NewGameRequest):
                 # 角色规则系统不随剧本绑定；仅当玩家选择自定义且未填写自定义规则时，借用剧本自带规则
                 if request.game_system == "custom" and not character_info.get("custom_rules"):
                     character_info["custom_rules"] = saved.custom_rules or ""
+                if not character_info.get("custom_classes"):
+                    character_info["custom_classes"] = saved.custom_classes
+                if not character_info.get("custom_skills"):
+                    character_info["custom_skills"] = saved.custom_skills
+                if not character_info.get("extra_attributes"):
+                    character_info["extra_attributes"] = saved.extra_attributes
                 saved.record_play()
 
         # 如果有剧本URL，尝试抓取

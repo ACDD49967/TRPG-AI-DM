@@ -275,6 +275,9 @@ async def build_world(
     max_revisions: int = 2,
     game_system: str = "dnd5e",
     custom_rules: str = "",
+    custom_classes: list[str] | None = None,
+    custom_skills: list[str] | None = None,
+    extra_attributes: dict | None = None,
     progress_callback=None,
 ) -> tuple[str, int, list, WorldState]:
     """多Agent分层生成世界大纲→自评→修订→提取世界状态。
@@ -296,6 +299,12 @@ async def build_world(
     sys_cfg = get_system(game_system)
     system_block = build_system_rule_block(game_system, custom_rules)
     pi += f"\n\n## 规则系统\n- 类型: {sys_cfg['label']}\n- 说明: {sys_cfg['description']}\n{system_block[:1800]}"
+    if custom_classes:
+        pi += "\n\n## 剧本专属职业/身份（必须纳入设计）\n" + "、".join(custom_classes)
+    if custom_skills:
+        pi += "\n\n## 剧本专属技能（必须纳入设计）\n" + "、".join(custom_skills)
+    if extra_attributes:
+        pi += "\n\n## 额外属性/规则特色\n" + "\n".join(f"- {k}: {v}" for k, v in extra_attributes.items())
 
     # ── Step 1: 世界观与冲突核心 ──
     print("[WorldBuilder] Step 1/6: 世界观与冲突核心...")
@@ -421,7 +430,7 @@ async def build_world(
     try:
         extract_result = await _llm(client, model,
             "你是一位数据分析师。从文本中提取结构化信息。只返回JSON。",
-            EXTRACT_STATE_PROMPT.format(outline=outline[:8000]),
+            EXTRACT_STATE_PROMPT.format(outline=outline[:16000]),
             max_tokens=4000, temp=0.3, timeout=90)
         state_data = _extract_json(extract_result)
 

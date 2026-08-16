@@ -138,6 +138,9 @@ export default function StartScreen(){
   const [worldTone,setWorldTone]=useState('史诗奇幻');
   const [customTone,setCustomTone]=useState('');
   const [toneCustom,setToneCustom]=useState(false);
+  const [customClassesText,setCustomClassesText]=useState('');
+  const [customSkillsText,setCustomSkillsText]=useState('');
+  const [extraAttributesText,setExtraAttributesText]=useState('');
   const [worldNote,setWorldNote]=useState('');
   const [referenceScript,setReferenceScript]=useState('');
   const [worldOutline,setWorldOutline]=useState('');
@@ -245,6 +248,13 @@ export default function StartScreen(){
   },[attrs,aiGen,gameSystem,cocAttrs,customAttrs]);
   const rc=RACES[race]||RACES['人类'];
   const cc=CLASSES[charClass]||CLASSES['战士'];
+  const customClasses = customClassesText.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+  const customSkills = customSkillsText.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+  const extraAttributes: Record<string,string> = {};
+  extraAttributesText.split('\n').forEach(line=>{
+    const idx=line.indexOf(':');
+    if(idx>0) extraAttributes[line.slice(0,idx).trim()]=line.slice(idx+1).trim();
+  });
   const d5Derived = getDnd5Derived(cc.name, finalAttrs, 1);
   const d4Derived = getDnd4Derived(cc.name, finalAttrs);
 
@@ -289,6 +299,7 @@ export default function StartScreen(){
         description:worldDesc||'一个'+worldTone+'的冒险',character_name:charName||'冒险者',
         race:rc.name,char_class:cc.name,tone:worldTone,
         game_system:gameSystem,custom_rules:customRules||undefined,
+        custom_classes:customClasses,custom_skills:customSkills,extra_attributes:extraAttributes,
         api_key:apiKey||undefined,model_name:modelName||undefined,base_url:baseUrl||undefined,
       })});
       if(!r.ok)throw new Error('生成失败');
@@ -338,6 +349,9 @@ export default function StartScreen(){
       setScenarioSummary(d.summary||d.meta?.summary||'');
       setSourceChunks(d.source_chunks||[]);
       setCustomRules(d.custom_rules||d.meta?.custom_rules||'');
+      setCustomClassesText((d.custom_classes||[]).join(', '));
+      setCustomSkillsText((d.custom_skills||[]).join(', '));
+      setExtraAttributesText(Object.entries(d.extra_attributes||{}).map(([k,v])=>`${k}:${v}`).join('\n'));
       if(d.meta?.system||d.system)setScenarioSystem((d.meta?.system||d.system) as GameSystem);
       setScenarioId(sid);setSelectedScenario(sid);setShowScenarioList(false);
       setWorldScore(d.meta?.score||null);
@@ -354,6 +368,9 @@ export default function StartScreen(){
       fd.append('tone',worldTone);
       fd.append('system',gameSystem);
       fd.append('custom_rules',customRules||'');
+      fd.append('custom_classes',JSON.stringify(customClasses));
+      fd.append('custom_skills',JSON.stringify(customSkills));
+      fd.append('extra_attributes',JSON.stringify(extraAttributes));
       fd.append('api_key',apiKey||'');
       fd.append('model_name',modelName||'');
       fd.append('base_url',baseUrl||'');
@@ -556,6 +573,9 @@ export default function StartScreen(){
         luck:gameSystem==='coc'?cocLuck:undefined,
         extension_ids:activeExtIds,
         character_image:characterImage||undefined,
+        custom_classes:customClasses,
+        custom_skills:customSkills,
+        extra_attributes:extraAttributes,
       })});
       if(!r.ok){const e=await r.json();throw new Error(e.detail||'创建失败');}
       setSession((await r.json()).session_id);
@@ -714,7 +734,7 @@ export default function StartScreen(){
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-2">{gameSystem==='dnd4e'?'职业（4e）':'职业'}</label>
                   <div className="grid grid-cols-2 gap-1.5">
-                    {(gameSystem==='dnd4e'?DND4_CLASSES:Object.keys(CLASSES)).map(k=>{
+                    {[...(gameSystem==='dnd4e'?DND4_CLASSES:Object.keys(CLASSES)), ...customClasses].map(k=>{
                       const v=CLASSES[k]||{name:k,hd:'?',pri:'str',profs:[]};
                       return(
                         <button key={k} onClick={()=>setCharClass(k)} className={`p-2 rounded-lg border text-left text-xs transition-all ${charClass===k?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>{v.name} {gameSystem==='dnd4e'?'':<span className="text-[9px] text-gray-400">({v.hd})</span>}</button>
@@ -731,7 +751,7 @@ export default function StartScreen(){
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-2">调查员职业</label>
                   <div className="grid grid-cols-2 gap-1.5">
-                    {COC_OCCUPATIONS.map(o=>(
+                    {[...COC_OCCUPATIONS, ...customClasses].map(o=>(
                       <button key={o} onClick={()=>setOccupation(o)} className={`p-2 rounded-lg border text-left text-xs transition-all ${occupation===o?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>{o}</button>
                     ))}
                   </div>
@@ -758,6 +778,18 @@ export default function StartScreen(){
                         </button>
                       );
                     })}
+                    {customSkills.map(s=>{
+                      const sel=skillPicks.includes(s);
+                      return(
+                        <button key={s} onClick={()=>toggleSkill(s)}
+                          className={`p-1.5 rounded-lg border text-left text-[10px] transition-all ${
+                            sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                          }`}>
+                          <div className="font-medium">{s}</div>
+                          <div className="text-[8px] opacity-60">剧本专属</div>
+                        </button>
+                      );
+                    })}
                   </div>
                   {skillPicks.length>0&&<p className="text-[10px] text-indigo-500 mt-1">已选: {skillPicks.join('、')}</p>}
                 </div>
@@ -768,7 +800,7 @@ export default function StartScreen(){
                     职业技能 <span className="text-gray-400 font-normal">（选择最多8项，作为初始技能熟练）</span>
                   </label>
                   <div className="grid grid-cols-3 gap-1">
-                    {COC_SKILLS.map(s=>{
+                    {[...COC_SKILLS, ...customSkills].map(s=>{
                       const sel=cocSkillPicks.includes(s);
                       return(
                         <button key={s} onClick={()=>setCocSkillPicks(p=>p.includes(s)?p.filter(x=>x!==s):p.length<8?[...p,s]:p)}
@@ -1042,6 +1074,15 @@ export default function StartScreen(){
                     </div>
                   )}
                   <p className="text-[10px] text-gray-400">生成时使用此规则系统；导入文件时也可让后端自动识别。</p>
+                </div>
+              )}
+
+              {scenarioMode!=='existing'&&(
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
+                  <p className="text-xs font-medium text-gray-700">剧本专属扩展（可选）</p>
+                  <input value={customClassesText} onChange={e=>setCustomClassesText(e.target.value)} placeholder="专属职业/身份，逗号分隔，如：守夜人、符文工匠" className="input-field text-xs" />
+                  <input value={customSkillsText} onChange={e=>setCustomSkillsText(e.target.value)} placeholder="专属技能，逗号分隔，如：符文解读、夜间追踪" className="input-field text-xs" />
+                  <textarea value={extraAttributesText} onChange={e=>setExtraAttributesText(e.target.value)} placeholder="额外属性/规则特色，每行一个：名称:值" rows={2} className="input-field resize-none text-xs" />
                 </div>
               )}
 

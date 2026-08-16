@@ -348,6 +348,9 @@ async def generate_scenario_from_text(
     splitter: str = "naive",
     target_score: int = 80,
     max_revisions: int = 2,
+    custom_classes: list[str] | None = None,
+    custom_skills: list[str] | None = None,
+    extra_attributes: dict | None = None,
 ) -> dict[str, Any]:
     """读取文本→切分→多Agent生成新剧本→生成总结→保存到 scenarios/。"""
     from backend.engine.world_builder import build_world
@@ -375,8 +378,8 @@ async def generate_scenario_from_text(
     reference_script = "\n\n===== 剧本片段 =====\n\n".join(
         f"[片段 {i + 1}/{len(chunks)}]\n{chunk}" for i, chunk in enumerate(chunks)
     ) if chunks else source_text
-    if len(reference_script) > 12000:
-        reference_script = reference_script[:12000] + "\n\n...[内容过长，已截断用于世界生成]..."
+    if len(reference_script) > 30000:
+        reference_script = reference_script[:30000] + "\n\n...[内容过长，已截断用于世界生成]..."
 
     outline_text, score, history, world_state = await build_world(
         player_input=player_input,
@@ -386,6 +389,9 @@ async def generate_scenario_from_text(
         base_url=base_url,
         game_system=system,
         custom_rules=custom_rules,
+        custom_classes=custom_classes,
+        custom_skills=custom_skills,
+        extra_attributes=extra_attributes,
         target_score=target_score,
         max_revisions=max_revisions,
     )
@@ -423,6 +429,9 @@ async def generate_scenario_from_text(
         reference_script=source_text,
         source_chunks=chunks,
         custom_rules=custom_rules,
+        custom_classes=custom_classes or [],
+        custom_skills=custom_skills or [],
+        extra_attributes=extra_attributes or {},
         notes=f"导入方式: {splitter} 切分 · 共 {len(chunks)} 个片段",
         title=title or (outline_text.split("\n")[0].replace("#", "").strip()[:60] or "导入冒险"),
         description=description or source_text[:200],

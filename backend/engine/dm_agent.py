@@ -675,6 +675,12 @@ def build_character_info(state: GameSessionState) -> str:
 
     if skills:
         lines.append("技能熟练: " + ", ".join(skills))
+    if info.get("custom_classes"):
+        lines.append("剧本专属职业/身份: " + ", ".join(info["custom_classes"]))
+    if info.get("custom_skills"):
+        lines.append("剧本专属技能: " + ", ".join(info["custom_skills"]))
+    if info.get("extra_attributes"):
+        lines.append("额外属性: " + " | ".join(f"{k}:{v}" for k, v in info["extra_attributes"].items()))
     if feats:
         lines.append("特长: " + ", ".join(f["name"] for f in feats))
 

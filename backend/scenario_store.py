@@ -43,6 +43,9 @@ class Scenario:
     reference_script: str = ""      # 玩家原始参考
     source_chunks: list[str] = field(default_factory=list)  # 导入剧本切分后的分块
     custom_rules: str = ""          # 自定义规则文本（system=custom 时使用）
+    custom_classes: list[str] = field(default_factory=list)   # 剧本专属职业/身份
+    custom_skills: list[str] = field(default_factory=list)    # 剧本专属技能
+    extra_attributes: dict = field(default_factory=dict)      # 额外属性/规则特色字段
     notes: str = ""                 # 玩家备注
 
     @classmethod
@@ -58,6 +61,9 @@ class Scenario:
         s.reference_script = data.get("reference_script", "")
         s.source_chunks = data.get("source_chunks", []) or []
         s.custom_rules = data.get("custom_rules", "")
+        s.custom_classes = data.get("custom_classes", []) or []
+        s.custom_skills = data.get("custom_skills", []) or []
+        s.extra_attributes = data.get("extra_attributes", {}) or {}
         s.notes = data.get("notes", "")
         meta_data = data.get("meta", {})
         s.meta = ScenarioMeta(
@@ -88,6 +94,9 @@ class Scenario:
             "reference_script": self.reference_script,
             "source_chunks": self.source_chunks,
             "custom_rules": self.custom_rules,
+            "custom_classes": self.custom_classes,
+            "custom_skills": self.custom_skills,
+            "extra_attributes": self.extra_attributes,
             "notes": self.notes,
             "meta": self.meta.to_dict(),
         }
@@ -141,7 +150,10 @@ def delete_scenario(sid: str) -> bool:
 
 def create_scenario(world_outline: str = "", world_state_json: str = "",
                     reference_script: str = "", source_chunks: list[str] | None = None,
-                    custom_rules: str = "", notes: str = "",
+                    custom_rules: str = "", custom_classes: list[str] | None = None,
+                    custom_skills: list[str] | None = None,
+                    extra_attributes: dict | None = None,
+                    notes: str = "",
                     title: str = "", description: str = "", summary: str = "",
                     system: str = "dnd5e", tone: str = "",
                     character_name: str = "", race: str = "", char_class: str = "",
@@ -155,6 +167,9 @@ def create_scenario(world_outline: str = "", world_state_json: str = "",
         reference_script=reference_script,
         source_chunks=source_chunks or [],
         custom_rules=custom_rules,
+        custom_classes=custom_classes or [],
+        custom_skills=custom_skills or [],
+        extra_attributes=extra_attributes or {},
         notes=notes,
         meta=ScenarioMeta(
             id=sid, title=title or "未命名冒险",
