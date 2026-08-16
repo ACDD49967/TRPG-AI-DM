@@ -141,7 +141,7 @@ if "!FRONTEND!"=="1" (
 :: ---- Done ----
 echo.
 echo ============================================================
-echo   ALL SET! Open http://localhost:5173 in your browser
+echo   ALL SET - Open http://localhost:5173 in your browser
 echo   Press any key here to STOP all servers
 echo ============================================================
 pause >nul

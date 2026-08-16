@@ -80,7 +80,7 @@ if not defined PYTHON (
 if not defined PYTHON (
     echo [FAIL] No working Python 3.11+ found.
     echo        Install from: https://www.python.org/downloads/
-    echo        CHECK "Add Python to PATH" during install!
+    echo        CHECK "Add Python to PATH" during install
     pause
     exit /b 1
 )
@@ -98,7 +98,7 @@ if exist "%~dp0.env" (
 ) else (
     if exist "%~dp0.env.example" (
         copy "%~dp0.env.example" "%~dp0.env" >nul
-        echo [WARN] .env created from template - EDIT IT with your API key!
+        echo [WARN] .env created from template - EDIT IT with your API key
     ) else (
         echo [WARN] No .env.example found
     )
