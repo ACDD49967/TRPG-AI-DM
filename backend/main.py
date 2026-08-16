@@ -216,9 +216,9 @@ async def generate_world_stream(request: WorldGenRequest):
                     max_revisions=1,
                     progress_callback=progress,
                 )
-                await queue.put_nowait({"type": "__complete__", "data": (outline_text, score, history, world_state)})
+                queue.put_nowait({"type": "__complete__", "data": (outline_text, score, history, world_state)})
             except Exception as e:
-                await queue.put_nowait({"type": "__error__", "msg": str(e)})
+                queue.put_nowait({"type": "__error__", "msg": str(e)})
 
         task = asyncio.create_task(run())
         while True:
