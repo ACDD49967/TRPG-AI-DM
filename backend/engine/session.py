@@ -28,6 +28,7 @@ class GameSessionState:
     model_name: str | None = None
     base_url: str | None = None
     thinking_strength: str = "medium"
+    resumed: bool = False
 
     # 事件流 —— 通过 asyncio.Queue 跨协程传递 SSE 事件
     event_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
@@ -150,10 +151,14 @@ async def sse_event_generator(
     # 第一步：AI 生成动态开场白
     from backend.engine.dm_agent import generate_opening_scene
 
-    try:
-        await asyncio.wait_for(generate_opening_scene(state), timeout=60)
-    except Exception:
-        await push_narrative_token(state, f"欢迎，{state.character_name}。冒险开始了…")
+    if getattr(state, "resumed", False):
+        # 读档恢复：跳过重新生成开场白，直接继续冒险
+        await push_narrative_token(state, f"欢迎回来，{state.character_name}。冒险继续。")
+    else:
+        try:
+            await asyncio.wait_for(generate_opening_scene(state), timeout=60)
+        except Exception:
+            await push_narrative_token(state, f"欢迎，{state.character_name}。冒险开始了…")
 
     # 推送初始角色状态到前端 —— 这样StatusPanel可以正确显示HP/属性/物品
     info = state.character_info

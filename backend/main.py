@@ -750,6 +750,7 @@ async def load_save_api(payload: dict):
     if save_data is None:
         raise HTTPException(status_code=404, detail="存档不存在")
     state, session_id = restore_state_from_save(save_data)
+    state.resumed = True
     # 用前端当前配置覆盖/补全存档中的模型配置，避免旧存档缺模型导致无法读档
     if payload.get("model_name"):
         state.model_name = str(payload["model_name"])
