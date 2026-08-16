@@ -721,8 +721,9 @@ async def create_new_game(request: NewGameRequest):
                 character_info["world_state_json"] = saved.world_state_json or character_info["world_state_json"]
                 character_info["scenario_id"] = request.scenario_id
                 character_info["scenario_summary"] = saved.meta.summary or character_info.get("scenario_summary", "")
-                character_info["game_system"] = saved.meta.system or character_info.get("game_system", "dnd5e")
-                character_info["custom_rules"] = saved.custom_rules or character_info.get("custom_rules", "")
+                # 角色规则系统不随剧本绑定；仅当玩家选择自定义且未填写自定义规则时，借用剧本自带规则
+                if request.game_system == "custom" and not character_info.get("custom_rules"):
+                    character_info["custom_rules"] = saved.custom_rules or ""
                 saved.record_play()
 
         # 如果有剧本URL，尝试抓取

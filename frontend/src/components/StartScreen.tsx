@@ -139,6 +139,7 @@ export default function StartScreen(){
   const [scenarioText,setScenarioText]=useState('');
   const [playMode,setPlayMode]=useState<'lite'|'deep'>('deep');
   const [gameSystem,setGameSystem]=useState<GameSystem>('dnd5e');
+  const [scenarioSystem,setScenarioSystem]=useState<GameSystem>('dnd5e');
   const [customRules,setCustomRules]=useState('');
   const [cocAttrs,setCocAttrs]=useState<Record<string,number>>({str:50,con:50,dex:50,int:50,pow:50,cha:50,siz:50,edu:50});
   const [occupation,setOccupation]=useState('学者');
@@ -225,7 +226,7 @@ export default function StartScreen(){
       if(d.scenario_id){setScenarioId(d.scenario_id);setSelectedScenario(d.scenario_id);setShowScenarioList(false);}
       if(d.world_state_json)setWorldStateJson(d.world_state_json);
       if(d.summary)setScenarioSummary(d.summary);
-      if(d.system)setGameSystem(d.system as GameSystem);
+      if(d.system)setScenarioSystem(d.system as GameSystem);
       if(d.source_chunks)setSourceChunks(d.source_chunks);
       fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
     }catch(e:unknown){setWorldGenErr(e instanceof Error?e.message:'生成失败');clearInterval(timer);}
@@ -241,7 +242,7 @@ export default function StartScreen(){
       setScenarioSummary(d.summary||d.meta?.summary||'');
       setSourceChunks(d.source_chunks||[]);
       setCustomRules(d.custom_rules||d.meta?.custom_rules||'');
-      if(d.meta?.system||d.system)setGameSystem((d.meta?.system||d.system) as GameSystem);
+      if(d.meta?.system||d.system)setScenarioSystem((d.meta?.system||d.system) as GameSystem);
       setScenarioId(sid);setSelectedScenario(sid);setShowScenarioList(false);
       setWorldScore(d.meta?.score||null);
     }catch{}
@@ -267,7 +268,7 @@ export default function StartScreen(){
       setWorldStateJson(d.world_state_json||'');
       setScenarioId(d.scenario_id);
       setScenarioSummary(d.summary||'');
-      if(d.system)setGameSystem(d.system as GameSystem);
+      if(d.system)setScenarioSystem(d.system as GameSystem);
       setSourceChunks(d.source_chunks||[]);
       setSelectedScenario(d.scenario_id);setShowScenarioList(false);
       fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
@@ -347,6 +348,10 @@ export default function StartScreen(){
           {/* ═══════ 步骤2: 角色创建 ═══════ */}
           {step===2&&(
             <div className="space-y-5">
+              <p className="text-[10px] text-gray-400 bg-gray-50 rounded-lg p-2 border border-gray-200">
+                📜 剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]} ｜ 🎲 角色系统：{GAME_SYSTEM_LABELS[gameSystem]}
+                <span className="text-emerald-600">（角色不绑定剧本，可自由选择）</span>
+              </p>
               {/* API配置 */}
               <details className="group">
                 <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none">连接设置</summary>
@@ -680,7 +685,7 @@ export default function StartScreen(){
 
               {/* 规则系统选择 */}
               <div className="bg-indigo-50/40 rounded-lg p-3 border border-indigo-100 space-y-2">
-                <label className="block text-xs font-medium text-gray-700 mb-1">🎲 规则系统</label>
+                <label className="block text-xs font-medium text-gray-700 mb-1">🎲 角色规则系统（独立于剧本系统）</label>
                 <div className="grid grid-cols-2 gap-1.5">
                   {GAME_SYSTEM_OPTIONS.map(opt=>(
                     <button key={opt.id} onClick={()=>setGameSystem(opt.id)} className={`p-2 rounded-lg border text-left text-xs transition-all ${
@@ -769,7 +774,8 @@ export default function StartScreen(){
                     </div>
                   )}
                   <div className="flex flex-wrap gap-1">
-                    <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">🎲 {GAME_SYSTEM_LABELS[gameSystem]}</span>
+                    <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">📜 剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]}</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200">🎲 角色系统：{GAME_SYSTEM_LABELS[gameSystem]}</span>
                     {gameSystem==='custom'&&customRules&&<span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200">自定义规则已填写</span>}
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 max-h-64 overflow-y-auto"><pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">{worldOutline.slice(0,2500)}{worldOutline.length>2500?'...':''}</pre></div>
@@ -795,7 +801,7 @@ export default function StartScreen(){
               </div>
 
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                <p className="text-[10px] text-gray-500 font-medium mb-2">角色预览 · {GAME_SYSTEM_LABELS[gameSystem]}</p>
+                <p className="text-[10px] text-gray-500 font-medium mb-2">角色预览 · 角色{GAME_SYSTEM_LABELS[gameSystem]} / 剧本{GAME_SYSTEM_LABELS[scenarioSystem]}</p>
                 <p className="text-sm text-gray-800">
                   <span className="font-bold text-indigo-600">{charName||'???'}</span>
                   <span className="text-gray-400"> — </span>
