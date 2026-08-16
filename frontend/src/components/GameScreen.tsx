@@ -16,6 +16,22 @@ function invName(it: string | { name: string }): string {
   return typeof it === 'string' ? it : it.name || '未知物品';
 }
 
+const ATTR_CN: Record<string, string> = {
+  str: '力量', dex: '敏捷', con: '体质', int: '智力', wis: '感知', cha: '魅力',
+  pow: '意志', siz: '体型', edu: '教育',
+};
+const SIZE_CN: Record<string, string> = { T: '微型', S: '小型', M: '中型', L: '大型', H: '超大型', G: '巨型' };
+const TYPE_CN: Record<string, string> = {
+  humanoid: '类人生物', monstrosity: '怪物', dragon: '龙', beast: '野兽', undead: '亡灵',
+  fiend: '邪魔', celestial: '天界生物', construct: '构装体', elemental: '元素生物',
+  fey: '妖精', giant: '巨人', ooze: '泥怪', plant: '植物', aberration: '异怪',
+};
+function translateMonsterDesc(desc: string): string {
+  return desc
+    .replace(/\b(T|S|M|L|H|G)\b/g, m => SIZE_CN[m] || m)
+    .replace(/\b(humanoid|monstrosity|dragon|beast|undead|fiend|celestial|construct|elemental|fey|giant|ooze|plant|aberration)\b/g, m => TYPE_CN[m] || m);
+}
+
 export default function GameScreen() {
   const { sessionId, goToStart, sceneInfo, status, mediaVersion } = useGameStore();
   useSSE(sessionId);
@@ -27,6 +43,10 @@ export default function GameScreen() {
   const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;stats:Record<string,string>;image_path:string;tags?:string[];details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
   const [beastQuery, setBeastQuery] = useState('');
   const [mapQuery, setMapQuery] = useState('');
+  const [showDmTools, setShowDmTools] = useState(false);
+  const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
+  const [dmMap, setDmMap] = useState({ name: '', description: '' });
+  const [dmBeast, setDmBeast] = useState({ name: '', description: '', stats: '' });
 
   useEffect(() => {
     const u = status.username || 'default';
@@ -50,6 +70,46 @@ export default function GameScreen() {
   const q = (s: string) => s.toLowerCase();
   const filteredMaps = maps.filter(m => !mapQuery || q(`${m.name} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')}`).includes(q(mapQuery)));
   const filteredBestiary = bestiary.filter(b => !beastQuery || q(`${b.name} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''}`).includes(q(beastQuery)));
+
+  const addDmNpc = async () => {
+    if (!sessionId || !dmNpc.name.trim()) return;
+    try {
+      const r = await fetch(`/api/game/${sessionId}/npc`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dmNpc),
+      });
+      if (!r.ok) return;
+      setDmNpc({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
+    } catch {}
+  };
+  const addDmMap = async () => {
+    if (!dmMap.name.trim()) return;
+    try {
+      const u = status.username || 'default';
+      const sid = status.scenario_id || '';
+      await fetch('/api/maps', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, name: dmMap.name, description: dmMap.description, system: status.game_system || 'custom', scenario_id: sid }),
+      });
+      setDmMap({ name: '', description: '' });
+      useGameStore.getState().bumpMediaVersion();
+    } catch {}
+  };
+  const addDmBeast = async () => {
+    if (!dmBeast.name.trim()) return;
+    try {
+      const u = status.username || 'default';
+      const sid = status.scenario_id || '';
+      let stats: Record<string,string> = {};
+      try { stats = dmBeast.stats ? JSON.parse(dmBeast.stats) : {}; } catch {}
+      await fetch('/api/bestiary', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, name: dmBeast.name, description: dmBeast.description, system: status.game_system || 'custom', stats, scenario_id: sid }),
+      });
+      setDmBeast({ name: '', description: '', stats: '' });
+      useGameStore.getState().bumpMediaVersion();
+    } catch {}
+  };
 
   return (
     <div className="h-screen flex flex-col bg-white">
@@ -89,6 +149,7 @@ export default function GameScreen() {
           <span className="text-[10px] text-gray-400 font-mono hidden sm:inline">#{sessionId?.slice(0, 6)}</span>
           <button onClick={()=>setShowRulebook(true)} className="text-xs text-indigo-500 hover:text-indigo-700 transition-colors">说明书</button>
           <button onClick={()=>setShowCharSheet(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">角色卡</button>
+          <button onClick={()=>setShowDmTools(true)} className="text-xs text-amber-600 hover:text-amber-800 transition-colors">DM</button>
           <button onClick={()=>setShowMap(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">地图</button>
           <button onClick={()=>setShowBeast(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">图鉴</button>
           <button onClick={saveGame} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">存档</button>
@@ -176,15 +237,19 @@ export default function GameScreen() {
             <div className="mb-4">
               <p className="text-[10px] text-gray-400 font-medium mb-1">属性</p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-                {Object.entries(status.attributes||{}).map(([k,v])=>{
-                  const m=Math.floor((Number(v)-10)/2);
-                  return (
-                    <div key={k} className="bg-white rounded-lg border border-gray-200 px-2 py-1 flex justify-between">
-                      <span className="text-[10px] text-gray-400 uppercase">{k}</span>
-                      <span className="text-xs font-bold">{v}{status.game_system!=='coc' && <span className={`ml-1 text-[9px] ${m>=0?'text-emerald-500':'text-red-400'}`}>({m>=0?'+':''}{m})</span>}</span>
-                    </div>
-                  );
-                })}
+                {Object.entries(status.attributes||{})
+                  .filter(([k]) => status.game_system === 'coc'
+                    ? ['str','con','dex','int','pow','cha','siz','edu'].includes(k)
+                    : ['str','dex','con','int','wis','cha'].includes(k))
+                  .map(([k,v])=>{
+                    const m=Math.floor((Number(v)-10)/2);
+                    return (
+                      <div key={k} className="bg-white rounded-lg border border-gray-200 px-2 py-1 flex justify-between">
+                        <span className="text-[10px] text-gray-400">{ATTR_CN[k]||k.toUpperCase()}</span>
+                        <span className="text-xs font-bold">{v}{status.game_system!=='coc' && <span className={`ml-1 text-[9px] ${m>=0?'text-emerald-500':'text-red-400'}`}>({m>=0?'+':''}{m})</span>}</span>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
 
@@ -299,9 +364,9 @@ export default function GameScreen() {
               const s = b.stats || {};
               const get = (...keys: string[]) => keys.map(k=>s[k]).find(v=>v!==undefined && v!=='') ?? '—';
               const abilities: Array<[string,string]> = [
-                ['STR', get('力量','STR','str')], ['DEX', get('敏捷','DEX','dex')],
-                ['CON', get('体质','CON','con')], ['INT', get('智力','INT','int')],
-                ['WIS', get('感知','WIS','wis')], ['CHA', get('魅力','CHA','cha')],
+                ['力量', get('力量','STR','str')], ['敏捷', get('敏捷','DEX','dex')],
+                ['体质', get('体质','CON','con')], ['智力', get('智力','INT','int')],
+                ['感知', get('感知','WIS','wis')], ['魅力', get('魅力','CHA','cha')],
               ];
               const skills = get('技能','Skills','skills');
               const senses = get('感官','Senses','senses');
@@ -368,7 +433,7 @@ export default function GameScreen() {
                   )}
 
                   {/* 描述 / 特性 / 动作 */}
-                  {b.description&&<p className="mt-2 text-[10px] text-gray-600 italic leading-relaxed">{b.description}</p>}
+                  {b.description&&<p className="mt-2 text-[10px] text-gray-600 italic leading-relaxed">{translateMonsterDesc(b.description)}</p>}
                   {(traits!=='—'||actions!=='—') && (
                     <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-1 text-[10px] text-gray-700">
                       {traits!=='—'&&<p><span className="text-gray-500 font-medium">特性：</span>{traits}</p>}
@@ -392,6 +457,54 @@ export default function GameScreen() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* DM 工具：新增角色/地点/生物 */}
+      {showDmTools && (
+        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowDmTools(false)}>
+          <div className="paper-card rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="paper-title text-lg font-bold">DM 工具</h3>
+              <button onClick={()=>setShowDmTools(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+            </div>
+
+            {/* 新增角色/NPC */}
+            <div className="mb-4 border-b border-amber-900/10 pb-3">
+              <p className="text-xs font-bold text-gray-700 mb-2">新增角色 / NPC</p>
+              <div className="grid grid-cols-2 gap-2">
+                <input value={dmNpc.name} onChange={e=>setDmNpc({...dmNpc,name:e.target.value})} placeholder="名称 *" className="input-field text-xs" />
+                <input value={dmNpc.role} onChange={e=>setDmNpc({...dmNpc,role:e.target.value})} placeholder="身份" className="input-field text-xs" />
+                <input value={dmNpc.location} onChange={e=>setDmNpc({...dmNpc,location:e.target.value})} placeholder="位置" className="input-field text-xs" />
+                <div className="flex gap-2">
+                  <input type="number" value={dmNpc.hp} onChange={e=>setDmNpc({...dmNpc,hp:Number(e.target.value)||10})} placeholder="HP" className="input-field text-xs" />
+                  <input type="number" value={dmNpc.ac} onChange={e=>setDmNpc({...dmNpc,ac:Number(e.target.value)||10})} placeholder="AC" className="input-field text-xs" />
+                </div>
+              </div>
+              <button onClick={addDmNpc} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增角色</button>
+            </div>
+
+            {/* 新增地点 */}
+            <div className="mb-4 border-b border-amber-900/10 pb-3">
+              <p className="text-xs font-bold text-gray-700 mb-2">新增地点</p>
+              <div className="grid grid-cols-1 gap-2">
+                <input value={dmMap.name} onChange={e=>setDmMap({...dmMap,name:e.target.value})} placeholder="地点名称 *" className="input-field text-xs" />
+                <textarea value={dmMap.description} onChange={e=>setDmMap({...dmMap,description:e.target.value})} placeholder="描述" rows={2} className="input-field text-xs resize-none" />
+              </div>
+              <button onClick={addDmMap} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增地点</button>
+            </div>
+
+            {/* 新增生物 */}
+            <div>
+              <p className="text-xs font-bold text-gray-700 mb-2">新增生物</p>
+              <div className="grid grid-cols-1 gap-2">
+                <input value={dmBeast.name} onChange={e=>setDmBeast({...dmBeast,name:e.target.value})} placeholder="生物名称 *" className="input-field text-xs" />
+                <textarea value={dmBeast.description} onChange={e=>setDmBeast({...dmBeast,description:e.target.value})} placeholder="描述" rows={2} className="input-field text-xs resize-none" />
+                <textarea value={dmBeast.stats} onChange={e=>setDmBeast({...dmBeast,stats:e.target.value})} placeholder='数值 JSON，如 {"HP":"30","AC":"15","力量":"16"}' rows={2} className="input-field text-xs resize-none font-mono" />
+              </div>
+              <button onClick={addDmBeast} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增生物</button>
+            </div>
           </div>
         </div>
       )}

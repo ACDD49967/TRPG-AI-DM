@@ -141,23 +141,27 @@ export default function StatusPanel() {
       <div className="pt-1.5 border-t border-gray-200">
         <p className="section-label mb-1">属性</p>
         <div className="grid grid-cols-2 gap-0.5">
-          {Object.entries(ATTR_LABELS).map(([k, label]) => {
-            const v = status.attributes[k] || 10;
-            const m = Math.floor((v - 10) / 2);
-            return (
-              <div key={k} className="flex items-center justify-between bg-white rounded px-1.5 py-0.5 border border-gray-100">
-                <span className="text-gray-500 text-[8px]">{ATTR_ICONS[k]} {label}</span>
-                <span className="text-gray-700 font-mono font-medium text-[9px]">
-                  {v}
-                  {system !== 'coc' && (
-                    <span className={m >= 0 ? 'text-emerald-500' : 'text-red-400'}>
-                      ({m >= 0 ? '+' : ''}{m})
-                    </span>
-                  )}
-                </span>
-              </div>
-            );
-          })}
+          {Object.entries(ATTR_LABELS)
+            .filter(([k]) => system === 'coc'
+              ? ['str','con','dex','int','pow','cha','siz','edu'].includes(k)
+              : ['str','dex','con','int','wis','cha'].includes(k))
+            .map(([k, label]) => {
+              const v = status.attributes?.[k] ?? (system === 'coc' ? 50 : 10);
+              const m = Math.floor((v - 10) / 2);
+              return (
+                <div key={k} className="flex items-center justify-between bg-white rounded px-1.5 py-0.5 border border-gray-100">
+                  <span className="text-gray-500 text-[8px]">{ATTR_ICONS[k]} {label}</span>
+                  <span className="text-gray-700 font-mono font-medium text-[9px]">
+                    {v}
+                    {system !== 'coc' && (
+                      <span className={m >= 0 ? 'text-emerald-500' : 'text-red-400'}>
+                        ({m >= 0 ? '+' : ''}{m})
+                      </span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
         </div>
       </div>
 

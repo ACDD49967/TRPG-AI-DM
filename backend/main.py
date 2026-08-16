@@ -895,6 +895,34 @@ async def upload_character_image(session_id: str, file: UploadFile = File(...)):
     return {"image_path": image_path}
 
 
+@app.post("/api/game/{session_id}/npc")
+async def add_npc_api(session_id: str, payload: dict):
+    """DM 手动为当前剧本新增一个 NPC/角色。"""
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    from backend.engine.world_state import NpcEntry, WorldState
+    ws = getattr(state, "world_state", None) or WorldState(session_id=session_id)
+    npc = NpcEntry(
+        name=str(payload.get("name") or "未命名NPC"),
+        race=str(payload.get("race") or ""),
+        role=str(payload.get("role") or "未知身份"),
+        location=str(payload.get("location") or ws.scene.current_location),
+        attitude=str(payload.get("attitude") or "中立"),
+        hp=int(payload.get("hp") or 10),
+        max_hp=int(payload.get("hp") or 10),
+        ac=int(payload.get("ac") or 10),
+        level=int(payload.get("level") or 1),
+        attributes=payload.get("attributes") or {},
+        skills=payload.get("skills") or [],
+        traits=payload.get("traits") or [],
+    )
+    ws.add_npc(npc)
+    state.world_state = ws
+    await push_event(state, "journal_update", ws.to_player_journal())
+    return {"npc": {"name": npc.name, "role": npc.role}}
+
+
 @app.post("/api/models")
 async def fetch_models(payload: dict):
     """从 OpenAI 兼容接口获取模型列表，用于前端下拉菜单。"""
