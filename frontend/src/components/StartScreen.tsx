@@ -243,6 +243,12 @@ export default function StartScreen(){
   useEffect(()=>{saveConfig({apiKey,modelName,baseUrl,username});},[apiKey,modelName,baseUrl,username]);
   useEffect(()=>{localStorage.setItem('dnd_thinking', JSON.stringify(thinkingStrength));},[thinkingStrength]);
   useEffect(()=>{localStorage.setItem('dnd_endpoints', JSON.stringify(endpointPresets));},[endpointPresets]);
+  // 进入存档页时刷新存档列表，避免显示已删除/过期存档
+  useEffect(()=>{
+    if(step===5){
+      fetch(`/api/saves?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setSaves(d.saves||[])).catch(()=>{});
+    }
+  },[step, username]);
 
   const applyProvider=(p:'openai'|'custom')=>{
     setProvider(p);
@@ -600,7 +606,13 @@ export default function StartScreen(){
         username:username||'default', save_id:saveId,
         api_key:apiKey||undefined, model_name:modelName||undefined, base_url:baseUrl||undefined,
       })});
-      if(!r.ok){const e=await r.json().catch(()=>({}));setError(e.detail||'载入存档失败');return;}
+      if(!r.ok){
+        const e=await r.json().catch(()=>({}));
+        setError(e.detail||'载入存档失败');
+        // 存档可能已被删除，刷新列表
+        fetch(`/api/saves?username=${encodeURIComponent(username||'default')}`).then(x=>x.json()).then(d=>setSaves(d.saves||[])).catch(()=>{});
+        return;
+      }
       const d=await r.json();
       setSession(d.session_id);
     }catch(e:unknown){setError(e instanceof Error?e.message:'载入存档失败');}
