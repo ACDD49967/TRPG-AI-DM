@@ -20,7 +20,9 @@ export default function GameScreen() {
   const [showRulebook, setShowRulebook] = useState(false);
   const [showCharSheet, setShowCharSheet] = useState(false);
   const [maps, setMaps] = useState<Array<{id:string;name:string;description:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;details?:{culture?:string;districts?:string[];notable_figures?:string;dangers?:string}}>>([]);
-  const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;stats:Record<string,string>;image_path:string;details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
+  const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;stats:Record<string,string>;image_path:string;tags?:string[];details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
+  const [beastQuery, setBeastQuery] = useState('');
+  const [mapQuery, setMapQuery] = useState('');
 
   useEffect(() => {
     const u = status.username || 'default';
@@ -40,6 +42,10 @@ export default function GameScreen() {
       });
     } catch {}
   };
+
+  const q = (s: string) => s.toLowerCase();
+  const filteredMaps = maps.filter(m => !mapQuery || q(`${m.name} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')}`).includes(q(mapQuery)));
+  const filteredBestiary = bestiary.filter(b => !beastQuery || q(`${b.name} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''}`).includes(q(beastQuery)));
 
   return (
     <div className="h-screen flex flex-col bg-white">
@@ -239,25 +245,35 @@ export default function GameScreen() {
               <h3 className="text-sm font-bold text-gray-900">地区地图</h3>
               <button onClick={()=>setShowMap(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
             </div>
-            {maps.length===0&&<p className="text-xs text-gray-400">暂无地图，可在大厅知识库页上传。</p>}
-            {maps.map(m=>(
-              <div key={m.id} className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
-                {m.image_path&&<img src={m.image_path} alt={m.name} className="w-full max-h-80 object-contain bg-gray-100" />}
-                <div className="p-3">
-                  <p className="text-sm font-bold">{m.name}</p>
-                  <p className="text-[10px] text-gray-500 mb-2">{m.description}</p>
-                  {m.locations.length>0&&<div className="flex flex-wrap gap-1">{m.locations.map((l,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-100">{l.name}</span>)}</div>}
-                  {m.details && (
-                    <div className="mt-2 text-[10px] text-gray-600 space-y-1">
-                      {m.details.culture&&<p>文化：{m.details.culture}</p>}
-                      {m.details.districts && m.details.districts.length>0&&<p>区域：{m.details.districts.join('、')}</p>}
-                      {m.details.notable_figures&&<p>知名人物：{m.details.notable_figures}</p>}
-                      {m.details.dangers&&<p>危险：{m.details.dangers}</p>}
-                    </div>
-                  )}
+            <input value={mapQuery} onChange={e=>setMapQuery(e.target.value)} placeholder="搜索地点/区域..." className="input-field text-xs mb-3" />
+            {filteredMaps.length===0&&<p className="text-xs text-gray-400">暂无匹配地图。</p>}
+            {filteredMaps.map(m=>{
+              const relatedCreatures = bestiary.filter(b => q(`${b.description} ${b.details?.habitat||''} ${b.details?.lore||''}`).includes(q(m.name)));
+              return (
+                <div key={m.id} className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
+                  {m.image_path&&<img src={m.image_path} alt={m.name} className="w-full max-h-80 object-contain bg-gray-100" />}
+                  <div className="p-3">
+                    <p className="text-sm font-bold">{m.name}</p>
+                    <p className="text-[10px] text-gray-500 mb-2">{m.description}</p>
+                    {m.locations.length>0&&<div className="flex flex-wrap gap-1">{m.locations.map((l,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-100">{l.name}</span>)}</div>}
+                    {m.details && (
+                      <div className="mt-2 text-[10px] text-gray-600 space-y-1">
+                        {m.details.culture&&<p>文化：{m.details.culture}</p>}
+                        {m.details.districts && m.details.districts.length>0&&<p>区域：{m.details.districts.join('、')}</p>}
+                        {m.details.notable_figures&&<p>知名人物：{m.details.notable_figures}</p>}
+                        {m.details.dangers&&<p>危险：{m.details.dangers}</p>}
+                      </div>
+                    )}
+                    {relatedCreatures.length>0 && (
+                      <div className="mt-2 pt-2 border-t border-gray-100">
+                        <p className="text-[9px] text-gray-400 mb-1">可能出现的生物</p>
+                        <div className="flex flex-wrap gap-1">{relatedCreatures.map(b=><span key={b.id} className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 rounded px-1.5 py-0.5">{b.name}</span>)}</div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -269,26 +285,36 @@ export default function GameScreen() {
               <h3 className="text-sm font-bold text-gray-900">生物图鉴</h3>
               <button onClick={()=>setShowBeast(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
             </div>
-            {bestiary.length===0&&<p className="text-xs text-gray-400">暂无生物，可在大厅知识库页上传。</p>}
-            {bestiary.map(b=>(
-              <div key={b.id} className="flex gap-3 mb-3 border border-gray-200 rounded-lg p-2">
-                {b.image_path&&<img src={b.image_path} alt={b.name} className="w-16 h-16 object-cover rounded-lg border" />}
-                <div className="min-w-0">
-                  <p className="text-sm font-bold">{b.name}</p>
-                  <p className="text-[10px] text-gray-500">{b.system}</p>
-                  <p className="text-[10px] text-gray-600 mt-0.5">{b.description}</p>
-                  {Object.keys(b.stats||{}).length>0&&<p className="text-[10px] text-gray-500 mt-1">{Object.entries(b.stats||{}).map(([k,v])=>`${k}:${v}`).join(' · ')}</p>}
-                  {b.details && (
-                    <div className="text-[10px] text-gray-600 mt-1 space-y-0.5">
-                      {b.details.habits&&<p>习性：{b.details.habits}</p>}
-                      {b.details.habitat&&<p>栖息地：{b.details.habitat}</p>}
-                      {b.details.lore&&<p>传说：{b.details.lore}</p>}
-                      {b.details.weakness&&<p>弱点：{b.details.weakness}</p>}
-                    </div>
-                  )}
+            <input value={beastQuery} onChange={e=>setBeastQuery(e.target.value)} placeholder="搜索生物/属性/栖息地..." className="input-field text-xs mb-3" />
+            {filteredBestiary.length===0&&<p className="text-xs text-gray-400">暂无匹配生物。</p>}
+            {filteredBestiary.map(b=>{
+              const relatedMaps = maps.filter(m => q(`${b.details?.habitat||''} ${b.description} ${b.details?.lore||''}`).includes(q(m.name)) || q(m.description).includes(q(b.name)));
+              return (
+                <div key={b.id} className="flex gap-3 mb-3 border border-gray-200 rounded-lg p-2">
+                  {b.image_path&&<img src={b.image_path} alt={b.name} className="w-16 h-16 object-cover rounded-lg border" />}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold">{b.name}</p>
+                    <p className="text-[10px] text-gray-500">{b.system}{b.tags&&b.tags.length>0?` · ${b.tags.join('、')}`:''}</p>
+                    <p className="text-[10px] text-gray-600 mt-0.5">{b.description}</p>
+                    {Object.keys(b.stats||{}).length>0&&<p className="text-[10px] text-gray-500 mt-1">{Object.entries(b.stats||{}).map(([k,v])=>`${k}:${v}`).join(' · ')}</p>}
+                    {b.details && (
+                      <div className="text-[10px] text-gray-600 mt-1 space-y-0.5">
+                        {b.details.habits&&<p>习性：{b.details.habits}</p>}
+                        {b.details.habitat&&<p>栖息地：{b.details.habitat}</p>}
+                        {b.details.lore&&<p>传说：{b.details.lore}</p>}
+                        {b.details.weakness&&<p>弱点：{b.details.weakness}</p>}
+                      </div>
+                    )}
+                    {relatedMaps.length>0 && (
+                      <div className="mt-1 pt-1 border-t border-gray-100">
+                        <p className="text-[9px] text-gray-400 mb-0.5">关联地点</p>
+                        <div className="flex flex-wrap gap-1">{relatedMaps.map(m=><span key={m.id} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 rounded px-1.5 py-0.5">{m.name}</span>)}</div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

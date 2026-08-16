@@ -458,6 +458,84 @@ async def delete_scenario_endpoint(scenario_id: str):
     return {"deleted": True}
 
 
+@app.put("/api/scenarios/{scenario_id}")
+async def update_scenario_endpoint(scenario_id: str, payload: dict):
+    """编辑剧本：更新标题/描述/总结/备注/大纲/自定义内容。"""
+    from backend.scenario_store import Scenario
+    s = Scenario.load(scenario_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="剧本不存在")
+    if payload.get("title") is not None:
+        s.meta.title = str(payload["title"])[:120]
+    if payload.get("description") is not None:
+        s.meta.description = str(payload["description"])[:500]
+    if payload.get("summary") is not None:
+        s.meta.summary = str(payload["summary"])
+    if payload.get("notes") is not None:
+        s.notes = str(payload["notes"])
+    if payload.get("world_outline") is not None:
+        s.world_outline = str(payload["world_outline"])
+    if payload.get("custom_rules") is not None:
+        s.custom_rules = str(payload["custom_rules"])
+    if payload.get("custom_classes") is not None:
+        s.custom_classes = list(payload["custom_classes"]) or []
+    if payload.get("custom_skills") is not None:
+        s.custom_skills = list(payload["custom_skills"]) or []
+    if payload.get("extra_attributes") is not None:
+        s.extra_attributes = dict(payload["extra_attributes"]) or {}
+    s.save()
+    return {"updated": True, "id": s.id}
+
+
+# ── 角色卡管理 ──
+
+@app.get("/api/characters")
+async def list_character_cards_api(username: str = "default"):
+    from backend.character_card_manager import list_character_cards
+    return {"cards": list_character_cards(username)}
+
+
+@app.post("/api/characters")
+async def save_character_card_api(payload: dict):
+    from backend.character_card_manager import save_character_card
+    username = str(payload.get("username") or "default")
+    card = save_character_card(username, payload.get("card") or {})
+    return {"card": card}
+
+
+@app.get("/api/characters/{card_id}")
+async def get_character_card_api(card_id: str, username: str = "default"):
+    from backend.character_card_manager import get_character_card
+    card = get_character_card(username, card_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="角色卡不存在")
+    return {"card": card}
+
+
+@app.put("/api/characters/{card_id}")
+async def update_character_card_api(card_id: str, payload: dict):
+    from backend.character_card_manager import save_character_card
+    username = str(payload.get("username") or "default")
+    card = save_character_card(username, payload.get("card") or {}, card_id=card_id)
+    return {"card": card}
+
+
+@app.delete("/api/characters/{card_id}")
+async def delete_character_card_api(card_id: str, username: str = "default"):
+    from backend.character_card_manager import delete_character_card
+    if not delete_character_card(username, card_id):
+        raise HTTPException(status_code=404, detail="角色卡不存在")
+    return {"deleted": True}
+
+
+@app.delete("/api/saves/{save_id}")
+async def delete_save_api(save_id: str, username: str = "default"):
+    from backend.save_manager import delete_save
+    if not delete_save(username, save_id):
+        raise HTTPException(status_code=404, detail="存档不存在")
+    return {"deleted": True}
+
+
 @app.get("/api/knowledge")
 async def list_knowledge():
     """列出知识库文档（不含正文片段）。"""

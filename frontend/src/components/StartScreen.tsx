@@ -97,6 +97,7 @@ const WORLD_STAGES=[
 
 function mod(v:number){const m=Math.floor((v-10)/2);return m>=0?`+${m}`:`${m}`;}
 function spent(a:Record<string,number>, cost: Record<number,number>){let s=0;for(const v of Object.values(a))s+=cost[v]||0;return s;}
+function formatTime(iso:string){try{return new Date(iso).toLocaleString('zh-CN',{hour12:false});}catch{return iso;}}
 
 // ═══════════════════════ localStorage持久化 ═══════════════════════
 
@@ -203,6 +204,8 @@ export default function StartScreen(){
   const [activeExtIds,setActiveExtIds]=useState<string[]>([]);
   const [saves,setSaves]=useState<Array<{id:string;label:string;auto:boolean;session_id:string;created_at:string;character_name:string;game_system:string}>>([]);
   const [saveLabel,setSaveLabel]=useState('');
+  const [charCards,setCharCards]=useState<Array<{id:string;name:string;character_name:string;game_system:string;race:string;char_class:string;created_at:string;updated_at:string}>>([]);
+  const [charCardName,setCharCardName]=useState('');
 
   // 地图 / 生物图鉴 / 角色图片
   const [maps,setMaps]=useState<Array<{id:string;name:string;description:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;system:string}>>([]);
@@ -225,7 +228,8 @@ export default function StartScreen(){
     fetch(`/api/maps?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setMaps(d.maps||[])).catch(()=>{});
     fetch(`/api/bestiary?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setBestiary(d.bestiary||[])).catch(()=>{});
     fetch(`/api/saves?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setSaves(d.saves||[])).catch(()=>{});
-  },[]);
+    fetch(`/api/characters?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setCharCards(d.cards||[])).catch(()=>{});
+  },[username]);
 
   // 自动保持配置（每次关键字段变化）
   useEffect(()=>{saveConfig({apiKey,modelName,baseUrl,username});},[apiKey,modelName,baseUrl,username]);
@@ -375,6 +379,32 @@ export default function StartScreen(){
     }catch{}
   };
 
+  const deleteScenario=async(sid:string)=>{
+    if(!window.confirm('确定删除该剧本？此操作不可恢复。')) return;
+    try{
+      await fetch(`/api/scenarios/${sid}`,{method:'DELETE'});
+      setSavedScenarios(savedScenarios.filter(s=>s.id!==sid));
+      if(selectedScenario===sid){setSelectedScenario('');setScenarioId('');}
+    }catch{}
+  };
+
+  const updateScenario=async()=>{
+    if(!scenarioId)return;
+    try{
+      const r=await fetch(`/api/scenarios/${scenarioId}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        summary: scenarioSummary,
+        world_outline: worldOutline,
+        custom_rules: customRules,
+        custom_classes: customClasses,
+        custom_skills: customSkills,
+        extra_attributes: extraAttributes,
+      })});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'保存失败');}
+      fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
+      setWorldGenErr('');
+    }catch(e:unknown){setWorldGenErr(e instanceof Error?e.message:'保存失败');}
+  };
+
   const importScenario=async(file:File)=>{
     setImportBusy(true);setImportErr('');setImportFileName(file.name);
     try{
@@ -522,6 +552,78 @@ export default function StartScreen(){
     }catch{}
   };
 
+  const deleteSave=async(saveId:string)=>{
+    try{
+      await fetch(`/api/saves/${saveId}?username=${encodeURIComponent(username||'default')}`,{method:'DELETE'});
+      setSaves(saves.filter(s=>s.id!==saveId));
+    }catch{}
+  };
+
+  const saveCharCard=async()=>{
+    if(!charName.trim()){setError('请先填写角色名再保存角色卡');return;}
+    const card: Record<string, unknown> = {
+      name: charCardName.trim() || charName.trim(),
+      character_name: charName.trim(),
+      gender,
+      race: gameSystem==='coc'?'调查员':rc.name,
+      char_class: gameSystem==='coc'?occupation:cc.name,
+      game_system: gameSystem,
+      attributes: finalAttrs,
+      skill_proficiencies: gameSystem==='coc'?cocSkillPicks:skillPicks,
+      backstory: aiGen?.backstory || backstoryText || '',
+      character_image: characterImage,
+      custom_rules: gameSystem==='custom'?customRules:undefined,
+      custom_classes: customClasses,
+      custom_skills: customSkills,
+      extra_attributes: extraAttributes,
+      cocLuck: gameSystem==='coc'?cocLuck:undefined,
+    };
+    try{
+      const r=await fetch('/api/characters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username||'default',card})});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'保存失败');}
+      const d=await r.json();
+      setCharCards(prev=>[d.card, ...prev.filter(c=>c.id!==d.card.id)]);
+      setCharCardName('');
+    }catch(e:unknown){setError(e instanceof Error?e.message:'保存角色卡失败');}
+  };
+
+  const loadCharCard=async(cardId:string)=>{
+    try{
+      const r=await fetch(`/api/characters/${cardId}?username=${encodeURIComponent(username||'default')}`);
+      if(!r.ok)return;
+      const d=await r.json();
+      const c=d.card?.data||{};
+      if(c.character_name)setCharName(c.character_name);
+      if(c.gender)setGender(c.gender);
+      if(c.game_system)setGameSystem(c.game_system as GameSystem);
+      if(c.race)setRace(c.race);
+      if(c.char_class)setCharClass(c.char_class);
+      if(c.attributes){
+        if(c.game_system==='coc')setCocAttrs(c.attributes);
+        else if(c.game_system==='custom')setCustomAttrs(c.attributes);
+        else setAttrs(c.attributes);
+      }
+      if(Array.isArray(c.skill_proficiencies)){
+        if(c.game_system==='coc')setCocSkillPicks(c.skill_proficiencies);
+        else setSkillPicks(c.skill_proficiencies);
+      }
+      if(c.backstory){setBackstoryText(c.backstory);setAiGen({attributes:c.attributes||{},backstory:c.backstory});}
+      if(c.character_image)setCharacterImage(c.character_image);
+      if(c.custom_rules)setCustomRules(c.custom_rules);
+      if(Array.isArray(c.custom_classes))setCustomClassesText(c.custom_classes.join(', '));
+      if(Array.isArray(c.custom_skills))setCustomSkillsText(c.custom_skills.join(', '));
+      if(c.extra_attributes)setExtraAttributesText(Object.entries(c.extra_attributes).map(([k,v])=>`${k}:${v}`).join('\n'));
+      if(c.cocLuck)setCocLuck(c.cocLuck);
+    }catch{}
+  };
+
+  const deleteCharCard=async(cardId:string)=>{
+    try{
+      await fetch(`/api/characters/${cardId}?username=${encodeURIComponent(username||'default')}`,{method:'DELETE'});
+      setCharCards(charCards.filter(c=>c.id!==cardId));
+    }catch{}
+  };
+
   const uploadMap=async(file:File)=>{
     setMediaBusy(true);setMediaErr('');
     try{
@@ -623,6 +725,10 @@ export default function StartScreen(){
               ))}
             </div>
           </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">用户 / 玩家名（自动记住，用于隔离存档、角色卡、扩展与媒体）</label>
+            <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="输入你的用户名" className="input-field text-xs" />
+          </div>
           <div className="grid gap-2">
             <div>
               <label className="block text-[10px] text-gray-500 mb-1">API 地址</label>
@@ -705,6 +811,32 @@ export default function StartScreen(){
                 剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]} ｜ 角色系统：{GAME_SYSTEM_LABELS[gameSystem]}
                 <span className="text-emerald-600">（角色不绑定剧本，可自由选择）</span>
               </p>
+
+              {/* 角色卡库 */}
+              <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-gray-700">我的角色卡</p>
+                  <div className="flex items-center gap-1">
+                    <input value={charCardName} onChange={e=>setCharCardName(e.target.value)} placeholder="角色卡名称" className="input-field text-xs py-1 px-2 w-28" />
+                    <button onClick={saveCharCard} className="btn-secondary text-xs px-2 py-1 whitespace-nowrap">保存当前</button>
+                  </div>
+                </div>
+                {charCards.length===0 ? (
+                  <p className="text-[10px] text-gray-400">暂无角色卡。填写完角色后可保存，方便下次新游戏直接复用。</p>
+                ) : charCards.map(card=>(
+                  <div key={card.id} className="flex items-center justify-between bg-white rounded-lg p-2 border border-gray-200">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-gray-800 truncate">{card.name}</p>
+                      <p className="text-[9px] text-gray-400 truncate">{card.character_name} · {GAME_SYSTEM_LABELS[card.game_system as GameSystem]||card.game_system} · {formatTime(card.updated_at)}</p>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <button onClick={()=>loadCharCard(card.id)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">使用</button>
+                      <button onClick={()=>deleteCharCard(card.id)} className="text-[10px] px-2 py-1 bg-red-50 text-red-600 rounded-lg border border-red-200 hover:bg-red-100">删除</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               {/* 基础信息 */}
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="block text-xs font-medium text-gray-600 mb-1">玩家</label><input value={username} onChange={e=>setUsername(e.target.value)} placeholder="你的名字" className="input-field" /></div>
@@ -1008,14 +1140,20 @@ export default function StartScreen(){
                   {showScenarioList&&(
                     <div className="space-y-1 max-h-48 overflow-y-auto">
                       {savedScenarios.map(s=>(
-                        <button key={s.id} onClick={()=>loadScenario(s.id)} className={`w-full text-left p-2.5 rounded-lg border text-xs transition-all ${selectedScenario===s.id?'border-indigo-400 bg-indigo-100 ring-1 ring-indigo-300':'border-gray-200 bg-white hover:border-gray-300'}`}>
-                          <div className="flex justify-between items-center">
-                            <span className="font-medium text-gray-800">{s.title}</span>
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${s.score>=80?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}`}>{s.score}分</span>
+                        <div key={s.id} className={`rounded-lg border text-xs transition-all ${selectedScenario===s.id?'border-indigo-400 bg-indigo-100 ring-1 ring-indigo-300':'border-gray-200 bg-white hover:border-gray-300'}`}>
+                          <button onClick={()=>loadScenario(s.id)} className="w-full text-left p-2.5">
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium text-gray-800">{s.title}</span>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${s.score>=80?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}`}>{s.score}分</span>
+                            </div>
+                            <div className="flex gap-3 mt-1 text-[10px] text-gray-500"><span>{GAME_SYSTEM_LABELS[(s.system as GameSystem)||'dnd5e']||s.system}</span><span>{s.tone}</span><span>游玩{s.total_sessions}次</span>{s.character_name&&<span>角色:{s.character_name}</span>}</div>
+                            {s.summary&&<p className="mt-1 text-[10px] text-gray-500 line-clamp-2">{s.summary}</p>}
+                          </button>
+                          <div className="flex gap-1 px-2 pb-2">
+                            <button onClick={()=>loadScenario(s.id)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">选择/编辑</button>
+                            <button onClick={()=>deleteScenario(s.id)} className="text-[10px] px-2 py-1 bg-red-50 text-red-600 rounded-lg border border-red-200 hover:bg-red-100">删除</button>
                           </div>
-                          <div className="flex gap-3 mt-1 text-[10px] text-gray-500"><span>{GAME_SYSTEM_LABELS[(s.system as GameSystem)||'dnd5e']||s.system}</span><span>{s.tone}</span><span>游玩{s.total_sessions}次</span>{s.character_name&&<span>角色:{s.character_name}</span>}</div>
-                          {s.summary&&<p className="mt-1 text-[10px] text-gray-500 line-clamp-2">{s.summary}</p>}
-                        </button>
+                        </div>
                       ))}
                     </div>
                   )}
@@ -1180,10 +1318,18 @@ export default function StartScreen(){
                     <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200">角色系统：{GAME_SYSTEM_LABELS[gameSystem]}</span>
                     {gameSystem==='custom'&&customRules&&<span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200">自定义规则已填写</span>}
                   </div>
-                  <details className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                    <summary className="text-xs text-gray-500 cursor-pointer select-none">展开完整大纲（含剧透，仅供创建时确认）</summary>
-                    <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed mt-2 max-h-64 overflow-y-auto">{worldOutline.slice(0,2500)}{worldOutline.length>2500?'...':''}</pre>
-                  </details>
+                  {scenarioId ? (
+                    <div className="space-y-2">
+                      <label className="text-[10px] text-gray-500 font-medium">编辑剧本大纲（会保存到剧本）</label>
+                      <textarea value={worldOutline} onChange={e=>setWorldOutline(e.target.value)} rows={8} className="input-field text-xs resize-y" />
+                      <button onClick={updateScenario} className="text-[10px] px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">保存修改</button>
+                    </div>
+                  ) : (
+                    <details className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                      <summary className="text-xs text-gray-500 cursor-pointer select-none">展开完整大纲（含剧透，仅供创建时确认）</summary>
+                      <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed mt-2 max-h-64 overflow-y-auto">{worldOutline.slice(0,2500)}{worldOutline.length>2500?'...':''}</pre>
+                    </details>
+                  )}
                   {sourceChunks.length>0&&(
                     <p className="text-[10px] text-gray-400">已切分为 {sourceChunks.length} 个片段 · 切分方式: {splitter==='semantic'?'语义切分':'切分器'}</p>
                   )}
@@ -1436,9 +1582,12 @@ export default function StartScreen(){
                     <div key={s.id} className="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-200">
                       <div className="min-w-0">
                         <p className="text-xs font-medium text-gray-800">{s.label} {s.auto?'(自动)':'(手动)'}</p>
-                        <p className="text-[10px] text-gray-500">{s.character_name} · {GAME_SYSTEM_LABELS[(s.game_system as GameSystem)||'dnd5e']} · {s.created_at}</p>
+                        <p className="text-[10px] text-gray-500">{s.character_name} · {GAME_SYSTEM_LABELS[(s.game_system as GameSystem)||'dnd5e']} · {formatTime(s.created_at)}</p>
                       </div>
-                      <button onClick={()=>loadSaveGame(s.id)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">载入</button>
+                      <div className="flex gap-1">
+                        <button onClick={()=>loadSaveGame(s.id)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">载入</button>
+                        <button onClick={()=>deleteSave(s.id)} className="text-[10px] px-2 py-1 bg-red-50 text-red-600 rounded-lg border border-red-200 hover:bg-red-100">删除</button>
+                      </div>
                     </div>
                   ))}
                 </div>

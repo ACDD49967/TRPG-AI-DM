@@ -109,6 +109,26 @@ def add_map(username: str, name: str, description: str, image_path: str,
 def list_maps(username: str, scenario_id: str | None = None) -> list[dict]:
     ensure_seeded(username)
     items = _load_meta(username, "maps")
+    # 将知识库中标记为地点/城市的文档合并进地图（保留完整内容，仅展示，不写入用户媒体）
+    try:
+        from backend.knowledge_base import get_knowledge_base
+        kb = get_knowledge_base()
+        for d in kb.documents:
+            tags = [str(t) for t in d.get("tags", [])]
+            if any(("地点" in t) or ("城市" in t) or ("location" in t.lower()) for t in tags):
+                items.append({
+                    "id": f"kb-{d['id']}",
+                    "name": d.get("title", "未命名地点"),
+                    "description": d.get("content", ""),
+                    "image_path": "",
+                    "locations": [],
+                    "system": d.get("system", "custom"),
+                    "details": {"source": "知识库"},
+                    "scenario_id": "",
+                    "created_at": d.get("created_at", ""),
+                })
+    except Exception:
+        pass
     if scenario_id is not None:
         return [i for i in items if not i.get("scenario_id") or i.get("scenario_id") == scenario_id]
     return items
@@ -147,6 +167,27 @@ def add_bestiary(username: str, name: str, system: str, description: str,
 def list_bestiary(username: str, scenario_id: str | None = None) -> list[dict]:
     ensure_seeded(username)
     items = _load_meta(username, "bestiary")
+    # 将知识库中标记为生物/怪物的文档合并进图鉴（保留完整内容，仅展示，不写入用户媒体）
+    try:
+        from backend.knowledge_base import get_knowledge_base
+        kb = get_knowledge_base()
+        for d in kb.documents:
+            tags = [str(t) for t in d.get("tags", [])]
+            if any(("生物" in t) or ("怪物" in t) or ("creature" in t.lower()) for t in tags):
+                items.append({
+                    "id": f"kb-{d['id']}",
+                    "name": d.get("title", "未命名生物"),
+                    "system": d.get("system", "custom"),
+                    "description": d.get("content", ""),
+                    "stats": {},
+                    "image_path": "",
+                    "tags": tags,
+                    "details": {"source": "知识库"},
+                    "scenario_id": "",
+                    "created_at": d.get("created_at", ""),
+                })
+    except Exception:
+        pass
     if scenario_id is not None:
         return [i for i in items if not i.get("scenario_id") or i.get("scenario_id") == scenario_id]
     return items

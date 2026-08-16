@@ -29,6 +29,8 @@ saves/
 !saves/.gitkeep
 extensions/
 !extensions/.gitkeep
+characters/*
+!characters/.gitkeep
 
 # 打包产物
 dist/

@@ -1,6 +1,14 @@
 /** 角色状态面板 —— 含装备、持有物、角色身份信息 */
 
+import { useState } from 'react';
 import { motion } from 'framer-motion';
+
+function itemDescription(name: string): string {
+  if (/剑|斧|弓|弩|匕首|矛|锤|杖|棍|鞭|刀|枪|戟|链枷|战|刃/.test(name)) return '武器：近战/远程攻击工具。具体伤害与效果由主持人在叙事中判定。';
+  if (/甲|盾|袍|披风|头盔|护|铠|锁子|皮|板/.test(name)) return '防具：提供防护。具体 AC 与效果由主持人在叙事中判定。';
+  if (/药水|药剂|瓶|毒|油|圣水/.test(name)) return '消耗品：使用后产生效果，具体由主持人判定。';
+  return '杂物：可能用于任务、交易或环境互动，具体用途由主持人判定。';
+}
 import { useGameStore } from '../store/gameStore';
 
 const ATTR_LABELS: Record<string, string> = {
@@ -15,6 +23,7 @@ const ATTR_ICONS: Record<string, string> = {
 export default function StatusPanel() {
   const { status, combat } = useGameStore();
   const system = status.game_system || 'dnd5e';
+  const [selectedItem, setSelectedItem] = useState<string | null>(null);
 
   const hpPct = Math.max(0, status.maxHp > 0 ? (status.hp / status.maxHp) * 100 : 0);
   const mpPct = Math.max(0, status.maxMp > 0 ? (status.mp / status.maxMp) * 100 : 0);
@@ -148,35 +157,6 @@ export default function StatusPanel() {
         </div>
       </div>
 
-      {/* 数值说明 */}
-      <details className="pt-1.5 border-t border-gray-200 text-[8px]">
-        <summary className="text-gray-400 cursor-pointer select-none">数值说明</summary>
-        {system === 'coc' ? (
-          <ul className="mt-1 text-gray-500 space-y-0.5">
-            <li>HP = (体质+体型)/10</li>
-            <li>MP = 意志/5</li>
-            <li>SAN = 意志</li>
-            <li>技能：d100 ≤ 技能值成功</li>
-          </ul>
-        ) : system === 'dnd4e' ? (
-          <ul className="mt-1 text-gray-500 space-y-0.5">
-            <li>回复力每日次数=职业基础+体质调整</li>
-            <li>每次回复 1/4 最大HP</li>
-            <li>攻击 d20 vs 四类防御</li>
-          </ul>
-        ) : system === 'custom' ? (
-          <ul className="mt-1 text-gray-500 space-y-0.5">
-            <li>以自定义规则文本为准</li>
-          </ul>
-        ) : (
-          <ul className="mt-1 text-gray-500 space-y-0.5">
-            <li>AC：敌人攻击需 ≥ AC 命中</li>
-            <li>熟练加值：1-4级+2，5-8级+3</li>
-            <li>HP 归 0 进入死亡豁免</li>
-          </ul>
-        )}
-      </details>
-
       {/* 装备与物品 */}
       <div className="pt-1.5 border-t border-gray-200 flex-1">
         <p className="section-label mb-1">装备与物品 ({inventory.length})</p>
@@ -189,7 +169,7 @@ export default function StatusPanel() {
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">武器</p>
             {weapons.map((item, i) => (
-              <p key={i} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate" title={item}>{item}</p>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{item}</button>
             ))}
           </div>
         )}
@@ -198,7 +178,7 @@ export default function StatusPanel() {
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">防具</p>
             {armor.map((item, i) => (
-              <p key={i} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate" title={item}>{item}</p>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{item}</button>
             ))}
           </div>
         )}
@@ -207,7 +187,7 @@ export default function StatusPanel() {
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">药水</p>
             {potions.map((item, i) => (
-              <p key={i} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate" title={item}>{item}</p>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{item}</button>
             ))}
           </div>
         )}
@@ -216,7 +196,7 @@ export default function StatusPanel() {
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">杂物</p>
             {misc.slice(0, 6).map((item, i) => (
-              <p key={i} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate" title={item}>{item}</p>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{item}</button>
             ))}
             {misc.length > 6 && <p className="text-[8px] text-gray-400">...还有{misc.length - 6}件</p>}
           </div>
@@ -234,6 +214,19 @@ export default function StatusPanel() {
           <p className="text-[9px] text-red-700 truncate">{combat.enemyName}</p>
           <p className="text-[8px] text-gray-500">敌方HP: {combat.enemyHp}</p>
         </motion.div>
+      )}
+
+      {/* 物品详情弹窗 */}
+      {selectedItem && (
+        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={()=>setSelectedItem(null)}>
+          <div className="bg-white rounded-xl max-w-sm w-full p-4 shadow-xl" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-bold text-gray-900">{selectedItem}</h3>
+              <button onClick={()=>setSelectedItem(null)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+            </div>
+            <p className="text-xs text-gray-600 leading-relaxed">{itemDescription(selectedItem)}</p>
+          </div>
+        </div>
       )}
     </div>
   );
