@@ -168,6 +168,13 @@ async def sse_event_generator(
         "healing_surges": info.get("healing_surges", 0),
         "max_healing_surges": info.get("max_healing_surges", 0),
         "surge_value": info.get("surge_value", 0),
+        "proficiency_bonus": info.get("proficiency_bonus", 2),
+        "spell_slots": info.get("spell_slots", []),
+        "fortitude": info.get("fortitude", 10),
+        "reflex": info.get("reflex", 10),
+        "will": info.get("will", 10),
+        "damage_bonus": info.get("damage_bonus", "0"),
+        "build": info.get("build", 0),
     })
 
     # 将 end_of_turn 推入队列（排在叙事token之后）

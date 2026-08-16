@@ -624,28 +624,43 @@ async def create_new_game(request: NewGameRequest):
 
         # 根据规则系统预填衍生数值
         if request.game_system == "dnd5e":
-            from backend.engine.game_systems import get_dnd5_derived
+            from backend.engine.game_systems import (
+                get_dnd5_derived,
+                get_dnd5_proficiency_bonus,
+                get_dnd5_spell_slots,
+            )
             d5 = get_dnd5_derived(character_info.get("char_class", "战士"), character_info.get("attributes", {}), character_info.get("level", 1))
             character_info["hp"] = d5["hp"]
             character_info["max_hp"] = d5["max_hp"]
             character_info["hit_die"] = d5["hit_die"]
+            character_info["proficiency_bonus"] = get_dnd5_proficiency_bonus(character_info.get("level", 1))
+            character_info["spell_slots"] = get_dnd5_spell_slots(character_info.get("char_class", ""), character_info.get("level", 1))
         elif request.game_system == "coc":
+            from backend.engine.game_systems import get_coc_derived
             attrs_coc = character_info.get("attributes", {})
-            character_info["hp"] = max(1, (attrs_coc.get("con", 50) + attrs_coc.get("siz", 50)) // 2)
-            character_info["max_hp"] = character_info["hp"]
-            character_info["mp"] = attrs_coc.get("pow", 50)
-            character_info["max_mp"] = character_info["mp"]
-            character_info["san"] = attrs_coc.get("pow", 50) * 5
-            character_info["max_san"] = character_info["san"]
-            character_info["luck"] = request.luck or 50
+            coc = get_coc_derived(attrs_coc, request.luck or 50)
+            character_info["hp"] = coc["hp"]
+            character_info["max_hp"] = coc["hp"]
+            character_info["mp"] = coc["mp"]
+            character_info["max_mp"] = coc["mp"]
+            character_info["san"] = coc["san"]
+            character_info["max_san"] = coc["san"]
+            character_info["luck"] = coc["luck"]
+            character_info["damage_bonus"] = coc["damage_bonus"]
+            character_info["build"] = coc["build"]
         elif request.game_system == "dnd4e":
-            from backend.engine.game_systems import get_dnd4_derived
+            from backend.engine.game_systems import get_dnd4_defenses, get_dnd4_derived
             d4 = get_dnd4_derived(character_info.get("char_class", "战士"), character_info.get("attributes", {}))
+            defenses = get_dnd4_defenses(character_info.get("char_class", "战士"), character_info.get("attributes", {}), character_info.get("level", 1))
             character_info["hp"] = d4["hp"]
             character_info["max_hp"] = d4["max_hp"]
             character_info["healing_surges"] = d4["healing_surges"]
             character_info["max_healing_surges"] = d4["max_healing_surges"]
             character_info["surge_value"] = d4["surge_value"]
+            character_info["ac"] = defenses["ac"]
+            character_info["fortitude"] = defenses["fortitude"]
+            character_info["reflex"] = defenses["reflex"]
+            character_info["will"] = defenses["will"]
 
         # 如果指定了已保存剧本ID且不是全新世界——加载剧本
         if request.scenario_id and not request.new_world:

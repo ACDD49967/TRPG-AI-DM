@@ -1,6 +1,14 @@
 """剧本导入模块的基础测试。"""
 
-from backend.engine.game_systems import detect_game_system, get_dnd4_derived, get_dnd5_derived
+from backend.engine.game_systems import (
+    detect_game_system,
+    get_coc_derived,
+    get_dnd4_defenses,
+    get_dnd4_derived,
+    get_dnd5_derived,
+    get_dnd5_proficiency_bonus,
+    get_dnd5_spell_slots,
+)
 from backend.scenario_importer import (
     extract_text,
     split_text_naive,
@@ -51,3 +59,20 @@ def test_dnd5_derived_formula():
     # 战士 1 级 HP = d10 最大值 10 + 体质调整(+2) = 12
     assert d["max_hp"] == 12
     assert d["hit_die"] == "1d10"
+
+
+def test_dnd5_fixed_tables():
+    assert get_dnd5_proficiency_bonus(1) == 2
+    assert get_dnd5_proficiency_bonus(9) == 4
+    slots = get_dnd5_spell_slots("法师", 1)
+    assert slots["spell_slots"][0] == 2
+    assert get_dnd5_spell_slots("战士", 5)["spell_slots"] == []
+
+
+def test_dnd4_defenses_and_coc_derived():
+    defenses = get_dnd4_defenses("战士", {"str": 16, "dex": 12, "con": 14, "int": 10, "wis": 12, "cha": 10}, level=1)
+    assert defenses["fortitude"] >= 10
+    coc = get_coc_derived({"str": 60, "con": 50, "siz": 60, "pow": 55}, luck=65)
+    assert coc["hp"] == 55  # (50+60)//2
+    assert coc["san"] == 275
+    assert coc["luck"] == 65

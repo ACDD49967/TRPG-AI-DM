@@ -616,6 +616,15 @@ def build_character_info(state: GameSessionState) -> str:
         f"HP: {info.get('hp',30)}/{info.get('max_hp',30)} | AC: {ac} | 金币: {info.get('gold',10)}",
     ]
 
+    system = info.get("game_system", "dnd5e")
+    if system == "dnd5e":
+        lines.append(f"熟练加值: {info.get('proficiency_bonus', 2)} | 法术位: {info.get('spell_slots', [])}")
+    elif system == "dnd4e":
+        lines.append(f"回复力: {info.get('healing_surges', 0)}/{info.get('max_healing_surges', 0)} (每次 {info.get('surge_value', 0)} HP)")
+        lines.append(f"防御: AC {info.get('ac', ac)} 强韧 {info.get('fortitude', 10)} 反射 {info.get('reflex', 10)} 意志 {info.get('will', 10)}")
+    elif system == "coc":
+        lines.append(f"MP: {info.get('mp', 0)} | SAN: {info.get('san', 0)} | 幸运: {info.get('luck', 0)} | 伤害加值: {info.get('damage_bonus', '0')}")
+
     if attrs:
         names = {"str":"力","dex":"敏","con":"体","int":"智","wis":"感","cha":"魅"}
         parts = [f"{names.get(k,k)}:{v}({(v-10)//2:+d})" for k, v in attrs.items()]

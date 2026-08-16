@@ -73,6 +73,66 @@ DND5_CLASS_HD = {
 }
 
 
+def get_dnd5_proficiency_bonus(level: int) -> int:
+    """D&D 5e 熟练加值表。"""
+    if level <= 4:
+        return 2
+    if level <= 8:
+        return 3
+    if level <= 12:
+        return 4
+    if level <= 16:
+        return 5
+    return 6
+
+
+# 法术位表：仅包含本项目职业列表中的施法职业（官方 5e 表）
+_FULL_CASTER_SLOTS = {
+    1: (2, 0, 0, 0, 0), 2: (3, 0, 0, 0, 0), 3: (4, 2, 0, 0, 0),
+    4: (4, 3, 0, 0, 0), 5: (4, 3, 2, 0, 0), 6: (4, 3, 3, 0, 0),
+    7: (4, 3, 3, 1, 0), 8: (4, 3, 3, 2, 0), 9: (4, 3, 3, 3, 1),
+    10: (4, 3, 3, 3, 2), 11: (4, 3, 3, 3, 2, 1), 12: (4, 3, 3, 3, 2, 1),
+    13: (4, 3, 3, 3, 2, 1, 1), 14: (4, 3, 3, 3, 2, 1, 1),
+    15: (4, 3, 3, 3, 2, 1, 1, 1), 16: (4, 3, 3, 3, 2, 1, 1, 1),
+    17: (4, 3, 3, 3, 2, 1, 1, 1, 1), 18: (4, 3, 3, 3, 3, 1, 1, 1, 1),
+    19: (4, 3, 3, 3, 3, 2, 1, 1, 1), 20: (4, 3, 3, 3, 3, 2, 2, 1, 1),
+}
+_HALF_CASTER_SLOTS = {
+    1: (0, 0, 0, 0, 0), 2: (2, 0, 0, 0, 0), 3: (3, 0, 0, 0, 0),
+    4: (3, 0, 0, 0, 0), 5: (4, 2, 0, 0, 0), 6: (4, 2, 0, 0, 0),
+    7: (4, 3, 0, 0, 0), 8: (4, 3, 0, 0, 0), 9: (4, 3, 2, 0, 0),
+    10: (4, 3, 2, 0, 0), 11: (4, 3, 3, 0, 0), 12: (4, 3, 3, 0, 0),
+    13: (4, 3, 3, 1, 0), 14: (4, 3, 3, 1, 0), 15: (4, 3, 3, 2, 0),
+    16: (4, 3, 3, 2, 0), 17: (4, 3, 3, 3, 1), 18: (4, 3, 3, 3, 1),
+    19: (4, 3, 3, 3, 2), 20: (4, 3, 3, 3, 2),
+}
+_WARLOCK_SLOTS = {  # 邪术师契约法术位数量
+    1: 1, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2, 8: 2, 9: 2, 10: 2,
+    11: 3, 12: 3, 13: 3, 14: 3, 15: 3, 16: 3, 17: 4, 18: 4, 19: 4, 20: 4,
+}
+
+
+def get_dnd5_spell_slots(char_class: str, level: int) -> dict:
+    """返回 D&D 5e 施法职业在指定等级的法术位数量（固定表，不用 LLM 计算）。"""
+    level = max(1, min(20, level))
+    if char_class == "邪术师":
+        return {
+            "pact_slots": _WARLOCK_SLOTS.get(level, 2),
+            "spell_slots": [],
+        }
+    if char_class in ("圣武士", "游侠"):
+        table = _HALF_CASTER_SLOTS
+    elif char_class in ("法师", "牧师", "吟游诗人", "德鲁伊", "术士"):
+        table = _FULL_CASTER_SLOTS
+    else:
+        return {"spell_slots": [], "pact_slots": 0}
+    slots = table.get(level, (0, 0, 0, 0, 0))
+    return {
+        "spell_slots": [int(x) for x in slots],
+        "pact_slots": 0,
+    }
+
+
 def get_dnd5_derived(char_class: str, attributes: dict, level: int = 1) -> dict:
     """按 D&D 5e 常用公式计算 1 级及升级后的 HP（取生命骰平均值）。
 
@@ -111,6 +171,80 @@ def get_dnd4_derived(char_class: str, attributes: dict) -> dict:
         "healing_surges": healing_surges,
         "max_healing_surges": healing_surges,
         "surge_value": surge_value,
+    }
+
+
+# D&D 4e 职业防御加值（近似核心书常用值）
+DND4_DEFENSE_BONUS = {
+    "战士": {"fort": 2, "ref": 0, "will": 0},
+    "圣武士": {"fort": 1, "ref": 0, "will": 1},
+    "野蛮人": {"fort": 2, "ref": 0, "will": 0},
+    "游侠": {"fort": 0, "ref": 2, "will": 0},
+    "游荡者": {"fort": 0, "ref": 2, "will": 0},
+    "牧师": {"fort": 0, "ref": 0, "will": 2},
+    "邪术师": {"fort": 0, "ref": 1, "will": 1},
+    "吟游诗人": {"fort": 0, "ref": 0, "will": 2},
+    "德鲁伊": {"fort": 1, "ref": 0, "will": 1},
+    "武僧": {"fort": 0, "ref": 2, "will": 1},
+    "术士": {"fort": 0, "ref": 1, "will": 1},
+    "法师": {"fort": 0, "ref": 1, "will": 2},
+}
+
+
+def get_dnd4_defenses(char_class: str, attributes: dict, level: int = 1,
+                      armor_bonus: int = 0, shield_bonus: int = 0) -> dict:
+    """D&D 4e 四类防御固定计算。
+
+    基础规则：10 + 1/2等级 + 对应属性调整 + 职业加值 + 护甲/盾牌等。
+    AC 额外使用敏捷调整（中甲上限 +2，重甲不加重）。
+    """
+    half_level = level // 2
+    attrs = {k: int(v or 10) for k, v in attributes.items()}
+    dex_mod = (attrs.get("dex", 10) - 10) // 2
+    str_mod = (attrs.get("str", 10) - 10) // 2
+    con_mod = (attrs.get("con", 10) - 10) // 2
+    int_mod = (attrs.get("int", 10) - 10) // 2
+    wis_mod = (attrs.get("wis", 10) - 10) // 2
+    cha_mod = (attrs.get("cha", 10) - 10) // 2
+    bonus = DND4_DEFENSE_BONUS.get(char_class, {"fort": 0, "ref": 0, "will": 0})
+    return {
+        "ac": 10 + half_level + dex_mod + armor_bonus + shield_bonus,
+        "fortitude": 10 + half_level + max(str_mod, con_mod) + bonus.get("fort", 0),
+        "reflex": 10 + half_level + max(dex_mod, int_mod) + bonus.get("ref", 0),
+        "will": 10 + half_level + max(wis_mod, cha_mod) + bonus.get("will", 0),
+    }
+
+
+def get_coc_derived(attributes: dict, luck: int = 50) -> dict:
+    """COC 7e 衍生值固定计算。"""
+    con = int(attributes.get("con", 50) or 50)
+    siz = int(attributes.get("siz", 50) or 50)
+    pow_ = int(attributes.get("pow", 50) or 50)
+    str_ = int(attributes.get("str", 50) or 50)
+    total = str_ + siz
+
+    if total <= 64:
+        damage_bonus, build = "-2", -2
+    elif total <= 84:
+        damage_bonus, build = "-1", -1
+    elif total <= 124:
+        damage_bonus, build = "0", 0
+    elif total <= 164:
+        damage_bonus, build = "+1d4", 1
+    elif total <= 204:
+        damage_bonus, build = "+1d6", 2
+    elif total <= 284:
+        damage_bonus, build = "+2d6", 3
+    else:
+        damage_bonus, build = "+3d6", 4
+
+    return {
+        "hp": max(1, (con + siz) // 2),
+        "mp": pow_,
+        "san": pow_ * 5,
+        "luck": max(1, min(99, luck)),
+        "damage_bonus": damage_bonus,
+        "build": build,
     }
 
 
@@ -190,11 +324,20 @@ def build_system_rule_block(system_id: str, custom_rules: str = "") -> str:
     对 dnd5e 不需要覆盖，因为主 SYSTEM_PROMPT 已经是完整 5e 规则；
     对其他系统提供精简但可执行的规则覆盖。
     """
+    general_numeric_rule = """
+===============================================================================
+数值权威规则（所有规则系统通用，不可违反）
+===============================================================================
+- HP/MP/SAN/AC/防御/回复力/熟练加值/法术位等数值一律以角色信息中的程序计算结果为准。
+- 技能检定、攻击、伤害、死亡豁免等判定结果必须通过 dice_roll / combat_round / death_saving_throw 工具计算并返回。
+- 你不得在叙事中自行编造最终数值；工具返回的数值才是权威。
+- 需要修改 HP/金币/物品/理智等状态时，必须调用 update_state，由程序计算并更新。
+"""
     if system_id == "dnd5e":
-        return "本局使用 D&D 5e 规则。请严格遵循上方 SYSTEM_PROMPT 中的全部 5e 规则。"
+        return general_numeric_rule + "本局使用 D&D 5e 规则。请严格遵循上方 SYSTEM_PROMPT 中的全部 5e 规则。"
 
     if system_id == "dnd4e":
-        return """
+        return general_numeric_rule + """
 ===============================================================================
 本局规则：D&D 4e（覆盖上方所有与 4e 冲突的规则）
 ===============================================================================
@@ -209,7 +352,7 @@ def build_system_rule_block(system_id: str, custom_rules: str = "") -> str:
 """
 
     if system_id == "coc":
-        return """
+        return general_numeric_rule + """
 ===============================================================================
 本局规则：克苏鲁的呼唤 7e（覆盖上方所有与 COC 冲突的规则）
 ===============================================================================
@@ -225,14 +368,14 @@ def build_system_rule_block(system_id: str, custom_rules: str = "") -> str:
 
     # custom / other
     if custom_rules and custom_rules.strip():
-        return f"""
+        return general_numeric_rule + f"""
 ===============================================================================
 本局规则：自定义 / 其他（玩家提供规则，覆盖上方所有冲突规则）
 ===============================================================================
 { custom_rules.strip()[:3000] }
 """
 
-    return """
+    return general_numeric_rule + """
 ===============================================================================
 本局规则：自定义 / 其他（未提供详细规则）
 ===============================================================================
