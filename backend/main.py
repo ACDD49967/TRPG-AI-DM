@@ -196,8 +196,8 @@ async def generate_world_stream(request: WorldGenRequest):
     async def event_stream():
         queue: asyncio.Queue = asyncio.Queue()
 
-        def progress(label: str, percent: int):
-            queue.put_nowait({"type": "progress", "label": label, "percent": percent})
+        def progress(label: str, percent: int, detail: str = ""):
+            queue.put_nowait({"type": "progress", "label": label, "percent": percent, "detail": detail})
 
         async def run():
             try:

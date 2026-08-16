@@ -150,6 +150,7 @@ export default function StartScreen(){
   const [worldGenBusy,setWorldGenBusy]=useState(false);
   const [worldGenErr,setWorldGenErr]=useState('');
   const [worldGenStage,setWorldGenStage]=useState(-1);
+  const [worldGenDetail,setWorldGenDetail]=useState('');
   const [savedScenarios,setSavedScenarios]=useState<Array<{id:string;title:string;description:string;summary?:string;system?:string;tone:string;score:number;total_sessions:number;character_name?:string;race?:string;char_class?:string}>>([]);
   const [selectedScenario,setSelectedScenario]=useState('');
   const [showScenarioList,setShowScenarioList]=useState(false);
@@ -320,6 +321,7 @@ export default function StartScreen(){
             if(data.type==='progress'){
               const idx=Math.min(WORLD_STAGES.length-1, Math.floor((data.percent/100)*WORLD_STAGES.length));
               setWorldGenStage(idx);
+              setWorldGenDetail(data.detail||data.label||'');
             }else if(data.type==='complete'){
               setWorldOutline(data.content);setWorldScore(data.score);
               if(data.scenario_id){setScenarioId(data.scenario_id);setSelectedScenario(data.scenario_id);setShowScenarioList(false);}
@@ -328,6 +330,7 @@ export default function StartScreen(){
               if(data.system)setScenarioSystem(data.system as GameSystem);
               if(data.source_chunks)setSourceChunks(data.source_chunks);
               setWorldGenStage(WORLD_STAGES.length-1);
+              setWorldGenDetail('');
             }else if(data.type==='error'){
               throw new Error(data.msg||'生成失败');
             }
@@ -1133,6 +1136,7 @@ export default function StartScreen(){
                 <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 space-y-2">
                   <div className="flex items-center gap-2 text-sm font-medium text-gray-700"><span className="animate-pulse">●</span>铸造世界中</div>
                   <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-1000" style={{width:`${((worldGenStage+1)/WORLD_STAGES.length)*100}%`}}/></div>
+                  {worldGenDetail&&<p className="text-xs text-indigo-600 animate-pulse">{worldGenDetail}</p>}
                   <div className="space-y-0.5">
                     {WORLD_STAGES.map((st,i)=>(<div key={st.key} className={`flex items-center gap-2 text-xs ${i<worldGenStage?'text-emerald-600':i===worldGenStage?'text-indigo-600 font-medium':'text-gray-400'}`}><span>{i<worldGenStage?'✓':i===worldGenStage?'◉':'○'}</span><span>{st.label}</span>{i===worldGenStage&&<span className="text-gray-400 font-normal">— {st.desc}</span>}</div>))}
                   </div>

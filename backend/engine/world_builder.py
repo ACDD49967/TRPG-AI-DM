@@ -308,7 +308,7 @@ async def build_world(
 
     # ── Step 1: 世界观与冲突核心 ──
     print("[WorldBuilder] Step 1/6: 世界观与冲突核心...")
-    if progress_callback: progress_callback("构建世界观与冲突核心", 10)
+    if progress_callback: progress_callback("构建世界观与冲突核心", 10, "正在生成世界观、冲突与阵营...")
     step1 = await _llm(client, model,
         "你是一位获奖奇幻小说家。创作深刻、独特的世界观。",
         _with_knowledge(STEP1_CONFLICT.format(player_input=pi, reference=ref), "世界观 冲突 势力 阵营 魔法 社会", game_system),
@@ -318,7 +318,7 @@ async def build_world(
 
     # ── Step 2: 主线三幕结构 ──
     print("[WorldBuilder] Step 2/6: 主线三幕结构...")
-    if progress_callback: progress_callback("编织主线三幕结构", 25)
+    if progress_callback: progress_callback("编织主线三幕结构", 25, "正在设计三幕剧情、转折与结局...")
     step2 = await _llm(client, model,
         "你是一位D&D冒险设计师。设计引人入胜的三幕结构。",
         _with_knowledge(STEP2_PLOT.format(world_context=step1), "三幕结构 剧情节点 转折 结局", game_system),
@@ -328,7 +328,7 @@ async def build_world(
 
     # ── Step 3: NPC网络与支线 ──
     print("[WorldBuilder] Step 3/6: NPC网络与支线...")
-    if progress_callback: progress_callback("塑造NPC与支线网络", 40)
+    if progress_callback: progress_callback("塑造NPC与支线网络", 40, "正在塑造NPC、势力与支线任务...")
     step3 = await _llm(client, model,
         "你是一位角色设计大师。创造有深度的NPC网络。",
         _with_knowledge(STEP3_NPC.format(world_context=step1, plot_context=step2), "NPC 反派 动机 支线 关系", game_system),
@@ -338,7 +338,7 @@ async def build_world(
 
     # ── Step 4: 遭遇表 ──
     print("[WorldBuilder] Step 4/6: 遭遇表与隐藏内容...")
-    if progress_callback: progress_callback("布置遭遇与隐藏内容", 55)
+    if progress_callback: progress_callback("布置遭遇与隐藏内容", 55, "正在设计遭遇、陷阱、宝物与秘密...")
     step4 = await _llm(client, model,
         "你是一位D&D遭遇设计师。设计挑战与秘密。",
         _with_knowledge(STEP4_ENCOUNTERS.format(world_context=step1, plot_context=step2, npc_context=step3), "遭遇 战斗 陷阱 魔法物品 秘密", game_system),
@@ -349,11 +349,11 @@ async def build_world(
     # ── Step 5: 合并+评分 ──
     history = []
     print("[WorldBuilder] Step 5/6: 合并+自评...")
-    if progress_callback: progress_callback("合并大纲并自评", 70)
+    if progress_callback: progress_callback("合并大纲并自评", 70, "评委正在审阅四个部分并合并...")
     merge_result = await _llm(client, model,
         "你是一位D&D模组主编。诚实评分，合理打分，不要过分苛刻。",
         MERGE_PROMPT.format(step1=step1, step2=step2, step3=step3, step4=step4),
-        max_tokens=6000, temp=0.4, timeout=120)
+        max_tokens=5000, temp=0.4, timeout=90)
 
     try:
         scored = _extract_json(merge_result)
@@ -375,6 +375,7 @@ async def build_world(
             break
 
         print(f"[WorldBuilder] 修订 {rev}/{max_revisions+1} (当前评分:{score})...")
+        if progress_callback: progress_callback("评委正在修订问题", 78, "AI 正在根据建议修订大纲...")
         rev_result = await _llm(client, model,
             "你是一位严谨的D&D模组编辑。按照建议修改，提高质量。",
             REVISE_PROMPT.format(
@@ -395,6 +396,7 @@ async def build_world(
             outline = new_outline
 
         # 自评新版本——不要太严格，合理评价
+        if progress_callback: progress_callback("评委正在复评", 82, "AI 正在对新版大纲进行复评...")
         rescore = await _llm(client, model,
             "你是一位公平的D&D模组评委。诚实评价，不过分苛刻也不故意放水。",
             f"新大纲:\n{outline[:4000]}\n\n请输出JSON: {{\"total_score\":数字(0-100)}}",
@@ -425,7 +427,7 @@ async def build_world(
     # ── Step 6: 提取结构化世界状态 ──
     outline = _dedupe_headings(outline)
     print("[WorldBuilder] Step 6/6: 提取结构化世界状态...")
-    if progress_callback: progress_callback("提取世界状态与NPC", 85)
+    if progress_callback: progress_callback("提取世界状态与NPC", 85, "正在提取NPC、旗标、地点与世界规则...")
     ws = WorldState(world_outline=outline)
     try:
         extract_result = await _llm(client, model,
@@ -459,5 +461,5 @@ async def build_world(
     prog_score = _programmatic_score(outline, ws)
     final_score = round((score + prog_score) / 2)
     history.append({"iteration": "final", "score": final_score, "programmatic": prog_score})
-    if progress_callback: progress_callback("生成完成", 100)
+    if progress_callback: progress_callback("生成完成", 100, "世界生成完成")
     return outline, final_score, history, ws
