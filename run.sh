@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# AI Dungeon Master - one-click launcher for bash / Git Bash / WSL
+# TRPG AI 跑团主持 - one-click launcher for bash / Git Bash / WSL
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "============================================================"
-echo "  AI Dungeon Master - DnD Tabletop RPG Launcher"
+echo "  TRPG AI 跑团主持 - 一键启动器"
 echo "============================================================"
 echo ""
 

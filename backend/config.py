@@ -7,7 +7,7 @@ load_dotenv()
 
 
 class Settings:
-    """AI地下城主应用的全局配置。"""
+    """TRPG AI 跑团主持应用的全局配置。"""
 
     # ── LLM 配置（默认 OpenAI 兼容格式，不预设具体模型）──
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")

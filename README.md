@@ -1,6 +1,6 @@
-# 🐉 AI Dungeon Master — 单人 D&D 跑团桌游
+# 🐉 TRPG AI 跑团主持 — 单人跑团
 
-由大语言模型驱动的 D&D 5e 地下城主。创建角色、生成世界、掷骰战斗——AI 扮演 DM，你扮演冒险者。
+由大语言模型驱动的 TRPG 跑团主持。创建角色、生成世界、掷骰战斗——AI 扮演主持人，你扮演冒险者/调查员。
 
 ## ✨ 核心特性
 
@@ -91,7 +91,7 @@ bash run.sh
 - **D&D 5e**：d20 检定、优势/劣势、法术位、死亡豁免。
 - **D&D 4e**：d20 对防御、HP/回复力、威能系统、四类防御。
 - **COC 7e**：d100 百分比检定、理智（SAN）、魔法（MP）、幸运、调查员职业。
-- **自定义 / 其他**：上传自定义剧本并填写自定义规则文本，AI DM 按你的规则主持。
+- **自定义 / 其他**：上传自定义剧本并填写自定义规则文本，AI 主持人按你的规则主持。
 
 在「剧本」步骤可选择生成时使用的规则系统；导入剧本文件时如果不指定，后端会通过固定关键词自动识别剧本类型（无需额外 token）。
 
@@ -133,7 +133,7 @@ dndgame/
 │   ├── scenario_store.py   # 剧本存储
 │   ├── scenario_importer.py# 剧本导入：PDF/DOCX/TXT 解析、切分、总结
 │   └── engine/
-│       ├── dm_agent.py     # AI 地下城主核心
+│       ├── dm_agent.py     # AI 跑团主持核心
 │       ├── game_systems.py # D&D5e/D&D4e/COC/自定义规则配置与识别
 │       ├── rules.py        # D&D 5e 规则引擎
 │       ├── tools.py        # AI 工具定义
@@ -191,4 +191,4 @@ pip install -r backend/requirements.txt -i https://mirrors.aliyun.com/pypi/simpl
 ```
 
 **Q: 如何把项目发给朋友？**
-A: 运行 `package.bat`（或 `bash package.sh`），将 `dist/AI-Dungeon-Master.zip` 发给对方。他们解压后只需运行 `setup.bat` + 配置 `.env` + `run.bat`。
+A: 直接压缩项目目录（排除 `.env`、`data/`、`media/`、`saves/`、`extensions/`、`knowledge_base/*.json`、`*.db` 等本地数据），对方解压后运行 `setup.bat` + 配置 `.env` + `run.bat`。

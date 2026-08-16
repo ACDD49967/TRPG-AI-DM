@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI Dungeon Master — One-Click Setup (Linux/macOS/Git Bash/WSL)
+# TRPG AI 跑团主持 — One-Click Setup (Linux/macOS/Git Bash/WSL)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -7,7 +7,7 @@ cd "$SCRIPT_DIR"
 
 echo ""
 echo "============================================================"
-echo "  AI Dungeon Master - One-Click Setup"
+echo "  TRPG AI 跑团主持 - 一键初始化"
 echo "============================================================"
 echo ""
 

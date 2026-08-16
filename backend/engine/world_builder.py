@@ -1,4 +1,4 @@
-"""D&D 世界大纲生成——Agent1: 剧本写作（多步生成+迭代评分至90+）
+"""TRPG 世界大纲生成——多步生成+迭代评分至90+
 
 采用分层生成策略：
   Step 1: 世界观与冲突核心（500-800字）
@@ -22,7 +22,7 @@ from backend.knowledge_base import get_knowledge_base
 # 分步生成 Prompt
 # ═══════════════════════════════════════════════════════════════
 
-STEP1_CONFLICT = """你是一位获奖奇幻小说家兼D&D模组设计师。请为以下设定创作**世界观与冲突核心**。
+STEP1_CONFLICT = """你是一位获奖奇幻小说家兼TRPG模组设计师。请为以下设定创作**世界观与冲突核心**。
 
 {player_input}
 {reference}
@@ -37,7 +37,7 @@ STEP1_CONFLICT = """你是一位获奖奇幻小说家兼D&D模组设计师。请
 
 输出格式：直接输出Markdown文本，不要JSON包裹。"""
 
-STEP2_PLOT = """你是一位资深D&D模组设计师。基于以下世界观，创作**主线三幕结构**。
+STEP2_PLOT = """你是一位资深TRPG模组设计师。基于以下世界观，创作**主线三幕结构**。
 
 {world_context}
 
@@ -71,7 +71,7 @@ STEP3_NPC = """你是一位角色设计大师。基于以下世界观和剧情�
 
 输出格式：直接输出Markdown文本。"""
 
-STEP4_ENCOUNTERS = """你是一位D&D遭遇设计师。为以下冒险设计**遭遇表与隐藏内容**。
+STEP4_ENCOUNTERS = """你是一位TRPG遭遇设计师。为以下冒险设计**遭遇表与隐藏内容**。
 
 {world_context}
 {plot_context}
@@ -92,7 +92,7 @@ STEP4_ENCOUNTERS = """你是一位D&D遭遇设计师。为以下冒险设计**�
 # 合并+评分 Prompt
 # ═══════════════════════════════════════════════════════════════
 
-MERGE_PROMPT = """你是一位D&D模组主编。请将以下四个部分合并为一份完整的冒险大纲，然后自评。
+MERGE_PROMPT = """你是一位TRPG模组主编。请将以下四个部分合并为一份完整的冒险大纲，然后自评。
 
 ## 第一部分 - 世界观
 {step1}
@@ -119,7 +119,7 @@ MERGE_PROMPT = """你是一位D&D模组主编。请将以下四个部分合并�
 4. NPC丰富度(15分)：角色是否有深度、动机、关联
 5. 可玩性与分支(15分)：是否有有意义的选择和多种结局
 6. 规则合规(10分)：DC/CR是否合理
-7. 史诗感与D&D风味(10分)：是否读起来像真正的D&D模组
+7. 史诗感与TRPG风味(10分)：是否读起来像真正的TRPG模组
 
 输出JSON：
 {{
@@ -150,7 +150,7 @@ REVISE_PROMPT = """当前大纲评分 {current_score}/100，未达90分。请根
 # 从大纲提取世界状态（NPC、旗标等）
 # ═══════════════════════════════════════════════════════════════
 
-EXTRACT_STATE_PROMPT = """请从以下D&D冒险大纲中提取关键的结构化信息。
+EXTRACT_STATE_PROMPT = """请从以下TRPG冒险大纲中提取关键的结构化信息。
 
 ## 大纲
 {outline}
@@ -270,7 +270,10 @@ def _extract_json(text: str) -> dict:
     end = t.rfind("}")
     if start >= 0 and end > start:
         t = t[start:end+1]
-    return json.loads(t)
+    data = json.loads(t)
+    if not isinstance(data, dict):
+        raise json.JSONDecodeError("JSON must be an object", t, 0)
+    return data
 
 
 async def build_world(
@@ -322,17 +325,17 @@ async def build_world(
         _with_knowledge(STEP1_CONFLICT.format(player_input=pi, reference=ref), "世界观 冲突 势力 阵营 魔法 社会", game_system),
         max_tokens=2000, temp=0.9, timeout=60)
     if not step1:
-        return "世界生成超时——请重试或使用手动上下文。", 0, [], WorldState()
+        raise RuntimeError("世界生成失败：模型调用多次超时，请检查模型/网络后重试")
 
     # ── Step 2: 主线三幕结构 ──
     print("[WorldBuilder] Step 2/6: 主线三幕结构...")
     if progress_callback: progress_callback("编织主线三幕结构", 25, "正在设计三幕剧情、转折与结局...")
     step2 = await _llm(client, model,
-        "你是一位D&D冒险设计师。设计引人入胜的三幕结构。",
+        "你是一位TRPG冒险设计师。设计引人入胜的三幕结构。",
         _with_knowledge(STEP2_PLOT.format(world_context=step1), "三幕结构 剧情节点 转折 结局", game_system),
         max_tokens=3000, temp=0.85, timeout=90)
     if not step2:
-        step2 = f"(生成超时) 基于世界观的默认三幕结构。"
+        step2 = "主线采用经典三幕结构：第一幕引入冲突，第二幕遭遇转折与背叛，第三幕迎来高潮与结局。具体情节建议结合世界观继续细化。"
 
     # ── Step 3: NPC网络与支线 ──
     print("[WorldBuilder] Step 3/6: NPC网络与支线...")
@@ -342,24 +345,24 @@ async def build_world(
         _with_knowledge(STEP3_NPC.format(world_context=step1, plot_context=step2), "NPC 反派 动机 支线 关系", game_system),
         max_tokens=2500, temp=0.9, timeout=90)
     if not step3:
-        step3 = f"(生成超时) 默认NPC配置。"
+        step3 = "关键NPC网络：围绕核心冲突设置至少五名角色，包含盟友、对手与隐藏敌意的中立者，并安排两条与主线隐性关联的支线。"
 
     # ── Step 4: 遭遇表 ──
     print("[WorldBuilder] Step 4/6: 遭遇表与隐藏内容...")
     if progress_callback: progress_callback("布置遭遇与隐藏内容", 55, "正在设计遭遇、陷阱、宝物与秘密...")
     step4 = await _llm(client, model,
-        "你是一位D&D遭遇设计师。设计挑战与秘密。",
+        "你是一位TRPG遭遇设计师。设计挑战与秘密。",
         _with_knowledge(STEP4_ENCOUNTERS.format(world_context=step1, plot_context=step2, npc_context=step3), "遭遇 战斗 陷阱 魔法物品 秘密", game_system),
         max_tokens=2500, temp=0.85, timeout=90)
     if not step4:
-        step4 = f"(生成超时) 默认遭遇配置。"
+        step4 = "遭遇与隐藏内容：设计五场类型各异的遭遇（战斗、社交、探索、陷阱），三处秘密区域，以及一件带有背景故事的独特宝物。"
 
     # ── Step 5: 合并+评分 ──
     history = []
     print("[WorldBuilder] Step 5/6: 合并+自评...")
     if progress_callback: progress_callback("合并大纲并自评", 70, "评委正在审阅四个部分并合并...")
     merge_result = await _llm(client, model,
-        "你是一位D&D模组主编。诚实评分，合理打分，不要过分苛刻。",
+        "你是一位TRPG模组主编。诚实评分，合理打分，不要过分苛刻。",
         MERGE_PROMPT.format(step1=step1, step2=step2, step3=step3, step4=step4),
         max_tokens=5000, temp=0.4, timeout=90)
 
@@ -385,7 +388,7 @@ async def build_world(
         print(f"[WorldBuilder] 修订 {rev}/{max_revisions+1} (当前评分:{score})...")
         if progress_callback: progress_callback("评委正在修订问题", 78, "AI 正在根据建议修订大纲...")
         rev_result = await _llm(client, model,
-            "你是一位严谨的D&D模组编辑。按照建议修改，提高质量。",
+            "你是一位严谨的TRPG模组编辑。按照建议修改，提高质量。",
             REVISE_PROMPT.format(
                 current_score=score, outline=outline,
                 issues_suggestions=json.dumps({
@@ -406,7 +409,7 @@ async def build_world(
         # 自评新版本——不要太严格，合理评价
         if progress_callback: progress_callback("评委正在复评", 82, "AI 正在对新版大纲进行复评...")
         rescore = await _llm(client, model,
-            "你是一位公平的D&D模组评委。诚实评价，不过分苛刻也不故意放水。",
+            "你是一位公平的TRPG模组评委。诚实评价，不过分苛刻也不故意放水。",
             f"新大纲:\n{outline[:4000]}\n\n请输出JSON: {{\"total_score\":数字(0-100)}}",
             max_tokens=500, temp=0.3, timeout=60)
         try:

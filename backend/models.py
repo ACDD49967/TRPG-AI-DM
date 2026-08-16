@@ -1,4 +1,4 @@
-"""AI地下城主的 SQLAlchemy ORM 数据模型。"""
+"""TRPG AI 跑团主持的 SQLAlchemy ORM 数据模型。"""
 
 import uuid
 from datetime import datetime
@@ -28,7 +28,7 @@ class User(Base):
 
 
 class Character(Base):
-    """角色表——D&D 角色数据（属性、背包、状态等）。"""
+    """角色表——TRPG 角色数据（属性、背包、状态等）。"""
     __tablename__ = "characters"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_gen_id)

@@ -272,7 +272,7 @@ def split_text(text: str, mode: str = "naive", chunk_size: int = 900) -> list[st
 # LLM 剧本总结
 # ═══════════════════════════════════════════════════════════════
 
-SUMMARY_PROMPT = """你是一位D&D模组编辑。请为以下冒险剧本写一份**约400字（允许350-450字）的剧本总结**。
+SUMMARY_PROMPT = """你是一位TRPG模组编辑。请为以下冒险剧本写一份**约400字（允许350-450字）的剧本总结**。
 
 总结要求：
 1. 概括世界观、核心冲突、主线三幕、关键NPC、主要地点与独特规则
@@ -289,25 +289,41 @@ SUMMARY_PROMPT = """你是一位D&D模组编辑。请为以下冒险剧本写一
 
 
 def _fallback_summary(outline: str, max_chars: int = 450) -> str:
-    """从大纲中提取结构化摘要：每个章节取标题+首句，避免直接截断。"""
-    lines = outline.split("\n")
-    parts: list[str] = []
-    current_heading = ""
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("#"):
-            current_heading = stripped.lstrip("#").strip()
-            if current_heading:
-                parts.append(current_heading)
-            continue
-        # 非标题行：若还没有该节内容，取第一句作为该节摘要
-        if current_heading and (not parts or parts[-1] != current_heading):
-            sentence = re.split(r"(?<=[。！？!?；;])", stripped)[0][:80]
-            parts.append(sentence)
-            current_heading = ""
-    fallback = "；".join(parts) if parts else outline.strip().replace("#", "").replace("*", "")
+    """从大纲中提取结构化摘要：每个章节取标题+首句；无标题时取每段首句，避免直接截断。"""
+    if re.search(r"^#+\s", outline, re.M):
+        lines = outline.split("\n")
+        parts: list[str] = []
+        current_heading = ""
+        seen_heading_content = False
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                current_heading = stripped.lstrip("#").strip()
+                if current_heading and (not parts or parts[-1] != current_heading):
+                    parts.append(current_heading)
+                seen_heading_content = False
+                continue
+            if current_heading and not seen_heading_content:
+                sentence = re.split(r"(?<=[。！？!?；;])", stripped)[0][:100].strip()
+                if sentence:
+                    parts.append(sentence)
+                    seen_heading_content = True
+            if len("；".join(parts)) >= max_chars:
+                break
+        fallback = "；".join(parts)
+    else:
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", outline) if p.strip()]
+        parts = []
+        for para in paragraphs:
+            sentence = re.split(r"(?<=[。！？!?；;])", para)[0][:100].strip()
+            if sentence:
+                parts.append(sentence)
+            if len("；".join(parts)) >= max_chars:
+                break
+        fallback = "；".join(parts)
+    fallback = fallback or outline.strip().replace("#", "").replace("*", "")
     fallback = re.sub(r"\s+", " ", fallback).strip()
     return fallback[:max_chars] or "（暂无剧本总结）"
 
@@ -328,7 +344,7 @@ async def generate_summary(
                 client.chat.completions.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": "你是一位严谨的D&D模组编辑，擅长写出高信息密度的中文剧本总结。"},
+                        {"role": "system", "content": "你是一位严谨的TRPG模组编辑，擅长写出高信息密度的中文剧本总结。"},
                         {"role": "user", "content": SUMMARY_PROMPT.format(
                             outline=outline[:8000],
                             source=source_text[:4000],

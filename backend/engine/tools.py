@@ -1,4 +1,4 @@
-"""AI地下城主工具集——10个工具，OpenAI/DeepSeek function-calling格式。"""
+"""AI 跑团主持工具集——OpenAI/DeepSeek function-calling 格式。"""
 
 def _tool(name, desc, props, required=None):
     return {

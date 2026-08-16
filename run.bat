@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo ============================================================
-echo   AI Dungeon Master - DnD Tabletop RPG Launcher
+echo   TRPG AI 跑团主持 - 一键启动器
 echo ============================================================
 echo.
 

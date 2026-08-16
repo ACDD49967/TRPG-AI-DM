@@ -1,4 +1,4 @@
-"""AI地下城主——D&D 5e 生动戏剧风 + 反八股正则 + 特长 + 持久化"""
+"""AI 跑团主持核心——D&D 5e 生动戏剧风 + 反八股正则 + 特长 + 持久化"""
 
 import json, random, re
 from typing import Any
@@ -653,13 +653,18 @@ def build_character_info(state: GameSessionState) -> str:
         if '矮人' in race_name and '山地' in race_name: ac += 1
         ac = max(8, min(22, ac))
 
+    system = info.get("game_system", "dnd5e")
+    ac_line = f" | AC: {ac}" if system != "coc" else ""
+    if system == "coc":
+        identity_line = f"性别: {gender} | 身份: {char_class}（调查员）"
+    else:
+        identity_line = f"性别: {gender} | 种族: {info.get('race','人类')} | 职业: {char_class} | 等级: {info.get('level',1)}"
     lines = [
         f"姓名: {state.character_name}",
-        f"性别: {gender} | 种族: {info.get('race','人类')} | 职业: {char_class} | 等级: {info.get('level',1)}",
-        f"HP: {info.get('hp',30)}/{info.get('max_hp',30)} | AC: {ac} | 金币: {info.get('gold',10)}",
+        identity_line,
+        f"HP: {info.get('hp',30)}/{info.get('max_hp',30)}{ac_line} | 金币: {info.get('gold',10)}",
     ]
 
-    system = info.get("game_system", "dnd5e")
     if system == "dnd5e":
         lines.append(f"熟练加值: {info.get('proficiency_bonus', 2)} | 法术位: {info.get('spell_slots', [])}")
     elif system == "dnd4e":
@@ -670,7 +675,10 @@ def build_character_info(state: GameSessionState) -> str:
 
     if attrs:
         names = {"str":"力","dex":"敏","con":"体","int":"智","wis":"感","cha":"魅"}
-        parts = [f"{names.get(k,k)}:{v}({(v-10)//2:+d})" for k, v in attrs.items()]
+        if system == "coc":
+            parts = [f"{names.get(k,k)}:{v}" for k, v in attrs.items()]
+        else:
+            parts = [f"{names.get(k,k)}:{v}({(v-10)//2:+d})" for k, v in attrs.items()]
         lines.append("属性: " + " | ".join(parts))
 
     if skills:
@@ -1330,10 +1338,21 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
             atc = [{"id":t["id"],"type":"function","function":t["function"]} for t in tcs]
             if atc: asst["tool_calls"] = atc
             messages.append(asst)
+            invalid_tool = False
             for t in tcs:
-                args = json.loads(t["function"]["arguments"])
+                try:
+                    args = json.loads(t["function"]["arguments"])
+                except json.JSONDecodeError:
+                    await push_event(state, "error", {
+                        "code": "TOOL_ARGS_INVALID",
+                        "msg": f"工具 {t['function'].get('name','')} 参数解析失败，已中断本轮",
+                    })
+                    invalid_tool = True
+                    break
                 result = await execute_tool(t["function"]["name"], args, state)
                 messages.append({"role":"tool","tool_call_id":t["id"],"content":result})
+            if invalid_tool:
+                break
 
             # P0-1: 每次工具调用后强制场景校验——防止场景漂移
             ws = getattr(state, 'world_state', None)

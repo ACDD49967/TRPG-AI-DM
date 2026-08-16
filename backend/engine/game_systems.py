@@ -263,9 +263,10 @@ def get_coc_derived(attributes: dict, luck: int = 50) -> dict:
         damage_bonus, build = "+3d6", 4
 
     return {
-        "hp": max(1, (con + siz) // 2),
-        "mp": pow_,
-        "san": pow_ * 5,
+        # COC 7e 官方公式：属性已是百分制（3D6×5 / (2D6+6)×5）
+        "hp": max(1, (con + siz) // 10),
+        "mp": max(1, pow_ // 5),
+        "san": max(0, min(99, pow_)),
         "luck": max(1, min(99, luck)),
         "damage_bonus": damage_bonus,
         "build": build,
@@ -366,9 +367,9 @@ def build_stat_glossary(system_id: str) -> str:
     if system_id == "coc":
         return """数值含义速查（COC 7e）：
 - 属性为 1-99 百分比：50 为普通人水平，越高越好。
-- HP=(CON+SIZ)//2；归 0 时重伤昏迷，可能死亡。
-- MP=意志(POW)；施法消耗魔法值。
-- SAN=意志(POW)×5；遭遇神话损失理智，归 0 永久疯狂。
+- HP=(CON+SIZ)//10；归 0 时重伤昏迷，可能死亡。
+- MP=意志(POW)//5；施法消耗魔法值。
+- SAN=意志(POW)；遭遇神话损失理智，归 0 永久疯狂。
 - LUCK=幸运值；可用于重掷或改变处境，由守密人酌情消耗。
 - 技能检定：d100 ≤ 技能值=成功；≤技能值/2=困难成功；≤技能值/5=极限成功。"""
     return """数值含义速查（自定义）：
@@ -417,7 +418,7 @@ def build_system_rule_block(system_id: str, custom_rules: str = "") -> str:
 ===============================================================================
 1. 角色是普通调查员，不是英雄。战斗致命、调查优先。
 2. 属性：力量(STR)、体质(CON)、敏捷(DEX)、智力(INT)、意志(POW)、魅力(CHA)、体型(SIZ)、教育(EDU)。基础值通常为 3d6×5 或 2d6+6×5 等，最终是 1-99 的百分比。
-3. 衍生：HP=(CON+SIZ)//2，MP=POW，SAN=POW×5，幸运(LUCK)初始约 3d6×5。
+3. 衍生：HP=(CON+SIZ)//10，MP=POW//5，SAN=POW，幸运(LUCK)初始约 3d6×5。
 4. 技能检定：d100 百分比，掷骰 ≤ 技能值=成功；≤技能值/2=困难成功；≤技能值/5=极限成功；96-100 且 >技能值=大失败。
 5. 理智(SAN)：遭遇神话时进行 SAN 检定，失败损失理智。SAN 降至 0 永久疯狂。
 6. 战斗：使用格斗/射击等技能百分比进行 d100 攻击检定；伤害骰通常为 1d4/1d6/1d8/2d6 等；护甲很少，闪避也可作为回应。

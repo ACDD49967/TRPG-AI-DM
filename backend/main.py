@@ -57,8 +57,8 @@ async def lifespan(app: FastAPI):
 # ═══════════════════════════════════════════════════════════════
 
 app = FastAPI(
-    title="AI Dungeon Master",
-    description="由大语言模型驱动的单人D&D跑团桌游",
+    title="TRPG AI 跑团主持",
+    description="由大语言模型驱动的单人 TRPG 跑团主持",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -85,7 +85,7 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 
 @app.post("/api/generate/world")
 async def generate_world(request: WorldGenRequest):
-    """多Agent分层生成D&D 5e冒险世界大纲——5步生成+迭代评分至90+。
+    """多Agent分层生成TRPG冒险世界大纲——5步生成+迭代评分至90+。
 
     返回大纲文本、评分、评分历史、以及结构化的世界状态（NPC/旗标/地点）。
     """
@@ -98,20 +98,23 @@ async def generate_world(request: WorldGenRequest):
     if not (request.model_name or settings.LLM_MODEL_NAME):
         raise HTTPException(status_code=400, detail="请先选择或填写模型名称")
 
-    outline_text, score, history, world_state = await build_world(
-        player_input=player_input,
-        reference_script=request.description,  # 玩家描述即为参考剧本
-        api_key=request.api_key,
-        model_name=request.model_name,
-        base_url=request.base_url,
-        game_system=request.game_system,
-        custom_rules=request.custom_rules or "",
-        custom_classes=request.custom_classes,
-        custom_skills=request.custom_skills,
-        extra_attributes=request.extra_attributes,
-        target_score=75,
-        max_revisions=1,
-    )
+    try:
+        outline_text, score, history, world_state = await build_world(
+            player_input=player_input,
+            reference_script=request.description,  # 玩家描述即为参考剧本
+            api_key=request.api_key,
+            model_name=request.model_name,
+            base_url=request.base_url,
+            game_system=request.game_system,
+            custom_rules=request.custom_rules or "",
+            custom_classes=request.custom_classes,
+            custom_skills=request.custom_skills,
+            extra_attributes=request.extra_attributes,
+            target_score=75,
+            max_revisions=1,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"世界生成失败: {e}") from e
 
     # 提取 NPC 和旗标摘要
     npc_summary = [{"name": n.name, "role": n.role, "attitude": n.attitude}
@@ -230,62 +233,66 @@ async def generate_world_stream(request: WorldGenRequest):
                 yield f"data: {json.dumps({'type':'error','msg':item['msg']}, ensure_ascii=False)}\n\n"
                 break
             # complete
-            outline_text, score, history, world_state = item["data"]
-            npc_summary = [{"name": n.name, "role": n.role, "attitude": n.attitude} for n in world_state.npcs]
-            flag_summary = [{"key": f.key, "status": f.status} for f in world_state.plot_flags]
-            ws_json = json.dumps({
-                "world_outline": outline_text,
-                "npcs": [{"name": n.name, "race": n.race, "role": n.role, "location": n.location,
-                          "attitude": n.attitude, "alive": n.alive, "personality": n.personality,
-                          "motivation": n.motivation, "secret": n.secret,
-                          "relation_to_plot": n.relation_to_plot, "visibility": n.visibility.to_dict()}
-                         for n in world_state.npcs],
-                "plot_flags": [{"key": f.key, "status": f.status, "description": f.description} for f in world_state.plot_flags],
-                "locations": [{"name": l.name, "description": l.description, "secrets": l.secrets} for l in world_state.locations],
-                "world_rules": world_state.world_rules,
-            }, ensure_ascii=False)
-            from backend.scenario_importer import generate_summary
-            from backend.scenario_store import create_scenario
-            summary_client = AsyncOpenAI(api_key=request.api_key or settings.LLM_API_KEY, base_url=request.base_url or settings.LLM_BASE_URL)
-            summary_model = request.model_name or settings.LLM_MODEL_NAME
-            summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
-            saved = create_scenario(
-                world_outline=outline_text, world_state_json=ws_json,
-                reference_script=request.description, custom_rules=request.custom_rules or "",
-                custom_classes=request.custom_classes, custom_skills=request.custom_skills,
-                extra_attributes=request.extra_attributes, notes="",
-                title=outline_text.split("\n")[0].replace("#", "").strip()[:60],
-                description=request.description[:200], summary=summary,
-                system=request.game_system, tone=request.tone,
-                character_name=request.character_name, race=request.race,
-                char_class=request.char_class, level=request.character_level,
-                score=score,
-            )
-            result = {
-                "type": "complete",
-                "scenario_id": saved.id,
-                "content": outline_text,
-                "summary": summary,
-                "system": request.game_system,
-                "score": score,
-                "scores_detail": {},
-                "revision_history": history,
-                "npcs": npc_summary,
-                "plot_flags": flag_summary,
-                "world_rules": world_state.world_rules,
-                "world_state_json": json.dumps({
-                    "world_outline": world_state.world_outline,
-                    "world_rules": world_state.world_rules,
+            try:
+                outline_text, score, history, world_state = item["data"]
+                npc_summary = [{"name": n.name, "role": n.role, "attitude": n.attitude} for n in world_state.npcs]
+                flag_summary = [{"key": f.key, "status": f.status} for f in world_state.plot_flags]
+                ws_json = json.dumps({
+                    "world_outline": outline_text,
                     "npcs": [{"name": n.name, "race": n.race, "role": n.role, "location": n.location,
                               "attitude": n.attitude, "alive": n.alive, "personality": n.personality,
                               "motivation": n.motivation, "secret": n.secret,
-                              "relation_to_plot": n.relation_to_plot} for n in world_state.npcs],
+                              "relation_to_plot": n.relation_to_plot, "visibility": n.visibility.to_dict()}
+                             for n in world_state.npcs],
                     "plot_flags": [{"key": f.key, "status": f.status, "description": f.description} for f in world_state.plot_flags],
                     "locations": [{"name": l.name, "description": l.description, "secrets": l.secrets} for l in world_state.locations],
-                }, ensure_ascii=False),
-            }
-            yield f"data: {json.dumps(result, ensure_ascii=False)}\n\n"
-            break
+                    "world_rules": world_state.world_rules,
+                }, ensure_ascii=False)
+                from backend.scenario_importer import generate_summary
+                from backend.scenario_store import create_scenario
+                summary_client = AsyncOpenAI(api_key=request.api_key or settings.LLM_API_KEY, base_url=request.base_url or settings.LLM_BASE_URL)
+                summary_model = request.model_name or settings.LLM_MODEL_NAME
+                summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
+                saved = create_scenario(
+                    world_outline=outline_text, world_state_json=ws_json,
+                    reference_script=request.description, custom_rules=request.custom_rules or "",
+                    custom_classes=request.custom_classes, custom_skills=request.custom_skills,
+                    extra_attributes=request.extra_attributes, notes="",
+                    title=outline_text.split("\n")[0].replace("#", "").strip()[:60],
+                    description=request.description[:200], summary=summary,
+                    system=request.game_system, tone=request.tone,
+                    character_name=request.character_name, race=request.race,
+                    char_class=request.char_class, level=request.character_level,
+                    score=score,
+                )
+                result = {
+                    "type": "complete",
+                    "scenario_id": saved.id,
+                    "content": outline_text,
+                    "summary": summary,
+                    "system": request.game_system,
+                    "score": score,
+                    "scores_detail": {},
+                    "revision_history": history,
+                    "npcs": npc_summary,
+                    "plot_flags": flag_summary,
+                    "world_rules": world_state.world_rules,
+                    "world_state_json": json.dumps({
+                        "world_outline": world_state.world_outline,
+                        "world_rules": world_state.world_rules,
+                        "npcs": [{"name": n.name, "race": n.race, "role": n.role, "location": n.location,
+                                  "attitude": n.attitude, "alive": n.alive, "personality": n.personality,
+                                  "motivation": n.motivation, "secret": n.secret,
+                                  "relation_to_plot": n.relation_to_plot} for n in world_state.npcs],
+                        "plot_flags": [{"key": f.key, "status": f.status, "description": f.description} for f in world_state.plot_flags],
+                        "locations": [{"name": l.name, "description": l.description, "secrets": l.secrets} for l in world_state.locations],
+                    }, ensure_ascii=False),
+                }
+                yield f"data: {json.dumps(result, ensure_ascii=False)}\n\n"
+                break
+            except Exception as e:
+                yield f"data: {json.dumps({'type':'error','msg':f'世界生成完成处理失败: {e}'}, ensure_ascii=False)}\n\n"
+                break
         await task
 
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -475,7 +482,7 @@ async def upload_knowledge(
     source: str = Form("user"),
     tags: str = Form(""),
 ):
-    """上传 PDF/DOCX/TXT/MD 到知识库（用于苹果园/克苏鲁公社等需要手动绕登录墙的资料）。"""
+    """上传 PDF/DOCX/TXT/MD 到知识库（用于用户已合法获取的跑团资料）。"""
     from backend.knowledge_base import get_knowledge_base
     from backend.scenario_importer import extract_text
 
@@ -641,8 +648,15 @@ async def load_save_api(payload: dict):
     save_data = load_save(username, save_id)
     if save_data is None:
         raise HTTPException(status_code=404, detail="存档不存在")
+    saved_model = save_data.get("session", {}).get("model_name") or settings.LLM_MODEL_NAME
+    if not saved_model:
+        raise HTTPException(status_code=400, detail="存档未包含模型配置，请重新开始并选择模型")
     state, session_id = restore_state_from_save(save_data)
     session_manager._sessions[session_id] = state
+    # 载入存档后重新激活扩展包，确保 RAG 知识库中有对应内容
+    if state.character_info.get("extension_ids"):
+        from backend.extension_manager import activate_extensions_into_kb
+        activate_extensions_into_kb(username, state.character_info["extension_ids"])
     return {
         "session_id": session_id,
         "character_id": state.character_id,
@@ -876,6 +890,28 @@ async def generate_character(request: GenerateAttributesRequest):
 
 只返回JSON：
 {{"str": 数字, "dex": 数字, "con": 数字, "int": 数字, "wis": 数字, "cha": 数字, "backstory": "润色后的背景(150-250字)"}}"""
+    elif system == "coc" and has_backstory and has_attrs:
+        # COC 模式：已有背景故事，但属性必须由程序随机生成（不允许 LLM 编造）
+        attrs = request.attributes or {}
+        attr_names = [("str","力量"),("con","体质"),("dex","敏捷"),("int","智力"),("pow","意志"),("cha","魅力"),("siz","体型"),("edu","教育")]
+        attr_line = " | ".join(f"{label}:{attrs.get(key, 50)}" for key, label in attr_names)
+        user_prompt = f"""你是克苏鲁式调查员背景作者。
+
+角色名: {request.character_name}
+{gender_hint}职业/身份: {request.char_class}
+调查员属性: {attr_line}
+已有背景故事（请保留其核心设定，润色扩写为完整人物小传）: {request.backstory}
+{scenario_block}
+
+写一段200-350字的人物小传。要求:
+1. 保留原背景故事中的关键经历与秘密，并补足具体伤疤、坏习惯、不愿提及的往事
+2. 从调查员日常或某个具体时刻切入，不要模板开头
+3. 必须与剧本总结中的世界观自然衔接
+4. 角色性别是{gender_normalized}，使用"{gender_pronoun}"作为人称代词
+5. 分段，2-3个自然段，段间空行
+6. 文风要求：{style_block}
+
+只返回JSON: {{"backstory": "..."}}"""
     elif has_attrs and not has_backstory:
         # 模式2：有属性 → 根据属性+剧本总结生成沉浸式背景
         attrs = request.attributes or {}
@@ -1032,7 +1068,7 @@ async def generate_character(request: GenerateAttributesRequest):
         }
 
 
-# ── 角色名自动生成（基于种族+性别，D&D风格） ──
+# ── 角色名自动生成（基于种族+性别，D&D 风格，仅在 D&D 系使用） ──
 _FIRST_NAMES = {
     "人类": {"男": ["艾伦","雷奥","加雷特","达里安","马库斯","塞德里克"],
              "女": ["艾琳娜","莉亚娜","瑟琳娜","伊莎贝尔","玛格丽特","罗莎琳"],
@@ -1100,6 +1136,9 @@ async def create_new_game(request: NewGameRequest):
     from backend.database import async_session as db_factory
     from sqlalchemy import select
 
+    if not (request.model_name or settings.LLM_MODEL_NAME):
+        raise HTTPException(status_code=400, detail="请先选择或填写模型名称")
+
     async with db_factory() as db:
         # 1. 获取或创建用户（避免重复用户名的唯一约束冲突）
         result = await db.execute(select(User).where(User.username == request.username))
@@ -1111,7 +1150,16 @@ async def create_new_game(request: NewGameRequest):
 
         # 2. 创建角色（使用传入的属性或默认值）
         default_attrs = {"str": 12, "dex": 12, "con": 12, "int": 12, "wis": 12, "cha": 12}
-        attrs = request.attributes if request.attributes else default_attrs
+        attrs = dict(request.attributes) if request.attributes else default_attrs
+        # 数值钳制：D&D 系 3-18，COC 系 1-99，自定义仅保证整数
+        if request.game_system == "coc":
+            coc_keys = {"str", "con", "dex", "int", "pow", "cha", "siz", "edu"}
+            attrs = {k: (max(1, min(99, int(v))) if k in coc_keys else int(v)) for k, v in attrs.items()}
+        elif request.game_system in ("dnd5e", "dnd4e"):
+            dnd_keys = {"str", "dex", "con", "int", "wis", "cha"}
+            attrs = {k: (max(3, min(18, int(v))) if k in dnd_keys else int(v)) for k, v in attrs.items()}
+        else:
+            attrs = {k: int(v) for k, v in attrs.items()}
 
         # 如果角色名为空或为默认值"冒险者"，根据种族+性别自动生成
         char_name = request.character_name

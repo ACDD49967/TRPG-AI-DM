@@ -369,7 +369,7 @@ export default function StartScreen(){
       fd.append('splitter',splitter);
       fd.append('chunk_size',String(chunkSize));
       fd.append('tone',worldTone);
-      fd.append('system',gameSystem);
+      fd.append('system','auto');
       fd.append('custom_rules',customRules||'');
       fd.append('custom_classes',JSON.stringify(customClasses));
       fd.append('custom_skills',JSON.stringify(customSkills));
@@ -906,9 +906,9 @@ export default function StartScreen(){
                     ))}
                   </div>
                   <div className="mt-3 bg-gray-50 rounded-lg p-3 border border-gray-200 grid grid-cols-2 gap-2 text-xs">
-                    <div>HP: <b>{(Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/2))}</b></div>
-                    <div>MP: <b>{cocAttrs.pow||50}</b></div>
-                    <div>SAN: <b>{(cocAttrs.pow||50)*5}</b></div>
+                    <div>HP: <b>{Math.max(1, Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/10))}</b></div>
+                    <div>MP: <b>{Math.max(1, Math.floor((cocAttrs.pow||50)/5))}</b></div>
+                    <div>SAN: <b>{cocAttrs.pow||50}</b></div>
                     <div>幸运: <b>{cocLuck}</b></div>
                   </div>
                   <button onClick={()=>callAI(true)} disabled={aiBusy} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
@@ -1198,9 +1198,9 @@ export default function StartScreen(){
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2">
                       {gameSystem==='coc'?(
                         <>
-                          <span className="text-[10px] text-gray-500">HP <b className="text-gray-800">{Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/2)}</b></span>
-                          <span className="text-[10px] text-gray-500">MP <b className="text-gray-800">{cocAttrs.pow||50}</b></span>
-                          <span className="text-[10px] text-gray-500">SAN <b className="text-gray-800">{(cocAttrs.pow||50)*5}</b></span>
+                          <span className="text-[10px] text-gray-500">HP <b className="text-gray-800">{Math.max(1, Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/10))}</b></span>
+                          <span className="text-[10px] text-gray-500">MP <b className="text-gray-800">{Math.max(1, Math.floor((cocAttrs.pow||50)/5))}</b></span>
+                          <span className="text-[10px] text-gray-500">SAN <b className="text-gray-800">{cocAttrs.pow||50}</b></span>
                           <span className="text-[10px] text-gray-500">幸运 <b className="text-gray-800">{cocLuck}</b></span>
                         </>
                       ):(

@@ -136,9 +136,11 @@ export default function StatusPanel() {
                 <span className="text-gray-500 text-[8px]">{ATTR_ICONS[k]} {label}</span>
                 <span className="text-gray-700 font-mono font-medium text-[9px]">
                   {v}
-                  <span className={m >= 0 ? 'text-emerald-500' : 'text-red-400'}>
-                    ({m >= 0 ? '+' : ''}{m})
-                  </span>
+                  {system !== 'coc' && (
+                    <span className={m >= 0 ? 'text-emerald-500' : 'text-red-400'}>
+                      ({m >= 0 ? '+' : ''}{m})
+                    </span>
+                  )}
                 </span>
               </div>
             );
@@ -151,9 +153,9 @@ export default function StatusPanel() {
         <summary className="text-gray-400 cursor-pointer select-none">数值说明</summary>
         {system === 'coc' ? (
           <ul className="mt-1 text-gray-500 space-y-0.5">
-            <li>HP = (体质+体型)/2</li>
-            <li>MP = 意志</li>
-            <li>SAN = 意志×5</li>
+            <li>HP = (体质+体型)/10</li>
+            <li>MP = 意志/5</li>
+            <li>SAN = 意志</li>
             <li>技能：d100 ≤ 技能值成功</li>
           </ul>
         ) : system === 'dnd4e' ? (

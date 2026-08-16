@@ -216,8 +216,6 @@ class KnowledgeBase:
             },
         ]
         for seed in seeds:
-            if seed["id"] in existing_ids:
-                continue
             doc = {
                 "id": seed["id"],
                 "title": seed["title"],
@@ -228,8 +226,15 @@ class KnowledgeBase:
                 "tags": seed["tags"],
                 "created_at": datetime.now().isoformat(),
             }
-            self.documents.append(doc)
-            existing_ids.add(seed["id"])
+            if seed["id"] in existing_ids:
+                # 内置规则随版本更新，覆盖旧内容（例如修正 COC 衍生公式）
+                for i, d in enumerate(self.documents):
+                    if d["id"] == seed["id"]:
+                        self.documents[i] = doc
+                        break
+            else:
+                self.documents.append(doc)
+                existing_ids.add(seed["id"])
         self.save()
 
 
