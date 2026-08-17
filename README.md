@@ -1,120 +1,156 @@
-# TRPG AI 跑团主持 — 单人跑团
+# TRPG AI 跑团主持
 
-由大语言模型驱动的 TRPG 跑团主持。创建角色、生成世界、掷骰战斗——AI 扮演主持人，你扮演冒险者/调查员。
+> 单人 TRPG 智能主持人：剧本先行、多规则系统、AI 叙事、RAG 知识库、地图/图鉴/存档一站式。
 
-##  核心特性
+## 项目简介
 
-- **剧本先行**：先选择/生成/导入剧本，再创建角色，让角色与故事更贴合。
-- **多格式剧本导入**：支持上传 `pdf`、`txt`、`md`、`docx`、`doc` 等常见剧本格式。
-- **两种切分方式**：可选「切分器」快速硬切分，或「语义切分」按语义连贯性分组。
-- **多规则系统**：内置 D&D 5e、D&D 4e、克苏鲁的呼唤 7e（COC）与自定义规则；自动识别剧本类型，角色创建面板随系统切换（D&D 显示 HP/法术位，COC 显示 HP/理智/魔法等）。
-- **本地知识库 / RAG**：内置 D&D 5e、D&D 4e、COC、自定义规则备注；支持上传 PDF/DOCX/TXT 或添加文字备注，AI 按需检索设定细节，不把所有内容塞进上下文。
-- **剧本三模式**：已有剧本 / 本体切分 / AI 自动生成；不同模式自动增减 AI 生成相关选项。
-- **扩展包**：支持用户手动添加扩展包或让 LLM 生成扩展包；启用后扩展内容进入知识库并反映到 AI 主持中。
-- **规则技能包**：D&D 5e / 4e / COC / 自定义分别使用特化提示词、工具集、温度、历史轮数与 RAG 数量，降低 token 消耗并提升体验差异。
-- **DM 工具箱**：内置 NPC 名字/怪癖、财宝掉落、遭遇预算、主动知识库检索等固定程序工具，减少 LLM 自由发挥与 token 消耗。
-- **精简 / 深度双模式**：开局选择「精简模式」（低 token、快节奏）或「深度模式」（高 token、高深度扮演）。
+TRPG-AI-DM 是一个面向单人 TRPG 跑团的 AI 主持应用。玩家先选择/导入/生成剧本，再创建角色卡，随后由大语言模型担任主持人推进剧情、处理检定、管理世界状态。
 
-## 系统要求
+项目不绑定单一规则系统，内置 D&D 5e、D&D 4e、克苏鲁的呼唤 7e（COC）与自定义规则，角色系统与剧本系统相互独立。
 
-| 组件 | 最低版本 | 说明 |
-|------|---------|------|
-| Python | 3.11+ | 后端 API 服务器 |
-| Node.js | 18+ | 前端 UI（可选，后端可独立运行） |
+## 功能特性
 
-macOS 用户：`brew install python@3.12 node`
-Ubuntu 用户：`sudo apt install python3.12 python3.12-venv nodejs npm`
+- **剧本先行**
+  - 已有剧本直接使用
+  - 上传 PDF / TXT / DOCX / DOC / MD 自动切分
+  - AI 根据描述生成完整世界大纲
+  - 自动生成约 400 字剧本总结
+- **多规则系统**
+  - D&D 5e：官方购点、法术位、熟练加值、死亡豁免
+  - D&D 4e：威能、回复力、四类防御
+  - COC 7e：官方属性掷骰、双池技能点、理智/魔法/幸运
+  - 自定义：玩家提供规则文本
+- **AI 主持人**
+  - 流式世界生成，实时显示进度
+  - 开场导语、沉浸叙事、决策建议
+  - 工具化检定：d20 / d100 / 战斗结算 / 状态更新
+  - 长短期记忆与自动摘要
+- **本地 RAG 知识库**
+  - 内置规则备注与 5etools SRD 数据
+  - 支持上传 PDF/DOCX/TXT/MD
+  - 按规则系统过滤检索
+- **角色卡与存档**
+  - 多张角色卡保存/复用
+  - 自动/手动存档，独立存档管理页
+  - 读档恢复完整对话历史，不重新开场
+- **地图与图鉴**
+  - 地图/生物支持自定义图片
+  - 生物图鉴搜索、地点↔生物关联
+  - DM 工具：手动新增 NPC / 地点 / 生物
+- **接口与部署**
+  - OpenAI 兼容接口，可保存自定义 API 链接
+  - 思维强度选择（轻量 / 标准 / 深度思考）
+  - 一键 setup / run 脚本，支持打包发布
 
-## 快速开始（3 步）
+## 技术栈
 
-### 第一步：初始化
+| 层 | 技术 |
+|----|------|
+| 后端 | Python 3.11+、FastAPI、SQLAlchemy（异步）、SQLite |
+| AI | OpenAI 兼容 API（DeepSeek 等）、SSE 流式输出 |
+| 前端 | React 18、TypeScript、Vite、Tailwind CSS、Zustand |
+| 检索 | 本地字符 bigram TF-IDF RAG（零 token 消耗） |
+| 部署 | 本地运行、可打包为 zip / GitHub Release |
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.11+
+- Node.js 18+
+
+### 安装
 
 ```bash
-# Windows — 双击或在终端运行：
+# Windows
 setup.bat
 
-# macOS / Linux / Git Bash：
+# macOS / Linux / Git Bash
 bash setup.sh
 ```
 
+### 配置
 
-### 第二步：配置 API Key
-
-打开项目根目录下的 `.env` 文件，填入你的 API Key：
+复制 `.env.example` 为 `.env`，填写 API Key：
 
 ```
 LLM_API_KEY=sk-你的密钥
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL_NAME=你的模型名
 ```
 
+也可以不配置 `.env`，直接在网页顶部填写 API 地址、Key、模型，并支持保存多个自定义链接。
 
-### 第三步：启动
+### 启动
 
 ```bash
-# Windows — 双击：
+# Windows
 run.bat
 
-# macOS / Linux / Git Bash：
+# macOS / Linux / Git Bash
 bash run.sh
 ```
 
+浏览器打开 `http://localhost:5173`。
 
-> **纯后端模式**：如果你没有安装 Node.js，`run.bat`/`run.sh` 会自动降级为后端-only 模式，API 文档在 http://localhost:8000/docs。
+## 项目结构
 
-## 剧本导入与切分
+```
+TRPG-AI-DM/
+├── backend/
+│   ├── main.py                 # FastAPI 路由 + SSE
+│   ├── config.py               # 配置
+│   ├── schemas.py              # 请求/响应模型
+│   ├── scenario_importer.py    # 剧本导入/切分/总结
+│   ├── scenario_store.py       # 剧本存储
+│   ├── knowledge_base.py       # 本地 RAG 知识库
+│   ├── save_manager.py         # 存档管理
+│   ├── character_card_manager.py # 角色卡管理
+│   ├── media_manager.py        # 地图/图鉴/图片管理
+│   ├── classic_scenarios.py    # 免费经典剧本参考
+│   └── engine/
+│       ├── dm_agent.py         # AI 主持人核心
+│       ├── world_builder.py    # 多步世界生成
+│       ├── game_systems.py     # 规则系统
+│       ├── world_state.py      # 世界状态
+│       ├── session.py          # 会话与 SSE
+│       └── memory.py           # 记忆系统
+├── frontend/
+│   └── src/
+│       ├── components/         # UI 组件
+│       ├── hooks/              # SSE Hook
+│       ├── store/              # Zustand 状态
+│       └── types/              # 类型定义
+├── scenarios/                  # 已保存剧本（本地数据）
+├── knowledge_base/             # 知识库数据（本地数据）
+├── saves/                      # 存档（本地数据）
+├── media/                      # 图片/地图（本地数据）
+├── characters/                 # 角色卡（本地数据）
+├── setup.bat / setup.sh        # 一键安装
+├── run.bat / run.sh            # 一键启动
+└── README.md
+```
 
-在「剧本」步骤中，你可以：
+## 目录说明
 
-1. 直接粘贴参考剧本，或填写世界描述后点击「生成世界大纲」；
-2. 上传 `pdf` / `txt` / `md` / `docx` / `doc` 剧本文件；
-3. 选择切分方式：
-   - **切分器**：按段落和字数快速硬切分；
-   - **语义切分**：基于字符 n-gram 的局部语义相似度切分，长剧本更连贯。
-4. 系统会自动将剧本切分为多个片段 → 多 Agent 生成新剧本 → 生成约 400 字剧本总结 → 保存到 `scenarios/`。
-
-> 老式 `.doc` 为尽力支持：优先使用系统 `antiword`，不可用时退回文本提取。建议复杂 `.doc` 文件先另存为 `.docx` 或 `.txt`。
-
-## 规则系统
-
-- **D&D 5e**：d20 检定、优势/劣势、法术位、死亡豁免。
-- **D&D 4e**：d20 对防御、HP/回复力、威能系统、四类防御。
-- **COC 7e**：d100 百分比检定、理智（SAN）、魔法（MP）、幸运、调查员职业。
-- **自定义 / 其他**：上传自定义剧本并填写自定义规则文本，AI 主持人按你的规则主持。
-
-在「剧本」步骤可选择生成时使用的规则系统；导入剧本文件时如果不指定，后端会通过固定关键词自动识别剧本类型（无需额外 token）。
-
-所有容易产生幻觉的数值计算均由程序固定完成：
-- D&D 5e：熟练加值表、法术位表、HP/生命骰
-- D&D 4e：HP、回复力、回复量、四类防御
-- COC 7e：HP/MP/SAN/幸运、伤害加值/体型 Build
-- 骰子判定、战斗结算、状态增减均由工具函数执行，AI 只负责叙事与决策，不自行编造数值
-
-## 精简模式 / 深度模式
-
-开始页顶部即可选择：
-
-| 模式 | Token 消耗 | 适合场景 |
-|------|-----------|---------|
-| 精简模式 | 低 | 快速体验、节省 API 费用 |
-| 深度模式 | 高 | 高沉浸扮演、更丰富描写与选择 |
-
-模式会影响叙事长度、描写密度、决策选项数量和工具调用频率。
-
-精简模式的具体降本措施：
-- 最大输出 token：默认约 1024，深度模式约 4096
-- 世界大纲/剧本总结/记忆上下文截断到更短长度
-- RAG 检索片段从 5 条降到 3 条
-- 活跃对话历史：精简模式保留 5 轮，深度模式保留 10 轮，超出部分自动摘要压缩
-- 单轮工具调用上限从 5 次降到 3 次
-- 开场白 max_tokens 从 1000 降到 600
-
+- `scenarios/`、`knowledge_base/`、`saves/`、`media/`、`characters/` 为运行时用户数据，已加入 `.gitignore`，不会提交到 GitHub。
+- 打包发布的压缩包会包含清理后的知识库（内置规则 + SRD）与免费经典剧本参考。
 
 ## 常见问题
 
-**Q: 启动后前端页面空白？**
-A: 确认 Node.js 已安装（`node --version`），然后 `cd frontend && npm install`。
+### 无法获取模型列表？
+- 确认 API 地址为 OpenAI 兼容格式（如 `https://api.deepseek.com/v1` 或 `https://api.deepseek.com`）。
+- 确认 API Key 有效。
+- 后端会自动尝试 `/models` 与 `/v1/models`。
 
-**Q: 后端报 API 调用失败？**
-A: 检查 `.env` 中的 `LLM_API_KEY` 是否正确。确认网络能访问 `api.deepseek.com`。
+### 上传图片不显示？
+- 开发模式已通过 Vite 代理 `/media` 到后端。
+- 生产模式由 FastAPI 静态目录 `/media` 提供。
 
-**Q: 端口被占用？**
-A: `run.bat`/`run.sh` 会自动杀掉 8000/5173 端口的旧进程。如果仍失败，手动 `netstat -ano | findstr :8000` 查看占用。
+### 读档后没有对话历史？
+- 当前版本读档会直接恢复完整对话历史，不重新生成开场白。
+- 如果看不到历史，请确认使用的是最新 release 包。
+
+## License
+
+MIT
