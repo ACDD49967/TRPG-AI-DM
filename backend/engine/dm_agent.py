@@ -919,21 +919,20 @@ async def _exec_dice_roll(args: dict, state: GameSessionState) -> str:
     roll = skill_check(skill, dc, modifier, advantage)
     await push_event(state, "dice_roll", {**roll.to_event_data(), "modifier": modifier})
 
-    crit = ""
+    internal = ""
     if roll.result.value == "大成功":
-        crit = "【自然20——命运在这一刻换了边站。给玩家一个他们不会忘记的时刻。】"
+        internal = "【自然20——命运在这一刻换了边站。给玩家一个他们不会忘记的时刻。】"
     elif roll.result.value == "大失败":
-        crit = "【自然1——灾难悄然而至。要有后果，但要让它有趣到玩家事后会笑着说'还记得那次吗'。】"
+        internal = "【自然1——灾难悄然而至。要有后果，但要让它有趣到玩家事后会笑着说'还记得那次吗'。】"
 
     line = f"🎲 {skill}: d20={roll.roll}"
     if modifier: line += f"{'+' if modifier>=0 else ''}{modifier}"
     line += f"={roll.total} vs DC{dc} → {roll.result.value}"
     if is_proficient: line += " [熟练]"
-    if crit: line += f"\n{crit}"
 
-    # P1-3: 骰子结果强制内联——推送到叙事流，不依赖前端单独渲染SSE事件
+    # 玩家看到的只有骰子结果；内部指导只返回给 LLM，不推送到叙事流
     await push_narrative_token(state, f"\n{line}\n")
-    return line
+    return line + (f"\n{internal}" if internal else "")
 
 
 async def _exec_update_state(args: dict, state: GameSessionState) -> str:
