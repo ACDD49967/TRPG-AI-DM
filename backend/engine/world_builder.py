@@ -282,7 +282,16 @@ def _extract_json(text: str) -> dict:
     end = t.rfind("}")
     if start >= 0 and end > start:
         t = t[start:end+1]
-    data = json.loads(t)
+    try:
+        data = json.loads(t)
+    except Exception:
+        # LLM 输出 JSON 有轻微语法问题时，用 json_repair 自动修复
+        try:
+            from json_repair import repair_json
+            t = repair_json(t, return_objects=False)
+            data = json.loads(t)
+        except Exception:
+            raise
     if not isinstance(data, dict):
         raise json.JSONDecodeError("JSON must be an object", t, 0)
     return data

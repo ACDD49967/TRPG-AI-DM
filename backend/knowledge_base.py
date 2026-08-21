@@ -33,11 +33,18 @@ DEFAULT_KB_PATH = Path("knowledge_base/documents.json")
 
 
 def _tokenize(text: str) -> list[str]:
-    """字符 bigram 分词，适合中文与英文混合。"""
+    """字符 bigram + jieba 分词混合，提升中文检索专业性与命中率。"""
     cleaned = re.sub(r"\s+", "", text.lower())
     if len(cleaned) <= 1:
         return [cleaned] if cleaned else []
-    return [cleaned[i:i + 2] for i in range(len(cleaned) - 1)]
+    terms = [cleaned[i:i + 2] for i in range(len(cleaned) - 1)]
+    try:
+        import jieba
+        words = [w for w in jieba.cut(cleaned) if len(w.strip()) > 1]
+        terms.extend(words)
+    except Exception:
+        pass
+    return terms
 
 
 def _safe_source(source: str) -> str:

@@ -79,7 +79,7 @@ echo "[4/5] Installing Python packages..."
 if ! "$PYTHON" -c "import fastapi,uvicorn,openai,sqlalchemy,aiosqlite,pydantic,dotenv" 2>/dev/null; then
     echo "[..] Downloading and installing..."
     "$PYTHON" -m pip install -r "$SCRIPT_DIR/backend/requirements.txt" -q --disable-pip-version-check || \
-    "$PYTHON" -m pip install fastapi httpx "uvicorn[standard]" anthropic "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette \
+    "$PYTHON" -m pip install fastapi httpx json-repair jieba "uvicorn[standard]" anthropic "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette \
         -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
     echo "[OK] Python dependencies installed"
 else

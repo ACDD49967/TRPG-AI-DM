@@ -700,7 +700,12 @@ JSON 格式：
                 text = text[:-3]
             text = text.strip()
         import json as _json
-        data = _json.loads(text)
+        try:
+            data = _json.loads(text)
+        except Exception:
+            from json_repair import repair_json
+            text = repair_json(text, return_objects=False)
+            data = _json.loads(text)
         ext = add_extension(
             username=username,
             name=str(data.get("name") or "LLM生成扩展包"),
@@ -1227,7 +1232,12 @@ async def generate_character(request: GenerateAttributesRequest):
             if text.endswith("```"):
                 text = text[:-3]
             text = text.strip()
-        result = json.loads(text)
+        try:
+            result = json.loads(text)
+        except Exception:
+            from json_repair import repair_json
+            text = repair_json(text, return_objects=False)
+            result = json.loads(text)
 
         # 验证属性
         required = ["str", "dex", "con", "int", "wis", "cha"]
