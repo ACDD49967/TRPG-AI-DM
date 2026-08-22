@@ -474,10 +474,7 @@ export default function StartScreen(){
 
   const importScenario=async(file:File)=>{
     setImportBusy(true);setImportErr('');setImportFileName(file.name);
-    setImportProgress(5);
-    const progressTimer = window.setInterval(()=>{
-      setImportProgress(p=>Math.min(90, p + 3));
-    }, 500);
+    setImportProgress(2);
     try{
       const fd=new FormData();
       fd.append('file',file);
@@ -495,20 +492,41 @@ export default function StartScreen(){
       fd.append('thinking_strength',thinkingStrength);
       const r=await fetch('/api/scenarios/import',{method:'POST',body:fd});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'导入失败');}
-      const d=await r.json();
-      setWorldOutline(d.content);setWorldScore(d.score);
-      setWorldStateJson(d.world_state_json||'');
-      setScenarioId(d.scenario_id);
-      setScenarioSummary(d.summary||'');
-      if(d.system)setScenarioSystem(d.system as GameSystem);
-      setSourceChunks(d.source_chunks||[]);
-      setSelectedScenario(d.scenario_id);setShowScenarioList(false);
+      const reader=r.body?.getReader();
+      const decoder=new TextDecoder();
+      let buffer='';
+      if(reader){
+        while(true){
+          const {done,value}=await reader.read();
+          if(done)break;
+          buffer+=decoder.decode(value,{stream:true});
+          const events=buffer.split('\n\n');
+          buffer=events.pop()||'';
+          for(const evt of events){
+            const line=evt.split('\n').find(l=>l.startsWith('data: '));
+            if(!line)continue;
+            const data=JSON.parse(line.slice(6));
+            if(data.type==='progress'){
+              setImportProgress(Math.min(99, data.percent||0));
+            }else if(data.type==='complete'){
+              setWorldOutline(data.content);setWorldScore(data.score);
+              setWorldStateJson(data.world_state_json||'');
+              setScenarioId(data.scenario_id);
+              setScenarioSummary(data.summary||'');
+              if(data.system)setScenarioSystem(data.system as GameSystem);
+              setSourceChunks(data.source_chunks||[]);
+              setSelectedScenario(data.scenario_id);setShowScenarioList(false);
+              setImportProgress(100);
+            }else if(data.type==='error'){
+              throw new Error(data.msg||'导入失败');
+            }
+          }
+        }
+      }
       fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
       loadKb();
     }catch(e:unknown){setImportErr(e instanceof Error?e.message:'导入失败');}
     finally{
-      window.clearInterval(progressTimer);
-      setImportProgress(100);
       window.setTimeout(()=>setImportProgress(0), 800);
       setImportBusy(false);
     }

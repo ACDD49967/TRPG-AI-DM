@@ -396,33 +396,62 @@ async def import_scenario(
     except Exception:
         custom_classes_list, custom_skills_list, extra_attributes_dict = [], [], {}
 
-    try:
-        result = await generate_scenario_from_text(
-            source_text=text,
-            chunks=chunks,
-            title=title,
-            description=description,
-            tone=tone,
-            system=system,
-            custom_rules=custom_rules,
-            custom_classes=custom_classes_list,
-            custom_skills=custom_skills_list,
-            extra_attributes=extra_attributes_dict,
-            character_name=character_name,
-            race=race,
-            char_class=char_class,
-            character_level=character_level,
-            api_key=api_key,
-            model_name=model_name,
-            base_url=base_url,
-            splitter=splitter,
-            target_score=75,
-            max_revisions=1,
-            thinking_strength=thinking_strength,
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"剧本生成失败: {e}") from e
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def progress(label: str, percent: int, detail: str = ""):
+        queue.put_nowait({"type": "progress", "label": label, "percent": percent, "detail": detail})
+
+    async def run():
+        try:
+            result = await generate_scenario_from_text(
+                source_text=text,
+                chunks=chunks,
+                title=title,
+                description=description,
+                tone=tone,
+                system=system,
+                custom_rules=custom_rules,
+                custom_classes=custom_classes_list,
+                custom_skills=custom_skills_list,
+                extra_attributes=extra_attributes_dict,
+                character_name=character_name,
+                race=race,
+                char_class=char_class,
+                character_level=character_level,
+                api_key=api_key,
+                model_name=model_name,
+                base_url=base_url,
+                splitter=splitter,
+                target_score=75,
+                max_revisions=1,
+                thinking_strength=thinking_strength,
+                progress_callback=progress,
+            )
+            queue.put_nowait({"type": "__complete__", "data": result})
+        except Exception as e:
+            queue.put_nowait({"type": "__error__", "msg": f"剧本生成失败: {e}"})
+
+    async def event_stream():
+        task = asyncio.create_task(run())
+        while True:
+            item = await queue.get()
+            if item["type"] == "progress":
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                continue
+            if item["type"] == "__error__":
+                yield f"data: {json.dumps({'type':'error','msg':item['msg']}, ensure_ascii=False)}\n\n"
+                break
+            result = item["data"]
+            result["type"] = "complete"
+            yield f"data: {json.dumps(result, ensure_ascii=False)}\n\n"
+            break
+        await task
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/scenarios/{scenario_id}")

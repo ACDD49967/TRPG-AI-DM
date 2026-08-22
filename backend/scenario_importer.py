@@ -416,6 +416,7 @@ async def generate_scenario_from_text(
     custom_skills: list[str] | None = None,
     extra_attributes: dict | None = None,
     thinking_strength: str = "medium",
+    progress_callback=None,
 ) -> dict[str, Any]:
     """读取文本→切分→多Agent生成新剧本→生成总结→保存到 scenarios/。"""
     from backend.engine.world_builder import build_world
@@ -446,6 +447,8 @@ async def generate_scenario_from_text(
     ) if chunks else source_text
     if len(reference_script) > 30000:
         reference_script = reference_script[:30000] + "\n\n...[内容过长，已截断用于世界生成]..."
+    if progress_callback:
+        progress_callback("读取并切分剧本完成", 6, f"共 {len(chunks)} 个片段，开始生成世界")
 
     outline_text, score, history, world_state = await build_world(
         player_input=player_input,
@@ -461,9 +464,14 @@ async def generate_scenario_from_text(
         target_score=target_score,
         max_revisions=max_revisions,
         thinking_strength=thinking_strength,
+        progress_callback=progress_callback,
     )
 
+    if progress_callback:
+        progress_callback("生成剧本总结", 88, "正在生成约400字剧本总结...")
     summary = await generate_summary(client, model, outline_text, source_text)
+    if progress_callback:
+        progress_callback("保存剧本与知识库", 94, "正在保存剧本并写入知识库...")
 
     ws_json = {
         "world_outline": outline_text,
