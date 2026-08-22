@@ -424,7 +424,12 @@ export default function GameScreen() {
                 ['体质', get('体质','CON','con')], ['智力', get('智力','INT','int')],
                 ['感知', get('感知','WIS','wis')], ['魅力', get('魅力','CHA','cha')],
               ];
+              const baseSaves = abilities.map(([k, v]) => {
+                const n = Number(v);
+                return [k, Number.isFinite(n) && v !== '—' ? (Math.floor((n - 10) / 2) >= 0 ? `+${Math.floor((n - 10) / 2)}` : `${Math.floor((n - 10) / 2)}`) : '—'] as [string, string];
+              });
               const skills = get('技能','Skills','skills');
+              const saves = get('豁免','Saves','saves');
               const senses = get('感官','Senses','senses');
               const languages = get('语言','Languages','languages');
               const challenge = get('挑战等级','挑战','CR','cr');
@@ -471,20 +476,31 @@ export default function GameScreen() {
                       <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 col-span-2"><span className="text-[8px] text-gray-400">理智损失</span> <b className="text-xs">{get('理智损失','SAN Loss','sanity')}</b></div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-3 gap-1 mt-2 border-t border-amber-900/10 pt-2">
-                      {abilities.map(([k,v])=>(
-                        <div key={k} className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 text-center">
-                          <span className="text-[8px] text-gray-400 font-semibold">{k}</span>
-                          <div className="text-xs font-bold">{v}</div>
-                        </div>
-                      ))}
-                    </div>
+                    <>
+                      <div className="grid grid-cols-3 gap-1 mt-2 border-t border-amber-900/10 pt-2">
+                        {abilities.map(([k,v])=>(
+                          <div key={k} className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 text-center">
+                            <span className="text-[8px] text-gray-400 font-semibold">{k}</span>
+                            <div className="text-xs font-bold">{v}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-6 gap-1 mt-1.5">
+                        {baseSaves.map(([k,v])=>(
+                          <div key={k} className="bg-white border border-amber-900/10 rounded px-1 py-0.5 text-center">
+                            <span className="text-[7px] text-gray-400">{k}</span>
+                            <div className="text-[10px] font-bold">{v}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
                   )}
 
                   {/* 标准字段 */}
-                  {(skills!=='—'||senses!=='—'||languages!=='—'||challenge!=='—'||xp!=='—'||initiative!=='—') && (
+                  {(skills!=='—'||senses!=='—'||languages!=='—'||challenge!=='—'||xp!=='—'||initiative!=='—'||saves!=='—') && (
                     <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-0.5 text-[10px] text-gray-700">
                       {initiative!=='—'&&<p><span className="text-gray-500 font-medium">先攻：</span>{initiative}</p>}
+                      {saves!=='—'&&<p><span className="text-gray-500 font-medium">豁免：</span>{saves}</p>}
                       {skills!=='—'&&<p><span className="text-gray-500 font-medium">技能：</span>{skills}</p>}
                       {senses!=='—'&&<p><span className="text-gray-500 font-medium">感官：</span>{senses}</p>}
                       {languages!=='—'&&<p><span className="text-gray-500 font-medium">语言：</span>{languages}</p>}

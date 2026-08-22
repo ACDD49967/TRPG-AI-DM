@@ -216,6 +216,7 @@ def _import_kb_monsters(username: str):
                     "感官": f"被动察觉 {m.get('passive','—')}",
                     "语言": "、".join(str(x) for x in (m.get("languages", []) or [])) or "—",
                     "挑战等级": str(m.get("cr", "—")),
+                    "豁免": "、".join(f"{k} +{v}" for k, v in (m.get("save") or {}).items()) if isinstance(m.get("save"), dict) else "—",
                     "特性": trait_str or "—",
                     "动作": action_str or "—",
                 }

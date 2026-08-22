@@ -16,6 +16,33 @@ function invName(it: string | { name: string }): string {
   return typeof it === 'string' ? it : it.name || '未知物品';
 }
 
+const SKILL_ATTR: Record<string, string> = {
+  '运动': 'str', '特技': 'dex', '巧手': 'dex', '潜行': 'dex',
+  '奥秘': 'int', '历史': 'int', '调查': 'int', '自然': 'int', '宗教': 'int',
+  '洞悉': 'wis', '医药': 'wis', '察觉': 'wis', '生存': 'wis',
+  '欺瞒': 'cha', '威吓': 'cha', '表演': 'cha', '游说': 'cha',
+};
+
+const WEAPON_DICE: Record<string, string> = {
+  '匕首': '1d4', '短剑': '1d6', '长剑': '1d8', '细剑': '1d8',
+  '巨剑': '2d6', '手斧': '1d6', '战斧': '1d8', '巨斧': '1d12',
+  '短弓': '1d6', '长弓': '1d8', '轻弩': '1d8', '重弩': '1d10',
+  '矛': '1d6', '木棍': '1d6', '棍棒': '1d6', '钉头锤': '1d6',
+  '长棍': '1d8', '巨锤': '2d6', '戟': '1d10', '鞭': '1d4',
+};
+
+const SPELLCAST_MOD: Record<string, string> = {
+  '法师': 'int', '牧师': 'wis', '德鲁伊': 'wis', '游侠': 'wis',
+  '吟游诗人': 'cha', '术士': 'cha', '邪术师': 'cha', '圣武士': 'cha',
+};
+
+function weaponDice(name: string): string {
+  for (const [k, v] of Object.entries(WEAPON_DICE)) {
+    if (name.includes(k)) return v;
+  }
+  return '1d8';
+}
+
 export default function DndCharacterSheet({ onClose }: { onClose?: () => void }) {
   const { status } = useGameStore();
   const attrs = status.attributes || {};
@@ -26,6 +53,10 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
   const weapons = inventory.filter(i => /剑|斧|弓|弩|匕首|矛|锤|杖|棍|鞭|刀|枪|戟|链枷|战|刃/.test(invName(i)));
   const armor = inventory.filter(i => /甲|盾|袍|披风|头盔|护|铠|锁子|皮|板/.test(invName(i)));
   const misc = inventory.filter(i => !weapons.includes(i) && !armor.includes(i));
+  const skillProf = status.skill_proficiencies || [];
+  const castAttr = SPELLCAST_MOD[status.char_class || ''] || 'int';
+  const castMod = Math.floor((Number(attrs[castAttr] ?? 10) - 10) / 2);
+  const spellSlots = status.spell_slots;
 
   return (
     <div className="paper-card rounded-xl max-w-3xl w-full max-h-[88vh] overflow-y-auto p-5 text-gray-900">
@@ -117,40 +148,79 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
         </div>
       )}
 
-      {/* 技能 / 特性 */}
-      {(status.skill_proficiencies?.length || status.skills || status.feats?.length) ? (
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <div className="bg-white/70 border border-amber-900/20 rounded-lg p-3">
-            <p className="section-label mb-1">技能熟练</p>
-            {status.skills && Object.keys(status.skills).length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {Object.entries(status.skills).map(([k, v]) => <span key={k} className="text-[10px] bg-indigo-50 border border-indigo-200 rounded px-2 py-0.5">{k}: {v}</span>)}
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-1">
-                {(status.skill_proficiencies || []).map((s, i) => <span key={i} className="text-[10px] bg-indigo-50 border border-indigo-200 rounded px-2 py-0.5">{s}</span>)}
-              </div>
-            )}
+      {/* 熟练技能明细 */}
+      {skillProf.length > 0 && (
+        <div className="mt-4">
+          <p className="section-label mb-2">熟练技能明细</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+            {skillProf.map((s, i) => {
+              const a = SKILL_ATTR[s] || 'str';
+              const am = Math.floor((Number(attrs[a] ?? 10) - 10) / 2);
+              return (
+                <div key={i} className="bg-white/70 border border-amber-900/20 rounded px-2 py-1 flex items-center justify-between">
+                  <span className="text-[10px] text-gray-600">{s} <span className="text-gray-400">({ATTR_CN[a]})</span></span>
+                  <span className="paper-title text-sm font-bold">{am + prof >= 0 ? `+${am + prof}` : am + prof}</span>
+                </div>
+              );
+            })}
           </div>
-          <div className="bg-white/70 border border-amber-900/20 rounded-lg p-3">
-            <p className="section-label mb-1">特性 / 特长</p>
-            <div className="space-y-1">
-              {(status.race_traits || []).map((t, i) => <p key={i} className="text-[10px] text-gray-600">· {t}</p>)}
-              {(status.feats || []).map((f, i) => <p key={i} className="text-[10px] text-amber-800">· {f.name}</p>)}
-              {(status.class_proficiencies || []).map((t, i) => <p key={i} className="text-[10px] text-gray-600">· {t}</p>)}
-            </div>
+        </div>
+      )}
+
+      {/* 特性 / 特长 */}
+      {(status.race_traits?.length || status.feats?.length || status.class_proficiencies?.length) ? (
+        <div className="mt-4 bg-white/70 border border-amber-900/20 rounded-lg p-3">
+          <p className="section-label mb-1">特性 / 特长 / 背景特征</p>
+          <div className="space-y-1">
+            {(status.race_traits || []).map((t, i) => <p key={i} className="text-[10px] text-gray-600">· {t}</p>)}
+            {(status.class_proficiencies || []).map((t, i) => <p key={i} className="text-[10px] text-gray-600">· {t}</p>)}
+            {(status.feats || []).map((f, i) => <p key={i} className="text-[10px] text-amber-800">· {f.name}</p>)}
           </div>
         </div>
       ) : null}
 
-      {/* 武器 / 防具 / 物品 */}
-      <div className="mt-4 grid grid-cols-3 gap-2">
-        <div className="bg-white/70 border border-amber-900/20 rounded-lg p-3">
-          <p className="section-label mb-1">武器</p>
-          {weapons.length === 0 ? <p className="text-[10px] text-gray-300">—</p> : weapons.map((w, i) => (
-            <p key={i} className="text-[10px] text-gray-700 border-b border-gray-100 py-0.5 last:border-0">{invName(w)} <span className="text-gray-400">d20+{prof}+{mod(Number(attrs.dex ?? 10))}</span></p>
-          ))}
+      {/* 攻击 */}
+      {weapons.length > 0 && (
+        <div className="mt-4 bg-white/70 border border-amber-900/20 rounded-lg p-3">
+          <p className="section-label mb-2">攻击</p>
+          <div className="space-y-1">
+            {weapons.map((w, i) => {
+              const name = invName(w);
+              const useDex = /弓|弩|匕首|细剑|短剑/.test(name);
+              const attrKey = useDex ? 'dex' : 'str';
+              const atkMod = Math.floor((Number(attrs[attrKey] ?? 10) - 10) / 2) + prof;
+              return (
+                <div key={i} className="flex items-center justify-between border-b border-gray-100 py-0.5 last:border-0">
+                  <span className="text-[10px] text-gray-700">{name}</span>
+                  <span className="text-[10px] text-gray-500 font-mono">
+                    d20{atkMod >= 0 ? `+${atkMod}` : atkMod} · {weaponDice(name)}{useDex || !status.saves?.str ? `+${Math.floor((Number(attrs[attrKey] ?? 10) - 10) / 2)}` : `+${Math.floor((Number(attrs[attrKey] ?? 10) - 10) / 2)}`} 伤害
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
+      )}
+
+      {/* 施法 */}
+      {spellSlots && (
+        <div className="mt-4 bg-white/70 border border-amber-900/20 rounded-lg p-3">
+          <p className="section-label mb-2">施法</p>
+          <div className="text-[10px] text-gray-700 space-y-0.5">
+            <p>施法属性：{ATTR_CN[castAttr] || castAttr}（法术攻击 d20{castMod + prof >= 0 ? `+${castMod + prof}` : castMod + prof}）</p>
+            <p>法术位：{
+              Array.isArray(spellSlots)
+                ? spellSlots.join(' / ')
+                : (typeof spellSlots === 'object' && spellSlots
+                  ? ((spellSlots as { spell_slots?: number[] }).spell_slots || []).join(' / ') + ((spellSlots as { pact_slots?: number }).pact_slots ? ` · 契约${(spellSlots as { pact_slots?: number }).pact_slots}` : '')
+                  : '—')
+            }</p>
+          </div>
+        </div>
+      )}
+
+      {/* 防具 / 物品 */}
+      <div className="mt-4 grid grid-cols-2 gap-2">
         <div className="bg-white/70 border border-amber-900/20 rounded-lg p-3">
           <p className="section-label mb-1">防具</p>
           {armor.length === 0 ? <p className="text-[10px] text-gray-300">—</p> : armor.map((a, i) => <p key={i} className="text-[10px] text-gray-700">{invName(a)}</p>)}
