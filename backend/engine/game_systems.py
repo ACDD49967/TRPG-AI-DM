@@ -274,50 +274,57 @@ def get_coc_derived(attributes: dict, luck: int = 50) -> dict:
 
 
 def detect_game_system(text: str, title: str = "") -> str:
-    """自动识别剧本所属规则系统。
+    """基于加权关键词评分自动识别剧本规则系统。
 
-    优先使用固定关键词规则（零 token 消耗），无法识别时返回 custom。
+    使用分数而不是“先命中先返回”，避免“调查员/4e/d20”等弱关键词误判。
     """
     haystack = f"{title}\n{text}".lower()
 
-    # 强 COC 特征：守秘人/调查员/理智/克苏鲁/心理学 等，优先级最高
-    strong_coc_keywords = [
-        "守秘人", "调查员", "克苏鲁", "理智值", "san值", "心理学",
-        "call of cthulhu", "d100", "百分骰", "sanity", "神话生物",
-    ]
-    if any(k in haystack for k in strong_coc_keywords):
-        return "coc"
+    groups = {
+        "coc": {
+            "strong": [
+                "克苏鲁", "call of cthulhu", "守秘人", "理智值", "san值",
+                "神话生物", "百分骰", "sanity", "san check",
+            ],
+            "medium": ["调查员", "心理学", "幸运值", "魔法值", "coc"],
+        },
+        "dnd4e": {
+            "strong": [
+                "dnd4", "d&d4", "d&d 4", "dd4", "威能", "每日威能",
+                "遭遇威能", "healing surge", "bloodied", "回复力",
+            ],
+            "medium": ["4e", "四版", "第四版", "强韧", "反射", "意志防御"],
+        },
+        "dnd5e": {
+            "strong": [
+                "dnd5", "d&d5", "d&d 5", "五版", "第五版", "法术位",
+                "熟练加值", "死亡豁免", "hit dice", "spell slot",
+            ],
+            "medium": ["5e", "d20", "优势", "劣势", "地下城", "龙与地下城", "dungeons", "dragons"],
+            "weak": ["法师", "战士", "冒险者", "地城"],
+        },
+    }
 
-    # D&D 4e：强韧/反射/意志/威能/回复力是强特征
-    dnd4_keywords = [
-        "dnd4", "d&d4", "d&d 4", "dd4", "4e", "四版", "第四版",
-        "healing surge", "bloodied", "威能", "每日威能", "遭遇威能",
-        "强韧", "反射", "意志防御", "回复力",
-    ]
-    if any(k in haystack for k in dnd4_keywords):
-        return "dnd4e"
+    scores = {"coc": 0, "dnd4e": 0, "dnd5e": 0}
+    for system, levels in groups.items():
+        for word in levels.get("strong", []):
+            if word in haystack:
+                scores[system] += 5 * haystack.count(word)
+        for word in levels.get("medium", []):
+            if word in haystack:
+                scores[system] += 2 * haystack.count(word)
+        for word in levels.get("weak", []):
+            if word in haystack:
+                scores[system] += 1 * haystack.count(word)
 
-    # 弱 COC 特征（避免误伤普通英文子串）
-    coc_keywords = [
-        "魔法值", "幸运值", "san check",
-    ]
-    if any(k in haystack for k in coc_keywords) or re.search(r"\bcoc\b", haystack):
-        return "coc"
-
-    # D&D 5e
-    dnd5_keywords = [
-        "dnd5", "d&d5", "d&d 5", "5e", "五版", "第五版", "d20",
-        "熟练加值", "法术位", "优势", "劣势", "死亡豁免", "hit dice", "spell slot",
-    ]
-    if any(k in haystack for k in dnd5_keywords):
-        return "dnd5e"
-
-    # 明显的奇幻 D&D 风格但未指明版本：默认 5e，更贴近主流
-    fantasy_keywords = ["地城", "龙与地下城", "dungeons", "dragons", "法师", "战士", "冒险者", "地下城"]
-    if any(k in haystack for k in fantasy_keywords):
-        return "dnd5e"
-
-    return "custom"
+    best = max(scores, key=scores.get)
+    if scores[best] <= 0:
+        return "custom"
+    # 最高分与其他系统接近时，保守返回 custom，避免误判
+    second = sorted(scores.values(), reverse=True)[1] if len(scores) > 1 else 0
+    if scores[best] - second < 3 and scores[best] < 8:
+        return "custom"
+    return best
 
 
 def get_style_directive(system_id: str) -> str:

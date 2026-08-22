@@ -619,6 +619,7 @@ export default function StartScreen(){
   };
 
   const deleteSave=async(saveId:string)=>{
+    if(!window.confirm('确定删除该存档？此操作不可恢复。')) return;
     try{
       await fetch(`/api/saves/${saveId}?username=${encodeURIComponent(username||'default')}`,{method:'DELETE'});
       setSaves(saves.filter(s=>s.id!==saveId));
@@ -700,6 +701,7 @@ export default function StartScreen(){
   };
 
   const deleteCharCard=async(cardId:string)=>{
+    if(!window.confirm('确定删除该角色卡？此操作不可恢复。')) return;
     try{
       await fetch(`/api/characters/${cardId}?username=${encodeURIComponent(username||'default')}`,{method:'DELETE'});
       setCharCards(charCards.filter(c=>c.id!==cardId));

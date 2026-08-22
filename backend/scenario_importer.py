@@ -128,7 +128,7 @@ def normalize_text(text: str) -> str:
 
 
 def split_text_naive(text: str, chunk_size: int = 900, overlap: int = 100) -> list[str]:
-    """按段落和字数切分：快速、确定性强，适合大多数剧本。"""
+    """按段落和字数切分：保留标题完整性，避免 overlap 截断标题。"""
     text = normalize_text(text)
     if not text:
         return []
@@ -137,20 +137,29 @@ def split_text_naive(text: str, chunk_size: int = 900, overlap: int = 100) -> li
     chunks: list[str] = []
     current = ""
     for para in paragraphs:
-        if len(current) + len(para) + 1 <= chunk_size:
-            current = f"{current}\n\n{para}".strip()
-            continue
-        # 当前块放不下新段：先按字符硬切当前块
-        if current:
+        # Markdown 标题永远作为新块起点，防止 overlap 截断标题
+        if para.startswith("#") and current:
             chunks.append(current)
-            current = current[-overlap:] if overlap else ""
-        # 段落本身超过 chunk_size 时继续硬切
+            current = para
+            continue
+        # 超长段落先按 chunk_size 硬切，带 overlap
         while len(para) > chunk_size:
+            if current:
+                chunks.append(current)
+                current = current[-overlap:] if overlap else ""
             chunks.append(para[:chunk_size])
             para = para[chunk_size - overlap:] if overlap else para[chunk_size:]
-        current = para if not current else f"{current}\n\n{para}".strip()
-    if current:
-        chunks.append(current)
+        # 合并到当前块
+        if not current:
+            current = para
+        elif len(current) + len(para) + 1 <= chunk_size:
+            current = f"{current}\n\n{para}".strip()
+        else:
+            chunks.append(current)
+            current = current[-overlap:] if overlap else ""
+            current = f"{current}\n\n{para}".strip() if current else para
+    if current.strip():
+        chunks.append(current.strip())
     return [c for c in chunks if c.strip()]
 
 
