@@ -1484,7 +1484,9 @@ async def create_new_game(request: NewGameRequest):
             from backend.engine.game_systems import (
                 get_dnd5_derived,
                 get_dnd5_proficiency_bonus,
+                get_dnd5_saves,
                 get_dnd5_spell_slots,
+                get_passive_perception,
             )
             d5 = get_dnd5_derived(character_info.get("char_class", "战士"), character_info.get("attributes", {}), character_info.get("level", 1))
             character_info["hp"] = d5["hp"]
@@ -1492,6 +1494,14 @@ async def create_new_game(request: NewGameRequest):
             character_info["hit_die"] = d5["hit_die"]
             character_info["proficiency_bonus"] = get_dnd5_proficiency_bonus(character_info.get("level", 1))
             character_info["spell_slots"] = get_dnd5_spell_slots(character_info.get("char_class", ""), character_info.get("level", 1))
+            character_info["saves"] = get_dnd5_saves(
+                character_info.get("char_class", ""), character_info.get("attributes", {}),
+                character_info["proficiency_bonus"],
+            )
+            character_info["passive_perception"] = get_passive_perception(
+                character_info.get("attributes", {}), character_info["proficiency_bonus"],
+                character_info.get("skill_proficiencies", []),
+            )
         elif request.game_system == "coc":
             from backend.engine.game_systems import get_coc_derived
             attrs_coc = character_info.get("attributes", {})

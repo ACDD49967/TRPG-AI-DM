@@ -25,6 +25,8 @@ export interface CharacterStatus {
   backstory?: string;
   skill_proficiencies?: string[];
   skills?: Record<string, number>;
+  saves?: Record<string, { value: number; proficient?: boolean }>;
+  passive_perception?: number;
   feats?: Array<{ name: string; description?: string }>;
   custom_classes?: string[];
   custom_skills?: string[];

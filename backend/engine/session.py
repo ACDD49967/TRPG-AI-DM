@@ -188,6 +188,8 @@ async def sse_event_generator(
         "backstory": info.get("backstory", ""),
         "skill_proficiencies": info.get("skill_proficiencies", []),
         "skills": info.get("skills", {}),
+        "saves": info.get("saves", {}),
+        "passive_perception": info.get("passive_perception", 10),
         "feats": info.get("feats", []),
         "custom_classes": info.get("custom_classes", []),
         "custom_skills": info.get("custom_skills", []),

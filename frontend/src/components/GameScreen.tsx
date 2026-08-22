@@ -12,6 +12,7 @@ import DiceRollOverlay from './DiceRoll';
 import DecisionPanel from './DecisionPanel';
 import RulebookModal from './RulebookModal';
 import DndCharacterSheet from './DndCharacterSheet';
+import CocInvestigatorSheet from './CocInvestigatorSheet';
 
 function invName(it: string | { name: string }): string {
   return typeof it === 'string' ? it : it.name || '未知物品';
@@ -27,6 +28,16 @@ const TYPE_CN: Record<string, string> = {
   fiend: '邪魔', celestial: '天界生物', construct: '构装体', elemental: '元素生物',
   fey: '妖精', giant: '巨人', ooze: '泥怪', plant: '植物', aberration: '异怪',
 };
+function crToXp(cr: string): string {
+  const table: Record<string, number> = {
+    '0': 10, '1/8': 25, '1/4': 50, '1/2': 100, '1': 200, '2': 450, '3': 700,
+    '4': 1100, '5': 1800, '6': 2300, '7': 2900, '8': 3900, '9': 5000,
+    '10': 5900, '11': 7200, '12': 8400, '13': 10000, '14': 11500, '15': 13000,
+    '16': 15000, '17': 18000, '18': 20000, '19': 22000, '20': 25000,
+  };
+  return String(table[String(cr).trim()] ?? '—');
+}
+
 function translateMonsterDesc(desc: string): string {
   return desc
     .replace(/\b(T|S|M|L|H|G)\b/g, m => SIZE_CN[m] || m)
@@ -214,6 +225,8 @@ export default function GameScreen() {
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowCharSheet(false)}>
           {isDndSheet ? (
             <DndCharacterSheet onClose={()=>setShowCharSheet(false)} />
+          ) : (status.game_system as string) === 'coc' ? (
+            <CocInvestigatorSheet onClose={()=>setShowCharSheet(false)} />
           ) : (
           <div className="paper-card rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
@@ -415,6 +428,9 @@ export default function GameScreen() {
               const senses = get('感官','Senses','senses');
               const languages = get('语言','Languages','languages');
               const challenge = get('挑战等级','挑战','CR','cr');
+              const xp = crToXp(challenge);
+              const dexStat = Number(get('敏捷','DEX','dex'));
+              const initiative = Number.isFinite(dexStat) && dexStat !== 0 ? `${Math.floor((dexStat - 10) / 2) >= 0 ? '+' : ''}${Math.floor((dexStat - 10) / 2)}` : '—';
               const traits = get('特性','Traits','traits');
               const actions = get('动作','Actions','actions');
               return (
@@ -466,12 +482,13 @@ export default function GameScreen() {
                   )}
 
                   {/* 标准字段 */}
-                  {(skills!=='—'||senses!=='—'||languages!=='—'||challenge!=='—') && (
+                  {(skills!=='—'||senses!=='—'||languages!=='—'||challenge!=='—'||xp!=='—'||initiative!=='—') && (
                     <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-0.5 text-[10px] text-gray-700">
+                      {initiative!=='—'&&<p><span className="text-gray-500 font-medium">先攻：</span>{initiative}</p>}
                       {skills!=='—'&&<p><span className="text-gray-500 font-medium">技能：</span>{skills}</p>}
                       {senses!=='—'&&<p><span className="text-gray-500 font-medium">感官：</span>{senses}</p>}
                       {languages!=='—'&&<p><span className="text-gray-500 font-medium">语言：</span>{languages}</p>}
-                      {challenge!=='—'&&<p><span className="text-gray-500 font-medium">挑战等级：</span>{challenge}</p>}
+                      {challenge!=='—'&&<p><span className="text-gray-500 font-medium">挑战等级：</span>{challenge} {xp!=='—'?`（XP ${xp}）`:''}</p>}
                     </div>
                   )}
 

@@ -87,6 +87,34 @@ def get_dnd5_proficiency_bonus(level: int) -> int:
     return 6
 
 
+DND5_CLASS_SAVES = {
+    "战士": ("str", "con"), "圣武士": ("wis", "cha"), "野蛮人": ("str", "con"),
+    "游侠": ("str", "dex"), "武僧": ("str", "dex"), "游荡者": ("dex", "int"),
+    "吟游诗人": ("dex", "cha"), "牧师": ("wis", "cha"), "德鲁伊": ("int", "wis"),
+    "邪术师": ("wis", "cha"), "法师": ("int", "wis"), "术士": ("con", "cha"),
+}
+
+
+def get_dnd5_saves(char_class: str, attributes: dict, prof_bonus: int) -> dict:
+    """D&D 5e 豁免：基础属性调整 + 职业熟练豁免。"""
+    keys = ["str", "dex", "con", "int", "wis", "cha"]
+    proficient = set(DND5_CLASS_SAVES.get(char_class, ()))
+    out = {}
+    for k in keys:
+        v = int(attributes.get(k, 10) or 10)
+        mod = (v - 10) // 2
+        out[k] = {"value": mod + prof_bonus if k in proficient else mod, "proficient": k in proficient}
+    return out
+
+
+def get_passive_perception(attributes: dict, prof_bonus: int, skill_proficiencies: list[str]) -> int:
+    """D&D 5e 被动感知：10 + 感知调整 + (察觉熟练时熟练加值)。"""
+    wis = int(attributes.get("wis", 10) or 10)
+    wis_mod = (wis - 10) // 2
+    proficient = any("察觉" in s for s in (skill_proficiencies or []))
+    return 10 + wis_mod + (prof_bonus if proficient else 0)
+
+
 # 法术位表：仅包含本项目职业列表中的施法职业（官方 5e 表）
 _FULL_CASTER_SLOTS = {
     1: (2, 0, 0, 0, 0), 2: (3, 0, 0, 0, 0), 3: (4, 2, 0, 0, 0),

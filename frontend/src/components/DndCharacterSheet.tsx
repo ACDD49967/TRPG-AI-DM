@@ -66,6 +66,18 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
         </div>
       </div>
 
+      {/* 被动感知 */}
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <div className="bg-white/70 border border-amber-900/20 rounded-lg p-2 text-center">
+          <p className="text-[10px] uppercase tracking-widest text-gray-500">被动感知</p>
+          <p className="paper-title text-lg font-bold">{status.passive_perception ?? (10 + mod(Number(attrs.wis ?? 10)).replace('+',''))}</p>
+        </div>
+        <div className="bg-white/70 border border-amber-900/20 rounded-lg p-2 text-center">
+          <p className="text-[10px] uppercase tracking-widest text-gray-500">生命骰</p>
+          <p className="paper-title text-lg font-bold">{status.hit_die || '1d8'}</p>
+        </div>
+      </div>
+
       {/* 六维属性 */}
       <div className="mt-4">
         <p className="section-label mb-2">属性</p>
@@ -82,6 +94,28 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
           })}
         </div>
       </div>
+
+      {/* 熟练豁免 */}
+      {status.saves && Object.keys(status.saves).length > 0 && (
+        <div className="mt-4">
+          <p className="section-label mb-2">熟练豁免</p>
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            {keys.map(k => {
+              const s = status.saves?.[k];
+              if (!s) return null;
+              return (
+                <div key={k} className="bg-white/70 border border-amber-900/20 rounded-lg p-1.5 text-center">
+                  <p className="text-[9px] uppercase tracking-widest text-gray-400">{ATTR_CN[k]}</p>
+                  <p className="paper-title text-lg font-bold">
+                    {s.value >= 0 ? `+${s.value}` : s.value}
+                    {s.proficient && <span className="ml-1 text-[9px] text-amber-700">●</span>}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 技能 / 特性 */}
       {(status.skill_proficiencies?.length || status.skills || status.feats?.length) ? (
