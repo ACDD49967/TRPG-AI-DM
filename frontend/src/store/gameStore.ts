@@ -38,6 +38,7 @@ export interface CharacterStatus {
   healing_surges?: number;
   max_healing_surges?: number;
   surge_value?: number;
+  speed?: string;
   proficiency_bonus?: number;
   spell_slots?: number[] | { spell_slots?: number[]; pact_slots?: number };
   fortitude?: number;

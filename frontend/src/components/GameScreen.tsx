@@ -11,6 +11,7 @@ import Choices from './Choices';
 import DiceRollOverlay from './DiceRoll';
 import DecisionPanel from './DecisionPanel';
 import RulebookModal from './RulebookModal';
+import DndCharacterSheet from './DndCharacterSheet';
 
 function invName(it: string | { name: string }): string {
   return typeof it === 'string' ? it : it.name || '未知物品';
@@ -34,6 +35,7 @@ function translateMonsterDesc(desc: string): string {
 
 export default function GameScreen() {
   const { sessionId, goToStart, sceneInfo, status, mediaVersion } = useGameStore();
+  const isDndSheet = status.game_system === 'dnd5e' || status.game_system === 'dnd4e';
   useSSE(sessionId);
   const [showMap, setShowMap] = useState(false);
   const [showBeast, setShowBeast] = useState(false);
@@ -210,6 +212,9 @@ export default function GameScreen() {
 
       {showCharSheet && (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowCharSheet(false)}>
+          {isDndSheet ? (
+            <DndCharacterSheet onClose={()=>setShowCharSheet(false)} />
+          ) : (
           <div className="paper-card rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="paper-title text-lg font-bold text-gray-900">角色卡</h3>
@@ -342,6 +347,7 @@ export default function GameScreen() {
               </div>
             )}
           </div>
+          )}
         </div>
       )}
 
