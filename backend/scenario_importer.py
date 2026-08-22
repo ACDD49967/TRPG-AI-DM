@@ -177,6 +177,15 @@ def _vec(text: str) -> dict[str, int]:
     vec: dict[str, int] = {}
     for gram in _char_ngrams(text):
         vec[gram] = vec.get(gram, 0) + 1
+    # jieba 中文分词补充语义单元
+    try:
+        import jieba
+        for word in jieba.cut(text):
+            w = word.strip()
+            if len(w) > 1:
+                vec[w] = vec.get(w, 0) + 1
+    except Exception:
+        pass
     return vec
 
 

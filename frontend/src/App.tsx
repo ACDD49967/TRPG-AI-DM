@@ -3,13 +3,15 @@
 import { useGameStore } from './store/gameStore';
 import StartScreen from './components/StartScreen';
 import GameScreen from './components/GameScreen';
+import ToastContainer from './components/ToastContainer';
 
 export default function App() {
   const screen = useGameStore((s) => s.screen);
 
-  if (screen === 'start') {
-    return <StartScreen />;
-  }
-
-  return <GameScreen />;
+  return (
+    <>
+      {screen === 'start' ? <StartScreen /> : <GameScreen />}
+      <ToastContainer />
+    </>
+  );
 }

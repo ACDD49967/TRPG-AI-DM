@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
+import { useToastStore } from '../store/toastStore';
 import RulebookModal from './RulebookModal';
 import {
   COC_ATTRIBUTES,
@@ -185,6 +186,7 @@ export default function StartScreen(){
   const [scenarioSummary,setScenarioSummary]=useState('');
   const [sourceChunks,setSourceChunks]=useState<string[]>([]);
   const [importBusy,setImportBusy]=useState(false);
+  const [importProgress,setImportProgress]=useState(0);
   const [importErr,setImportErr]=useState('');
   const [importFileName,setImportFileName]=useState('');
 
@@ -226,6 +228,7 @@ export default function StartScreen(){
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState('');
   const setSession=useGameStore(s=>s.setSession);
+  const showToast=useToastStore(s=>s.showToast);
 
   // 自动加载已保存剧本
   useEffect(()=>{
@@ -243,6 +246,14 @@ export default function StartScreen(){
   useEffect(()=>{saveConfig({apiKey,modelName,baseUrl,username});},[apiKey,modelName,baseUrl,username]);
   useEffect(()=>{localStorage.setItem('dnd_thinking', JSON.stringify(thinkingStrength));},[thinkingStrength]);
   useEffect(()=>{localStorage.setItem('dnd_endpoints', JSON.stringify(endpointPresets));},[endpointPresets]);
+  // 统一 Toast 通知
+  useEffect(()=>{ if(error) showToast(error,'error'); },[error,showToast]);
+  useEffect(()=>{ if(worldGenErr) showToast(worldGenErr,'error'); },[worldGenErr,showToast]);
+  useEffect(()=>{ if(importErr) showToast(importErr,'error'); },[importErr,showToast]);
+  useEffect(()=>{ if(aiErr) showToast(aiErr,'error'); },[aiErr,showToast]);
+  useEffect(()=>{ if(kbErr) showToast(kbErr,'error'); },[kbErr,showToast]);
+  useEffect(()=>{ if(extErr) showToast(extErr,'error'); },[extErr,showToast]);
+  useEffect(()=>{ if(mediaErr) showToast(mediaErr,'error'); },[mediaErr,showToast]);
   // 进入存档页时刷新存档列表，避免显示已删除/过期存档
   useEffect(()=>{
     if(step===5){
@@ -463,6 +474,10 @@ export default function StartScreen(){
 
   const importScenario=async(file:File)=>{
     setImportBusy(true);setImportErr('');setImportFileName(file.name);
+    setImportProgress(5);
+    const progressTimer = window.setInterval(()=>{
+      setImportProgress(p=>Math.min(90, p + 3));
+    }, 500);
     try{
       const fd=new FormData();
       fd.append('file',file);
@@ -491,7 +506,12 @@ export default function StartScreen(){
       fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
       loadKb();
     }catch(e:unknown){setImportErr(e instanceof Error?e.message:'导入失败');}
-    finally{setImportBusy(false);}
+    finally{
+      window.clearInterval(progressTimer);
+      setImportProgress(100);
+      window.setTimeout(()=>setImportProgress(0), 800);
+      setImportBusy(false);
+    }
   };
 
   const loadKb=async()=>{
@@ -1461,7 +1481,15 @@ export default function StartScreen(){
                   </div>
                 </div>
 
-                {importBusy&&<p className="text-xs text-indigo-600 animate-pulse">正在读取、切分并生成剧本（需要多次AI调用）...</p>}
+                {importBusy&&(
+                  <div className="mt-2">
+                    <p className="text-xs text-indigo-600 animate-pulse">正在读取、切分并生成剧本（需要多次AI调用）...</p>
+                    <div className="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{width:`${importProgress}%`}} />
+                    </div>
+                    <p className="text-[9px] text-gray-400 mt-0.5">{importProgress}%</p>
+                  </div>
+                )}
                 {importErr&&<p className="text-red-500 text-xs">{importErr}</p>}
               </div>
               )}

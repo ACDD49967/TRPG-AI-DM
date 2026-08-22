@@ -4,19 +4,49 @@ import { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 
-/** 渲染一段叙事文本，处理分段和格式化 */
+/** 轻量 Markdown 内联渲染：粗体/斜体/删除线 */
+function renderInline(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={i} className="font-semibold text-gray-900">{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={i} className="italic text-gray-800">{part.slice(1, -1)}</em>;
+    }
+    if (part.startsWith('~~') && part.endsWith('~~')) {
+      return <span key={i} className="line-through text-gray-400">{part.slice(2, -2)}</span>;
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
+
+/** 渲染一段叙事文本，支持基础 Markdown */
 function NarrativeBlock({ text }: { text: string }) {
-  // 按空行分段，每段独立渲染
   const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim());
-  if (paragraphs.length <= 1) {
-    // 单段：保留换行但作为 <br>
-    return <p className="text-gray-700 text-sm leading-relaxed whitespace-pre-line">{text}</p>;
-  }
   return (
     <div className="space-y-2">
-      {paragraphs.map((p, i) => (
-        <p key={i} className="text-gray-700 text-sm leading-relaxed whitespace-pre-line">{p.trim()}</p>
-      ))}
+      {paragraphs.map((p, i) => {
+        const trimmed = p.trim();
+        if (trimmed.startsWith('### ')) {
+          return <h4 key={i} className="text-sm font-bold text-gray-900 mt-1">{renderInline(trimmed.slice(4))}</h4>;
+        }
+        if (trimmed.startsWith('## ')) {
+          return <h3 key={i} className="text-base font-bold text-gray-900 mt-1">{renderInline(trimmed.slice(3))}</h3>;
+        }
+        if (trimmed.startsWith('# ')) {
+          return <h2 key={i} className="text-lg font-bold text-gray-900 mt-1">{renderInline(trimmed.slice(2))}</h2>;
+        }
+        const lines = trimmed.split('\n');
+        if (lines.length > 1 && lines.every(l => l.trim().startsWith('- '))) {
+          return (
+            <ul key={i} className="space-y-1 pl-4 list-disc marker:text-gray-400">
+              {lines.map((l, j) => <li key={j} className="text-gray-700 text-sm leading-relaxed">{renderInline(l.trim().slice(2))}</li>)}
+            </ul>
+          );
+        }
+        return <p key={i} className="text-gray-700 text-sm leading-relaxed whitespace-pre-line">{renderInline(trimmed)}</p>;
+      })}
     </div>
   );
 }

@@ -770,6 +770,13 @@ async def load_save_api(payload: dict):
     if state.character_info.get("extension_ids"):
         from backend.extension_manager import activate_extensions_into_kb
         activate_extensions_into_kb(username, state.character_info["extension_ids"])
+    # 从 SQLite 加载跨存档长期记忆
+    try:
+        from backend.long_term_memory import load_facts
+        for fact in load_facts(username):
+            state.memory.add_world_fact(fact)
+    except Exception:
+        pass
     return {
         "session_id": session_id,
         "character_id": state.character_id,
@@ -1529,6 +1536,12 @@ async def create_new_game(request: NewGameRequest):
         # 长短记忆：精简模式保留 5 轮，深度模式保留 10 轮，超出部分触发摘要压缩
         s.memory.max_active_turns = 5 if request.play_mode == "lite" else 10
         s.memory.summary_trigger = s.memory.max_active_turns + 1
+        try:
+            from backend.long_term_memory import load_facts
+            for fact in load_facts(s.username):
+                s.memory.add_world_fact(fact)
+        except Exception:
+            pass
 
         # 启用扩展包：写入知识库，供 RAG 检索
         if request.extension_ids:

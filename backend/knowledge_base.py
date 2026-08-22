@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from rank_bm25 import BM25Okapi
+
 from backend.engine.game_systems import (
     build_stat_glossary,
     build_system_rule_block,
@@ -229,8 +231,10 @@ class KnowledgeBase:
         n = max(1, len(candidates))
         idf = {term: math.log((n + 1) / (freq + 1)) + 1 for term, freq in df.items()}
 
-        scored = []
-        for doc, idx, chunk in candidates:
+        # TF-IDF 得分
+        tfidf_scores: list[float] = []
+        corpus_tokens = [_tokenize(chunk) for _, _, chunk in candidates]
+        for _, _, chunk in candidates:
             c_terms = _tokenize(chunk)
             c_tf = Counter(c_terms)
             q_tf = Counter(q_terms)
@@ -238,9 +242,25 @@ class KnowledgeBase:
             for term, qf in q_tf.items():
                 if term in c_tf:
                     score += qf * idf.get(term, 1.0) * (1 + math.log(c_tf[term]))
-            # 长度归一化，避免长文本无脑占优
             score = score / (1 + math.log(len(c_terms) + 1))
-            if score > 0:
+            tfidf_scores.append(score)
+
+        # BM25 稀疏检索得分
+        bm25 = BM25Okapi(corpus_tokens)
+        bm25_scores = bm25.get_scores(q_terms)
+
+        def _norm(vals: list[float]) -> list[float]:
+            m = max(vals) if vals else 1.0
+            return [v / m if m > 0 else 0.0 for v in vals]
+
+        tfidf_norm = _norm(tfidf_scores)
+        bm25_norm = _norm(bm25_scores)
+
+        scored = []
+        for (doc, idx, chunk), tfidf_v, bm25_v in zip(candidates, tfidf_norm, bm25_norm):
+            # 0.6 TF-IDF + 0.4 BM25 融合
+            final = 0.6 * tfidf_v + 0.4 * bm25_v
+            if final > 0:
                 scored.append({
                     "doc_id": doc["id"],
                     "title": _safe_title(doc.get("title", "")),
@@ -248,7 +268,7 @@ class KnowledgeBase:
                     "system": doc.get("system", ""),
                     "chunk_index": idx,
                     "text": chunk,
-                    "score": round(score, 4),
+                    "score": round(final, 4),
                 })
 
         scored.sort(key=lambda x: x["score"], reverse=True)

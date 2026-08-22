@@ -848,7 +848,7 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "dice_roll": _exec_dice_roll,
         "update_state": _exec_update_state,
         "combat_round": _exec_combat_round,
-        "add_memory": lambda a,s: (s.memory.add_world_fact(a.get("memory_text","")) or "已记录"),
+        "add_memory": _exec_add_memory,
         "suggest_choices": _exec_suggest_choices,
         "death_saving_throw": _exec_death_save,
         "take_rest": _exec_rest,
@@ -1004,6 +1004,19 @@ async def _exec_update_state(args: dict, state: GameSessionState) -> str:
     if applied:
         await push_event(state, "state_update", applied)
     return f"状态更新 ({reason}): {json.dumps(applied, ensure_ascii=False)}"
+
+
+async def _exec_add_memory(args: dict, state: GameSessionState) -> str:
+    fact = args.get("memory_text", "").strip()
+    if not fact:
+        return "未记录（空内容）"
+    state.memory.add_world_fact(fact)
+    try:
+        from backend.long_term_memory import store_fact
+        store_fact(state.username, fact)
+    except Exception:
+        pass
+    return f"已记录: {fact}"
 
 
 async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
@@ -1319,6 +1332,61 @@ def _play_mode(s: GameSessionState) -> str:
     return mode if mode in ("lite", "deep") else "deep"
 
 
+COMPRESS_SUMMARY_PROMPT = """你是 TRPG 记忆压缩器。请把以下对话轮次压缩为不超过300字的中文摘要。
+
+要求：
+1. 保留：关键事件、NPC、地点、线索、玩家选择及其后果。
+2. 使用第三人称客观语气，不添加解释，不编造内容。
+3. 如果已有旧摘要，先自然衔接旧摘要，再补充新事件。
+4. 只输出摘要正文，不要标题、不要JSON、不要Markdown代码块。
+
+旧摘要：
+{old_summary}
+
+待压缩轮次：
+{transcript}
+"""
+
+
+async def compress_memory_if_needed(state: GameSessionState):
+    """当活跃对话轮数超过阈值时，用 LLM 压缩旧轮次为摘要。"""
+    mem = state.memory
+    if len(mem.turns) <= mem.summary_trigger:
+        return
+    overflow = len(mem.turns) - mem.max_active_turns
+    if overflow <= 0:
+        return
+
+    old_turns = mem.turns[:overflow]
+    transcript = "\n".join(
+        f"玩家: {t.player_input}\nDM: {t.dm_response[:300]}" for t in old_turns
+    )
+    try:
+        client = _client(state)
+        model = _model(state)
+        resp = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=model,
+                messages=[{
+                    "role": "user",
+                    "content": COMPRESS_SUMMARY_PROMPT.format(old_summary=mem.summary or "无", transcript=transcript[:4000]),
+                }],
+                max_tokens=800,
+                temperature=0.3,
+            ),
+            timeout=60,
+        )
+        summary = (resp.choices[0].message.content or "").strip()
+        if summary:
+            mem.summary = summary[:1200]
+            mem.turns = mem.turns[overflow:]
+            return
+    except Exception as e:
+        from backend.logging_utils import get_logger
+        get_logger("dm_agent.memory").warning("LLM摘要失败，使用提取式摘要: %s", e)
+    mem._maybe_summarise()
+
+
 def _thinking_params(s: GameSessionState) -> tuple[float, float]:
     """返回 (max_tokens倍率, 温度修正)，用于“思维强度”调节。"""
     ts = getattr(s, "thinking_strength", "medium")
@@ -1506,6 +1574,7 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
 
         await push_event(state, "end_of_turn", {})
         state.memory.add_turn(player_input=player_input, dm_response=full)
+        await compress_memory_if_needed(state)
         # 写入问答缓存（限制大小，避免无限增长）
         state.response_cache[cache_key] = full
         if len(state.response_cache) > 50:
