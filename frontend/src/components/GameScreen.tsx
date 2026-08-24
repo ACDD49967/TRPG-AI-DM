@@ -64,7 +64,7 @@ export default function GameScreen() {
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
   const [dmMap, setDmMap] = useState({ name: '', description: '' });
   const [dmBeast, setDmBeast] = useState({ name: '', description: '', stats: '' });
-  const [dmSpell, setDmSpell] = useState({ name: '', description: '', level: '0', school: '' });
+  const [dmSpell, setDmSpell] = useState({ name: '', description: '', level: '0', school: '', ritual: false, casting_time: '', range: '', components: '', duration: '', classes: '' });
   const [dmNpcImage, setDmNpcImage] = useState<File | null>(null);
   const [dmMapImage, setDmMapImage] = useState<File | null>(null);
   const [dmBeastImage, setDmBeastImage] = useState<File | null>(null);
@@ -176,10 +176,14 @@ export default function GameScreen() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: u, name: dmSpell.name, description: dmSpell.description,
-          level: dmSpell.level, school: dmSpell.school, system: status.game_system || 'custom', scenario_id: sid,
+          level: dmSpell.level, school: dmSpell.school, ritual: dmSpell.ritual,
+          casting_time: dmSpell.casting_time, range: dmSpell.range,
+          components: dmSpell.components, duration: dmSpell.duration,
+          classes: dmSpell.classes.split(/[,，]/).map(s=>s.trim()).filter(Boolean),
+          system: status.game_system || 'custom', scenario_id: sid,
         }),
       });
-      setDmSpell({ name: '', description: '', level: '0', school: '' });
+      setDmSpell({ name: '', description: '', level: '0', school: '', ritual: false, casting_time: '', range: '', components: '', duration: '', classes: '' });
       useGameStore.getState().bumpMediaVersion();
     } catch {}
   };
@@ -661,14 +665,22 @@ export default function GameScreen() {
               <button onClick={addDmBeast} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增生物</button>
             </div>
 
-            {/* 新增法术/仪式 */}
+            {/* 新增法术/仪式（玩家/DM 自建） */}
             <div className="mt-4 pt-3 border-t border-amber-900/10">
-              <p className="text-xs font-bold text-gray-700 mb-2">新增法术 / 仪式</p>
+              <p className="text-xs font-bold text-gray-700 mb-2">新增法术 / 仪式（玩家或 DM 自建）</p>
               <div className="grid grid-cols-2 gap-2">
                 <input value={dmSpell.name} onChange={e=>setDmSpell({...dmSpell,name:e.target.value})} placeholder="法术名称 *" className="input-field text-xs" />
-                <input value={dmSpell.level} onChange={e=>setDmSpell({...dmSpell,level:e.target.value})} placeholder="环位" className="input-field text-xs" />
-                <input value={dmSpell.school} onChange={e=>setDmSpell({...dmSpell,school:e.target.value})} placeholder="学派" className="input-field text-xs" />
-                <textarea value={dmSpell.description} onChange={e=>setDmSpell({...dmSpell,description:e.target.value})} placeholder="效果描述" rows={2} className="input-field text-xs resize-none" />
+                <input value={dmSpell.level} onChange={e=>setDmSpell({...dmSpell,level:e.target.value})} placeholder="环位（0=戏法）" className="input-field text-xs" />
+                <input value={dmSpell.school} onChange={e=>setDmSpell({...dmSpell,school:e.target.value})} placeholder="学派（塑能/防护/...）" className="input-field text-xs" />
+                <input value={dmSpell.casting_time} onChange={e=>setDmSpell({...dmSpell,casting_time:e.target.value})} placeholder="施法时间（1 动作）" className="input-field text-xs" />
+                <input value={dmSpell.range} onChange={e=>setDmSpell({...dmSpell,range:e.target.value})} placeholder="施法距离（150 尺/触及/自身）" className="input-field text-xs" />
+                <input value={dmSpell.components} onChange={e=>setDmSpell({...dmSpell,components:e.target.value})} placeholder="成分（V、S、M）" className="input-field text-xs" />
+                <input value={dmSpell.duration} onChange={e=>setDmSpell({...dmSpell,duration:e.target.value})} placeholder="持续时间（立即/专注）" className="input-field text-xs" />
+                <input value={dmSpell.classes} onChange={e=>setDmSpell({...dmSpell,classes:e.target.value})} placeholder="职业（术士、法师）" className="input-field text-xs" />
+                <label className="col-span-2 flex items-center gap-2 text-[10px] text-gray-500">
+                  <input type="checkbox" checked={dmSpell.ritual} onChange={e=>setDmSpell({...dmSpell,ritual:e.target.checked})} /> 仪式法术
+                </label>
+                <textarea value={dmSpell.description} onChange={e=>setDmSpell({...dmSpell,description:e.target.value})} placeholder="效果描述（含伤害、豁免、升环效应）" rows={3} className="input-field text-xs resize-none col-span-2" />
               </div>
               <button onClick={addDmSpell} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增法术</button>
             </div>

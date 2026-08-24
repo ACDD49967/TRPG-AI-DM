@@ -6,6 +6,10 @@ import { useGameStore } from '../store/gameStore';
 
 type InvItem = string | { name: string; description?: string; quantity?: number; type?: string; properties?: Record<string, unknown> };
 function itemName(it: InvItem): string { return typeof it === 'string' ? it : it.name || '未知物品'; }
+function itemLabel(it: InvItem): string {
+  const q = typeof it === 'object' && it.quantity && it.quantity > 1 ? ` ×${it.quantity}` : '';
+  return `${itemName(it)}${q}`;
+}
 function itemDesc(it: InvItem): string {
   if (typeof it === 'object' && it.description) return it.description;
   const name = itemName(it);
@@ -186,7 +190,7 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">武器</p>
             {weapons.map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemName(item)}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}</button>
             ))}
           </div>
         )}
@@ -195,7 +199,7 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">防具</p>
             {armor.map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemName(item)}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}</button>
             ))}
           </div>
         )}
@@ -204,7 +208,7 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">药水</p>
             {potions.map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemName(item)}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}</button>
             ))}
           </div>
         )}
@@ -213,7 +217,7 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">杂物</p>
             {misc.slice(0, 6).map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemName(item)}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}</button>
             ))}
             {misc.length > 6 && <p className="text-[8px] text-gray-400">...还有{misc.length - 6}件</p>}
           </div>

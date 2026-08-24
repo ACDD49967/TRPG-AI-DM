@@ -152,9 +152,39 @@ class Scenario:
         self.save()
 
 
+def _migrate_legacy_scenarios(username: str):
+    """把 legacy 根目录剧本迁移到当前用户目录，使已有剧本立即可见。"""
+    safe = _safe_username(username)
+    if safe == "default" or not os.path.isdir(SCENARIO_DIR):
+        return
+    for fname in os.listdir(SCENARIO_DIR):
+        if not fname.endswith(".json"):
+            continue
+        legacy = os.path.join(SCENARIO_DIR, fname)
+        try:
+            with open(legacy, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        owner = (data.get("meta") or {}).get("username", "")
+        if owner and owner != username:
+            continue
+        data.setdefault("meta", {})["username"] = username
+        target_dir = _user_scenario_dir(username)
+        os.makedirs(target_dir, exist_ok=True)
+        with open(os.path.join(target_dir, fname), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        try:
+            os.remove(legacy)
+        except Exception:
+            pass
+
+
 def list_scenarios(username: str | None = None) -> list[dict]:
     """列出用户可见的剧本。default 用户同时可见 legacy 根目录剧本。"""
     os.makedirs(SCENARIO_DIR, exist_ok=True)
+    if username:
+        _migrate_legacy_scenarios(username)
     directories: list[str] = []
     if username:
         directories.append(_user_scenario_dir(username))

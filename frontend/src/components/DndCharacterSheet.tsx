@@ -13,8 +13,10 @@ function mod(v: number): string {
   return `${m >= 0 ? '+' : ''}${m}`;
 }
 
-function invName(it: string | { name: string }): string {
-  return typeof it === 'string' ? it : it.name || '未知物品';
+function invName(it: string | { name: string; quantity?: number }): string {
+  const name = typeof it === 'string' ? it : it.name || '未知物品';
+  const q = typeof it === 'object' && it.quantity && it.quantity > 1 ? ` ×${it.quantity}` : '';
+  return `${name}${q}`;
 }
 
 const SKILL_ATTR: Record<string, string> = {

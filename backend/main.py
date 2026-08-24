@@ -924,6 +924,7 @@ async def add_spell_api(payload: dict):
         duration=str(payload.get("duration") or ""),
         classes=payload.get("classes") or [],
         scenario_id=str(payload.get("scenario_id") or ""),
+        tags=payload.get("tags") or ["自建", "法术"],
     )
     return {"spell": item}
 

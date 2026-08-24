@@ -56,19 +56,19 @@ const RACES:Record<string,{name:string;traits:string[]}>={
   '侏儒':{name:'侏儒',traits:['黑暗视觉60尺','侏儒狡黠','工匠知识']},
 };
 
-const CLASSES:Record<string,{name:string;pri:string;hd:string;profs:string[]}>={
+const CLASSES:Record<string,{name:string;pri:string;hd:string;profs:string[];cantrips?:number;spells?:number;prepared?:boolean}>={
   '战士':{name:'战士',pri:'str',hd:'d10',profs:['全盔甲·盾牌','军用/简易武器','运动·威吓']},
-  '法师':{name:'法师',pri:'int',hd:'d6',profs:['匕首·飞镖·投石索·棍棒·轻弩','奥秘·调查']},
+  '法师':{name:'法师',pri:'int',hd:'d6',cantrips:3,spells:6,prepared:true,profs:['匕首·飞镖·投石索·棍棒·轻弩','奥秘·调查']},
   '游荡者':{name:'游荡者',pri:'dex',hd:'d8',profs:['轻甲','简易武器·手弩·长剑·细剑·短剑','盗贼工具','潜行·巧手·察觉·洞悉']},
-  '牧师':{name:'牧师',pri:'wis',hd:'d8',profs:['中甲·盾牌','简易武器','宗教·医药']},
+  '牧师':{name:'牧师',pri:'wis',hd:'d8',cantrips:3,spells:0,prepared:true,profs:['中甲·盾牌','简易武器','宗教·医药']},
   '游侠':{name:'游侠',pri:'dex',hd:'d10',profs:['中甲·盾牌','军用/简易武器','生存·自然·察觉']},
-  '吟游诗人':{name:'吟游诗人',pri:'cha',hd:'d8',profs:['轻甲','简易武器·手弩·长剑·细剑·短剑','3种乐器','表演·游说·历史']},
+  '吟游诗人':{name:'吟游诗人',pri:'cha',hd:'d8',cantrips:2,spells:4,profs:['轻甲','简易武器·手弩·长剑·细剑·短剑','3种乐器','表演·游说·历史']},
   '野蛮人':{name:'野蛮人',pri:'str',hd:'d12',profs:['中甲·盾牌','军用/简易武器','运动·自然·威吓']},
   '圣武士':{name:'圣武士',pri:'str',hd:'d10',profs:['全盔甲·盾牌','军用/简易武器','游说·宗教']},
   '武僧':{name:'武僧',pri:'dex',hd:'d8',profs:['简易武器·短剑','巧手·运动·洞悉·隐匿']},
-  '术士':{name:'术士',pri:'cha',hd:'d6',profs:['匕首·飞镖·投石索·棍棒·轻弩','奥秘·欺瞒']},
-  '德鲁伊':{name:'德鲁伊',pri:'wis',hd:'d8',profs:['中甲·盾牌(非金属)','木棒·匕首·飞镖·投石索·弯刀·矛','自然·生存·驯兽']},
-  '邪术师':{name:'邪术师',pri:'cha',hd:'d8',profs:['轻甲','简易武器','奥秘·欺瞒·威吓·调查']},
+  '术士':{name:'术士',pri:'cha',hd:'d6',cantrips:4,spells:2,profs:['匕首·飞镖·投石索·棍棒·轻弩','奥秘·欺瞒']},
+  '德鲁伊':{name:'德鲁伊',pri:'wis',hd:'d8',cantrips:2,spells:0,prepared:true,profs:['中甲·盾牌(非金属)','木棒·匕首·飞镖·投石索·弯刀·矛','自然·生存·驯兽']},
+  '邪术师':{name:'邪术师',pri:'cha',hd:'d8',cantrips:2,spells:2,profs:['轻甲','简易武器','奥秘·欺瞒·威吓·调查']},
 };
 
 const SKILLS=[
@@ -82,6 +82,13 @@ const SKILLS=[
   {n:'威吓',a:'cha',d:'胁迫、施压'},{n:'表演',a:'cha',d:'演出、演说'},
   {n:'游说',a:'cha',d:'谈判、说服'},
 ];
+
+interface SpellOption {
+  id: string; name: string; system: string; description: string;
+  level: string; school: string; ritual: boolean;
+  casting_time: string; range: string; components: string; duration: string;
+  classes: string[]; scenario_id?: string; tags?: string[];
+}
 
 const TONES=[
   '史诗奇幻','黑暗奇幻','悬疑探案','轻松幽默','末日废土','东方武侠','哥特恐怖','蒸汽朋克',
@@ -146,6 +153,11 @@ export default function StartScreen(){
 
   // 技能熟练选择（选2项）
   const [skillPicks,setSkillPicks]=useState<string[]>([]);
+
+  // 法术池与创建期法术选择
+  const [spellPool,setSpellPool]=useState<SpellOption[]>([]);
+  const [spellPicks,setSpellPicks]=useState<SpellOption[]>([]);
+  const [spellPoolBusy,setSpellPoolBusy]=useState(false);
 
   // 世界
   const [worldDesc,setWorldDesc]=useState('');
@@ -242,6 +254,20 @@ export default function StartScreen(){
     fetch(`/api/characters?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setCharCards(d.cards||[])).catch(()=>{});
   },[username]);
 
+  // 法术池（内置经典 + 知识库 SRD 自动抓取）
+  useEffect(()=>{
+    if(gameSystem!=='dnd5e')return;
+    setSpellPoolBusy(true);
+    fetch(`/api/spells?username=${encodeURIComponent(username||'default')}&scenario_id=`)
+      .then(r=>r.json())
+      .then(d=>setSpellPool((d.spells||[]).filter((s:SpellOption)=>s.system==='dnd5e')))
+      .catch(()=>{})
+      .finally(()=>setSpellPoolBusy(false));
+  },[username,gameSystem]);
+
+  // 切换职业/种族时清空已选法术，避免带入不合法选项
+  useEffect(()=>{setSpellPicks([]);},[charClass,race,gameSystem]);
+
   // 自动保持配置（每次关键字段变化）
   useEffect(()=>{saveConfig({apiKey,modelName,baseUrl,username});},[apiKey,modelName,baseUrl,username]);
   useEffect(()=>{localStorage.setItem('dnd_thinking', JSON.stringify(thinkingStrength));},[thinkingStrength]);
@@ -304,6 +330,27 @@ export default function StartScreen(){
   },[attrs,aiGen,gameSystem,cocAttrs,customAttrs]);
   const rc=RACES[race]||RACES['人类'];
   const cc=CLASSES[charClass]||CLASSES['战士'];
+
+  // ── 法术选择：按职业/种族配额 ──
+  const wisMod = Math.floor((Number(finalAttrs.wis ?? 10)-10)/2);
+  const cantripQuota = (cc.cantrips||0) + (race==='高等精灵'?1:0);
+  const spellQuota = cc.prepared && cc.spells===0 ? Math.max(1, wisMod+1) : (cc.spells||0);
+  const availableCantrips = spellPool.filter(s=>s.level==='0' && (
+    (s.classes||[]).includes(cc.name) || (race==='高等精灵'&&(s.classes||[]).includes('法师'))
+  ));
+  const availableLevel1 = spellPool.filter(s=>s.level==='1' && (s.classes||[]).includes(cc.name));
+  const selectedCantrips = spellPicks.filter(p=>p.level==='0');
+  const selectedLevel1 = spellPicks.filter(p=>p.level!=='0');
+  const toggleSpell=(spell:SpellOption)=>{
+    setSpellPicks(prev=>{
+      const exists=prev.some(s=>s.name===spell.name);
+      if(exists)return prev.filter(s=>s.name!==spell.name);
+      const isCantrip=spell.level==='0';
+      if(isCantrip && selectedCantrips.length>=cantripQuota)return prev;
+      if(!isCantrip && selectedLevel1.length>=spellQuota)return prev;
+      return [...prev,spell];
+    });
+  };
   const customClasses = customClassesText.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
   const customSkills = customSkillsText.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
   const extraAttributes: Record<string,string> = {};
@@ -824,6 +871,11 @@ export default function StartScreen(){
         custom_classes:customClasses,
         custom_skills:customSkills,
         extra_attributes:extraAttributes,
+        known_spells:gameSystem==='dnd5e'?spellPicks.map(s=>({
+          name:s.name,level:s.level,school:s.school,description:s.description,
+          casting_time:s.casting_time,range:s.range,components:s.components,
+          duration:s.duration,classes:s.classes,ritual:s.ritual,prepared:true,
+        })):[],
       })});
       if(!r.ok){const e=await r.json();throw new Error(e.detail||'创建失败');}
       setSession((await r.json()).session_id);
@@ -1062,6 +1114,62 @@ export default function StartScreen(){
                   </div>
                 </div>
               )}
+
+              {/* 戏法与法术选择（D&D 5e 施法职业） */}
+              {gameSystem==='dnd5e' && (cantripQuota>0 || spellQuota>0) && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-2">
+                    戏法与法术选择
+                    <span className="text-gray-400 font-normal">（戏法 {selectedCantrips.length}/{cantripQuota} · 一环法术 {selectedLevel1.length}/{spellQuota}）</span>
+                  </label>
+                  {spellPoolBusy&&<p className="text-[10px] text-gray-400 mb-1">正在加载法术池（首次会从知识库自动抓取 SRD 法术）...</p>}
+                  {!spellPoolBusy && availableCantrips.length===0 && availableLevel1.length===0 && (
+                    <p className="text-[10px] text-gray-400">该职业暂无可用法术列表。</p>
+                  )}
+                  {availableCantrips.length>0 && (
+                    <div className="mb-2">
+                      <p className="text-[10px] text-indigo-600 font-medium mb-1">戏法（等级0）</p>
+                      <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+                        {availableCantrips.map(s=>{
+                          const sel=spellPicks.some(p=>p.name===s.name);
+                          return (
+                            <button key={s.name} onClick={()=>toggleSpell(s)} className={`w-full text-left p-2 rounded-lg border text-xs transition-all ${sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium">{s.name}</span>
+                                <span className="text-[9px] text-gray-400">{s.school}</span>
+                              </div>
+                              <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{s.description}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {availableLevel1.length>0 && (
+                    <div>
+                      <p className="text-[10px] text-indigo-600 font-medium mb-1">一环法术</p>
+                      <div className="space-y-1 max-h-44 overflow-y-auto pr-1">
+                        {availableLevel1.map(s=>{
+                          const sel=spellPicks.some(p=>p.name===s.name);
+                          return (
+                            <button key={s.name} onClick={()=>toggleSpell(s)} className={`w-full text-left p-2 rounded-lg border text-xs transition-all ${sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium">{s.name}</span>
+                                <span className="text-[9px] text-gray-400">{s.school}{s.ritual?' · 仪式':''}</span>
+                              </div>
+                              <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{s.description}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {spellPicks.length>0 && (
+                    <p className="text-[10px] text-indigo-500 mt-1">已选: {spellPicks.map(s=>s.name).join('、')}</p>
+                  )}
+                </div>
+              )}
+
               {gameSystem==='coc'&&(
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-2">调查员职业</label>
