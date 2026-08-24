@@ -313,6 +313,18 @@ class WorldState:
         self._log_change(f"新增NPC: {entry.name} ({entry.role})")
         self.save()
 
+    def add_location(self, entry: "LocationEntry"):
+        """新增/更新地点实体（同名更新描述，不重复追加）。"""
+        for i, loc in enumerate(self.locations):
+            if loc.name == entry.name:
+                self.locations[i] = entry
+                self._log_change(f"地点更新: {entry.name}")
+                self.save()
+                return
+        self.locations.append(entry)
+        self._log_change(f"新增地点: {entry.name}")
+        self.save()
+
     def set_flag(self, key: str, status: str, description: str = "", consequence: str = ""):
         for f in self.plot_flags:
             if f.key == key:

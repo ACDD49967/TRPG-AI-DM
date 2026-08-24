@@ -23,6 +23,7 @@
 
 - Function Calling 工具化处理：属性检定、战斗轮、死亡豁免、短休/长休、状态更新、世界状态、信息揭示、场景更新
 - 低 token 快捷工具：`get_character_state` 查角色状态、`adjust_resource` 增减职业资源、`cast_spell` 自动扣法术位、`learn_spell`/`forget_spell` 管理法术、`search_npcs`/`adjust_npc` 查询与增减 NPC 数值、`search_bestiary`/`adjust_bestiary` 查询与修改生物数值
+- 战斗与实体卡联动：DM 战前必须 `search_npcs`/`search_bestiary` 查卡；`combat_round` 只传动作与敌人名即可自动读取角色卡攻击/AC、NPC 卡或图鉴卡 HP/AC/攻击，并将伤害写回实际实体；图鉴怪物首次交战时自动注册为世界状态 NPC；新地点经 `update_scene` 自动写入地点列表
 - 短期记忆（精简 5 轮 / 深度 10 轮）+ 自动摘要压缩 + 按用户隔离的长期记忆
 - 按规则系统切换提示词、技能与思维链（CoT）
 - 轻量 / 标准 / 深度思考三档

@@ -204,7 +204,9 @@ B1. 碰到以下情况，必须调用对应工具，不允许用叙事代替：
     - 玩家施法 → cast_spell（自动扣法术位；先确认有对应环位）
     - 玩家习得/遗忘法术 → learn_spell / forget_spell
     - 查询/增减 NPC 数值 → search_npcs / adjust_npc
+    - 引入怪物前 → search_bestiary；图鉴没有 → add_scenario_bestiary 建卡
     - 查询/增减本局生物图鉴数值 → search_bestiary / adjust_bestiary
+    - 进入新地点 → update_scene（会自动把地点写入世界状态地点列表）；需要地图时 → add_scenario_map
     - 重要剧情事实 → add_memory
     - 玩家不知道下一步做什么 → suggest_choices
     - 玩家行动产生世界级影响 → update_world_state
@@ -213,23 +215,26 @@ B1. 碰到以下情况，必须调用对应工具，不允许用叙事代替：
     - 与NPC互动后 → add_character_note
 
 B2. 工具调用的顺序（不可跳过任何步骤）：
-    1. update_scene（如有场景变化——几乎每轮都需要检查。移动/时间流逝/天气变化/NPC进出时必须调用）
-    2. dice_roll 或 combat_round（如有检定/战斗）
-    3. 【场景校验】——战斗或检定后，确认当前场景是否仍与步骤1一致。如果战斗叙事中场景发生了变化（如从酒馆后巷进入矿道），必须再次调用update_scene
-    4. reveal_info（如检定成功揭示了隐藏信息）
-    5. update_state（如有HP/物品变化）
-    6. add_character_note（如有新的NPC印象或线索）
-    7. add_memory（如有重大事件）
-    8. update_world_state（如有世界级影响）
-    9. suggest_choices（如玩家需要引导）
+    1. update_scene（如有场景变化——几乎每轮都需要检查。移动/时间流逝/天气变化/NPC进出时必须调用；新地点会自动写入地点列表）
+    2. 涉及战斗实体时先查卡：NPC → search_npcs；怪物 → search_bestiary。查不到卡必须先建卡（update_world_state(add_npc) 或 add_scenario_bestiary），再进入战斗
+    3. dice_roll 或 combat_round（如有检定/战斗）。combat_round 会自动按角色卡/NPC卡/图鉴卡取数值并写回实体 HP，因此 enemy_name 必须与卡上名称完全一致
+    4. 【场景校验】——战斗或检定后，确认当前场景是否仍与步骤1一致。如果战斗叙事中场景发生了变化（如从酒馆后巷进入矿道），必须再次调用update_scene
+    5. reveal_info（如检定成功揭示了隐藏信息）
+    6. update_state / adjust_resource / cast_spell（如有HP/资源/法术位变化）
+    7. adjust_npc / adjust_bestiary（如需单独修正某个实体数值）
+    8. add_character_note（如有新的NPC印象或线索）
+    9. add_memory（如有重大事件）
+    10. update_world_state（如有世界级影响）
+    11. suggest_choices（如玩家需要引导）
     严重警告：如果在战斗或检定的叙事中场景发生了变化，必须立即调用update_scene修正。前一回合在酒馆后巷战斗，下一回合不能凭空出现在矿井——除非有明确的过渡叙事和update_scene调用。
 
 B3. 战斗流程（必须严格按照以下步骤）：
+    步骤0：战前查卡——敌人若是NPC调用 search_npcs；若是怪物调用 search_bestiary。找不到卡时必须先建卡：NPC 用 update_world_state(add_npc)，怪物用 add_scenario_bestiary。禁止在无卡状态下凭感觉填数值。
     步骤1：输出"⚔️ 第X轮"作为独立行（前后各空一行，不可省略、不可合并到叙事段中）。此标记是战斗结构化的核心锚点，缺失将导致玩家无法追踪战斗进程。
-    步骤2：描述当前局势（敌我位置、HP状态、环境）
+    步骤2：描述当前局势（敌我位置、HP状态、环境）——HP 必须来自 get_character_state / search_npcs 返回的真实值
     步骤3：等待玩家行动
-    步骤4：玩家行动 → 调用 combat_round
-    步骤5：工具返回结果 → 叙事该轮结果
+    步骤4：玩家行动 → 调用 combat_round(player_action=..., enemy_name=卡上名称)。无需手动填玩家或敌人数值，工具会从角色卡/NPC卡/图鉴卡自动读取，并把伤害写回实际实体
+    步骤5：工具返回结果 → 叙事该轮结果。敌人 HP 已由工具写回实体，不得再手动改一遍
     步骤6：如果敌人HP>0且玩家HP>0，回到步骤1
     步骤7：战斗结束 → 记录战利品和状态变化 → 描述至少一项发现（敌人遗物/环境线索/角色领悟/新威胁的征兆/未解之谜）。让胜利不仅是数值变化
 
@@ -1165,49 +1170,233 @@ async def _exec_add_memory(args: dict, state: GameSessionState) -> str:
     return f"已记录: {fact}"
 
 
+def _first_int(text: Any) -> int:
+    """从文本中取第一个整数（兼容 '15 (天生护甲)'、'22 (3d8+6)'）。"""
+    m = re.search(r"-?\d+", str(text or ""))
+    return int(m.group()) if m else 0
+
+
+def _first_dice(text: Any) -> str:
+    """从文本中取第一个伤害骰表达式，如 '2d6+3'。"""
+    m = re.search(r"\d+d\d+(?:\+\d+)?", str(text or ""))
+    return m.group() if m else ""
+
+
+def _weapon_dice_from_inventory(state: GameSessionState) -> str:
+    items = (state.character_info.get("inventory") or {}).get("items", []) \
+        if isinstance(state.character_info.get("inventory"), dict) else []
+    dice_map = {"巨斧": "1d12", "长戟": "1d10", "长剑": "1d8", "战斧": "1d8",
+                "细剑": "1d8", "短弓": "1d6", "短剑": "1d6", "短棍": "1d6",
+                "硬头锤": "1d6", "手斧": "1d6", "轻弩": "1d8", "长弓": "1d8",
+                "短弯刀": "1d6", "飞镖": "1d4", "小刀": "1d4"}
+    for item in items:
+        name = item.get("name") if isinstance(item, dict) else str(item)
+        for key, dice in dice_map.items():
+            if key in name:
+                desc = item.get("description") if isinstance(item, dict) else ""
+                return _first_dice(desc) or dice
+    return "1d8"
+
+
+def _player_attack_bonus(state: GameSessionState, action: str) -> int:
+    info = state.character_info
+    attrs = info.get("attributes", {})
+    prof = int(info.get("proficiency_bonus") or (2 + (int(info.get("level", 1)) - 1) // 4))
+    cc = info.get("char_class", "战士")
+    action_lower = (action or "").lower()
+    inv_items = (info.get("inventory") or {}).get("items", []) if isinstance(info.get("inventory"), dict) else []
+    finesse = any(
+        (item.get("name") if isinstance(item, dict) else str(item)) in ("细剑", "短剑", "匕首")
+        for item in inv_items
+    )
+    if any(w in action_lower for w in ("弓", "弩", "投掷", "远程", "射击", "射")):
+        attr = "dex"
+    elif cc in ("武僧", "游荡者") or finesse:
+        attr = "dex"
+    else:
+        attr = "str"
+    return ((attrs.get(attr, 10) or 10) - 10) // 2 + prof
+
+
+def _find_bestiary_card(state: GameSessionState, name: str) -> dict | None:
+    try:
+        from backend.media_manager import list_bestiary
+        scenario_id = state.character_info.get("scenario_id", "") or None
+        for item in list_bestiary(state.username or "default", scenario_id):
+            if str(item.get("name", "")) == name or str(item.get("id", "")) == name:
+                return item
+    except Exception:
+        pass
+    return None
+
+
+def _register_combatant_from_card(state: GameSessionState, name: str,
+                                  card: dict, fallback: dict) -> Any:
+    """把生物图鉴卡注册为世界状态中的实际战斗实体，返回 NpcEntry。"""
+    ws = getattr(state, "world_state", None)
+    if ws is None:
+        return None
+    npc = ws.get_npc(name)
+    if npc is not None:
+        return npc
+    stats = card.get("stats") or {}
+    attrs = {}
+    for key, label in (("力量", "str"), ("敏捷", "dex"), ("体质", "con"),
+                       ("智力", "int"), ("感知", "wis"), ("魅力", "cha")):
+        score = _first_int(stats.get(key, ""))
+        if score:
+            attrs[label] = score
+    level = _first_int(stats.get("等级", stats.get("挑战等级", stats.get("CR", "")))) or 1
+    ac = _first_int(stats.get("AC", stats.get("ac", ""))) or int(fallback.get("e_ac", 10))
+    hp = _first_int(stats.get("HP", stats.get("hp", ""))) or int(fallback.get("e_hp", 10))
+    traits = []
+    for key in ("特性", "动作", "Traits", "Actions"):
+        if stats.get(key):
+            traits.append(str(stats[key]))
+    if stats.get("技能") or stats.get("skills"):
+        skills = [str(stats.get("技能") or stats.get("skills"))]
+    else:
+        skills = []
+    entry = NpcEntry(
+        name=name,
+        role="生物（图鉴）",
+        location=ws.scene.current_location or "未知",
+        attitude="敌对",
+        alive=True,
+        level=level,
+        ac=ac,
+        hp=hp,
+        max_hp=hp,
+        attributes=attrs,
+        skills=skills,
+        traits=traits,
+        image_path=card.get("image_path", ""),
+    )
+    ws.add_npc(entry)
+    return entry
+
+
+def _resolve_enemy_from_cards(state: GameSessionState, enemy: str, args: dict) -> dict:
+    """从 NPC 卡 / 生物图鉴卡解析敌人战斗数值；无卡时按参数生成临时实体。"""
+    fallback = {
+        "e_ac": int(args.get("enemy_ac", 13) or 13),
+        "e_mod": int(args.get("enemy_attack_modifier", 3) or 3),
+        "e_dice": str(args.get("enemy_damage_dice", "1d6") or "1d6"),
+        "e_hp": int(args.get("enemy_hp", 20) or 20),
+    }
+    ws = getattr(state, "world_state", None)
+    if ws is not None:
+        npc = ws.get_npc(enemy)
+        if npc is not None:
+            attrs = npc.attributes or {}
+            prof = 2 + (max(1, min(20, int(npc.level or 1))) - 1) // 4
+            atk_attr = max(((attrs.get(k, 10) or 10) - 10) // 2 for k in ("str", "dex"))
+            traits_text = " ".join(npc.traits or [])
+            return {
+                "npc": npc,
+                "e_ac": int(args.get("enemy_ac", 0) or npc.ac or fallback["e_ac"]),
+                "e_mod": int(args.get("enemy_attack_modifier", 0) or (atk_attr + prof) or fallback["e_mod"]),
+                "e_dice": str(args.get("enemy_damage_dice", "") or _first_dice(traits_text) or fallback["e_dice"]),
+                "e_hp": int(args.get("enemy_hp", 0) or npc.hp or fallback["e_hp"]),
+            }
+    card = _find_bestiary_card(state, enemy)
+    if card:
+        npc = _register_combatant_from_card(state, enemy, card, fallback)
+        if npc is not None:
+            attrs = npc.attributes or {}
+            prof = 2 + (max(1, min(20, int(npc.level or 1))) - 1) // 4
+            atk_attr = max(((attrs.get(k, 10) or 10) - 10) // 2 for k in ("str", "dex"))
+            traits_text = " ".join(npc.traits or [])
+            return {
+                "npc": npc,
+                "e_ac": int(args.get("enemy_ac", 0) or npc.ac),
+                "e_mod": int(args.get("enemy_attack_modifier", 0) or (atk_attr + prof)),
+                "e_dice": str(args.get("enemy_damage_dice", "") or _first_dice(traits_text) or fallback["e_dice"]),
+                "e_hp": int(args.get("enemy_hp", 0) or npc.hp),
+            }
+    if ws is not None:
+        npc = ws.get_npc(enemy) or NpcEntry(
+            name=enemy, role="临时敌人", location=ws.scene.current_location or "未知",
+            attitude="敌对", level=1, ac=fallback["e_ac"],
+            hp=fallback["e_hp"], max_hp=fallback["e_hp"],
+        )
+        if ws.get_npc(enemy) is None:
+            ws.add_npc(npc)
+        fallback["npc"] = npc
+    return fallback
+
+
+async def _persist_combat_damage(state: GameSessionState, npc: Any, new_hp: int):
+    """把敌人 HP 写回世界状态实体，并在阵亡时标记死亡。"""
+    if npc is None:
+        return
+    npc.hp = max(0, new_hp)
+    if new_hp <= 0:
+        npc.alive = False
+    ws = getattr(state, "world_state", None)
+    if ws is not None:
+        ws.save()
+        try:
+            await push_event(state, "journal_update", ws.to_player_journal())
+        except Exception:
+            pass
+
+
 async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
-    p_action = args.get("player_action", "攻击")
-    p_mod = args.get("player_attack_modifier", 0)
-    p_dice = args.get("player_damage_dice", "1d8")
-    enemy = args.get("enemy_name", "敌人")
-    e_ac = args.get("enemy_ac", 13)
-    e_mod = args.get("enemy_attack_modifier", 3)
-    e_dice = args.get("enemy_damage_dice", "1d6")
-    e_hp = args.get("enemy_hp", 20)
+    p_action = str(args.get("player_action", "攻击"))
+    enemy = str(args.get("enemy_name", "敌人"))
     system = _game_system(state)
+
+    # 玩家侧：角色卡推导（参数缺省时）
+    info = state.character_info
+    if args.get("player_attack_modifier") is not None:
+        p_mod = int(args["player_attack_modifier"])
+    elif system == "coc":
+        skill_map = info.get("skills", {}) or {}
+        hit = next((v for k, v in skill_map.items() if k and k in p_action), 0)
+        p_mod = int(hit or 50)
+    else:
+        p_mod = _player_attack_bonus(state, p_action)
+    p_dice = str(args.get("player_damage_dice", "") or _weapon_dice_from_inventory(state) or "1d8")
+
+    # 敌人侧：NPC卡 → 生物图鉴卡 → 参数；并注册为实际实体
+    enemy_stats = _resolve_enemy_from_cards(state, enemy, args)
+    e_ac = int(enemy_stats["e_ac"])
+    e_mod = int(enemy_stats["e_mod"])
+    e_dice = str(enemy_stats["e_dice"])
+    e_hp = int(enemy_stats["e_hp"])
+    npc = enemy_stats.get("npc")
 
     # 通用特长：巨武器大师 -5/+10（仅 5e 有意义）
     has_gwm = system == "dnd5e" and any(
-        f.get("id") == "great_weapon_master" for f in state.character_info.get("feats", [])
+        f.get("id") == "great_weapon_master" for f in info.get("feats", [])
     )
 
-    # 计算玩家防御/闪避基础值
-    attrs = state.character_info.get("attributes", {})
-    dex_mod = (attrs.get("dex", 10) - 10) // 2
-    cc = state.character_info.get("char_class", "战士")
-    if cc in ('战士', '圣武士'): player_ac = 16
-    elif cc == '游侠': player_ac = 14 + max(-2, min(2, dex_mod))
-    elif cc == '野蛮人': player_ac = 10 + dex_mod + (attrs.get("con", 10) - 10) // 2
-    elif cc == '武僧': player_ac = 10 + dex_mod + (attrs.get("wis", 10) - 10) // 2
-    else: player_ac = 11 + dex_mod
-    race_name = state.character_info.get("race", "")
-    if '矮人' in race_name and '山地' in race_name: player_ac += 1
-    player_ac = max(8, min(22, player_ac))
+    # 玩家防御：优先角色卡 AC
+    attrs = info.get("attributes", {})
+    player_ac = int(info.get("ac", 0) or 0)
+    if not player_ac:
+        dex_mod = (attrs.get("dex", 10) - 10) // 2
+        cc = info.get("char_class", "战士")
+        if cc in ('战士', '圣武士'): player_ac = 16
+        elif cc == '游侠': player_ac = 14 + max(-2, min(2, dex_mod))
+        elif cc == '野蛮人': player_ac = 10 + dex_mod + (attrs.get("con", 10) - 10) // 2
+        elif cc == '武僧': player_ac = 10 + dex_mod + (attrs.get("wis", 10) - 10) // 2
+        else: player_ac = 11 + dex_mod
+        if '矮人' in info.get("race", "") and '山地' in info.get("race", ""):
+            player_ac += 1
+        player_ac = max(8, min(22, player_ac))
 
     if system == "coc":
-        # COC：d100 战斗技能检定
         p_skill = max(1, min(99, int(p_mod or 50)))
         e_skill = max(1, min(99, int(e_mod or 40)))
         pr = random.randint(1, 100)
         if pr <= max(1, p_skill // 5) or pr <= 5:
-            p_hit = True
-            p_result = "极限成功"
+            p_hit, p_result = True, "极限成功"
         elif pr <= p_skill:
-            p_hit = True
-            p_result = "成功"
+            p_hit, p_result = True, "成功"
         else:
-            p_hit = False
-            p_result = "失败"
+            p_hit, p_result = False, "失败"
         pd = _roll_damage_simple(p_dice) if p_hit else 0
         new_e_hp = max(0, e_hp - pd)
         ed = 0
@@ -1234,9 +1423,9 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
         await push_event(state, "game_event", {"type": "combat", "description": desc, "extra": extras})
         if ed:
             await _exec_update_state({"changes": {"hp": -ed}, "reason": f"{enemy}造成{ed}伤害"}, state)
+        await _persist_combat_damage(state, npc, new_e_hp)
         return desc
 
-    # dnd5e / dnd4e / custom：d20 战斗
     ph, pd = combat_attack_roll("你", e_ac, p_mod, p_dice)
     new_e_hp = max(0, e_hp - pd)
     ed = 0
@@ -1255,13 +1444,14 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
               "player_damage_taken": ed, "player_damage_dealt": pd,
               "enemy_dead": new_e_hp <= 0, "system": system}
 
-    # P1-3: 战斗结果强制内联
     await push_narrative_token(state, f"\n{desc}\n")
     await push_event(state, "game_event", {"type": "combat", "description": desc, "extra": extras})
     if ed:
         await _exec_update_state({"changes": {"hp": -ed}, "reason": f"{enemy}造成{ed}伤害"}, state)
 
-    # P0-1: 战斗后强制场景确认——防止场景漂移
+    # 伤害写回实际战斗实体（NPC卡 / 自动注册的图鉴生物）
+    await _persist_combat_damage(state, npc, new_e_hp)
+
     ws = getattr(state, 'world_state', None)
     if ws and ws.scene.current_location != "未知":
         desc += f"\n[场景确认: {ws.scene.current_location}, {ws.scene.current_time or f'第{ws.scene.day_count}天'}]"
@@ -1433,10 +1623,23 @@ async def _exec_update_scene(args: dict, state: GameSessionState) -> str:
     updates = {k: args[k] for k in ["current_location","current_time","weather","atmosphere","visible_npcs_here"] if k in args and args[k]}
     if updates:
         ws.update_scene(**updates)
+        # 地点实体化：新地点自动进入世界状态地点列表，玩家笔记可查
+        loc = (updates.get("current_location") or "").strip()
+        if loc and loc != "未知" and not any(l.name == loc for l in ws.locations):
+            ws.add_location(LocationEntry(
+                name=loc,
+                description=str(args.get("atmosphere", "") or "当前场景"),
+                status="当前场景",
+                discovered=True,
+            ))
         await push_event(state, "scene_update", {
             "location": ws.scene.current_location, "time": ws.scene.current_time or f"第{ws.scene.day_count}天",
             "weather": ws.scene.weather, "atmosphere": ws.scene.atmosphere, "npcs_here": ws.scene.visible_npcs_here,
         })
+        try:
+            await push_event(state, "journal_update", ws.to_player_journal())
+        except Exception:
+            pass
     return "场景已更新"
 
 

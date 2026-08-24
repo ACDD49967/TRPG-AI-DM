@@ -31,16 +31,16 @@ UPDATE_STATE_TOOL = _tool("update_state",
     ["changes","reason"])
 
 COMBAT_ROUND_TOOL = _tool("combat_round",
-    "【必须调用】结算一轮战斗。玩家和敌人各攻击一次。战斗场景必须用此工具。",
-    {"player_action": {"type":"string"},
-     "player_attack_modifier": {"type":"integer"},
-     "player_damage_dice": {"type":"string","description":"如1d8"},
-     "enemy_name": {"type":"string"},
-     "enemy_ac": {"type":"integer"},
-     "enemy_attack_modifier": {"type":"integer"},
-     "enemy_damage_dice": {"type":"string"},
-     "enemy_hp": {"type":"integer"}},
-    ["player_action","enemy_name","enemy_ac","enemy_attack_modifier","enemy_damage_dice","enemy_hp"])
+    "【必须调用】结算一轮战斗。只传 player_action 与 enemy_name 即可：工具会自动从角色卡计算玩家攻击/伤害，并从 NPC 卡或生物图鉴卡取敌人 AC/HP/攻击，结算后自动把伤害写回该实体的 HP。若实体尚未入册，先调 update_world_state(add_npc) 或 add_scenario_bestiary。",
+    {"player_action": {"type":"string", "description": "玩家本轮动作"},
+     "player_attack_modifier": {"type":"integer", "description": "可选，缺省自动按角色卡属性+熟练计算"},
+     "player_damage_dice": {"type":"string", "description": "可选，缺省自动取背包武器伤害"},
+     "enemy_name": {"type":"string", "description": "必须与NPC卡/图鉴卡名称一致"},
+     "enemy_ac": {"type":"integer", "description": "可选，缺省取实体卡AC"},
+     "enemy_attack_modifier": {"type":"integer", "description": "可选，缺省按实体卡属性计算"},
+     "enemy_damage_dice": {"type":"string", "description": "可选，缺省从实体卡特性/动作解析"},
+     "enemy_hp": {"type":"integer", "description": "可选，缺省取实体卡当前HP"}},
+    ["player_action", "enemy_name"])
 
 DEATH_SAVE_TOOL = _tool("death_saving_throw",
     "角色HP≤0时每回合必须掷死亡豁免。d20≥10=成功, 自然20=恢复1HP, 自然1=2次失败。累计3成功=稳定, 3失败=死亡。",
