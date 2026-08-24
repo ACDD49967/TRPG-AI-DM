@@ -139,6 +139,10 @@ _WARLOCK_SLOTS = {  # 邪术师契约法术位数量
     1: 1, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2, 8: 2, 9: 2, 10: 2,
     11: 3, 12: 3, 13: 3, 14: 3, 15: 3, 16: 3, 17: 4, 18: 4, 19: 4, 20: 4,
 }
+_WARLOCK_PACT_LEVEL = {  # 契约法术位环级
+    1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3, 7: 4, 8: 4, 9: 5, 10: 5,
+    11: 5, 12: 5, 13: 5, 14: 5, 15: 5, 16: 5, 17: 5, 18: 5, 19: 5, 20: 5,
+}
 
 
 def get_dnd5_spell_slots(char_class: str, level: int) -> dict:
@@ -147,6 +151,7 @@ def get_dnd5_spell_slots(char_class: str, level: int) -> dict:
     if char_class == "邪术师":
         return {
             "pact_slots": _WARLOCK_SLOTS.get(level, 2),
+            "pact_slot_level": _WARLOCK_PACT_LEVEL.get(level, 1),
             "spell_slots": [],
         }
     if char_class in ("圣武士", "游侠"):
@@ -160,6 +165,128 @@ def get_dnd5_spell_slots(char_class: str, level: int) -> dict:
         "spell_slots": [int(x) for x in slots],
         "pact_slots": 0,
     }
+
+
+DND5_RAGE_USES = {1: 2, 2: 2, 3: 3, 4: 3, 5: 3, 6: 4, 7: 4, 8: 4, 9: 4,
+                  10: 4, 11: 4, 12: 5, 13: 5, 14: 5, 15: 5, 16: 5, 17: 6,
+                  18: 6, 19: 6, 20: 6}
+DND5_CHANNEL_DIVINITY = {1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 2, 7: 2, 8: 2,
+                         9: 2, 10: 2, 11: 2, 12: 2, 13: 2, 14: 2, 15: 2,
+                         16: 2, 17: 2, 18: 3, 19: 3, 20: 3}
+
+
+
+
+
+def get_dnd5_class_resources(char_class: str, attributes: dict, level: int = 1) -> list[dict]:
+    """D&D 5e 职业专属资源（按职业分离，只返回该职业实际拥有的资源）。"""
+    level = max(1, min(20, level))
+    cha = int(attributes.get("cha", 10) or 10)
+    resources = []
+    if char_class == "术士":
+        resources.append({"key": "sorcery_points", "name": "术法点", "current": level, "max": level, "desc": "用于超魔法术；长休恢复"})
+    elif char_class == "武僧":
+        resources.append({"key": "ki_points", "name": "气", "current": level, "max": level, "desc": "用于疾风连击等武僧能力；短休恢复"})
+    elif char_class == "野蛮人":
+        uses = DND5_RAGE_USES.get(level, 2)
+        resources.append({"key": "rage", "name": "狂暴", "current": uses, "max": uses, "desc": "狂暴次数；长休恢复"})
+    elif char_class == "吟游诗人":
+        uses = max(1, (cha - 10) // 2)
+        resources.append({"key": "bardic_inspiration", "name": "诗人激励", "current": uses, "max": uses, "desc": "诗人激励次数；长休恢复"})
+    elif char_class == "圣武士":
+        resources.append({"key": "lay_on_hands", "name": "圣疗", "current": level * 5, "max": level * 5, "desc": "圣疗点数；长休恢复"})
+        if level >= 3:
+            resources.append({"key": "channel_divinity", "name": "引导神力", "current": 1, "max": 1, "desc": "圣誓引导神力次数；短休或长休恢复"})
+    elif char_class == "牧师":
+        uses = DND5_CHANNEL_DIVINITY.get(level, 1)
+        resources.append({"key": "channel_divinity", "name": "引导神力", "current": uses, "max": uses, "desc": "引导神力次数；短休或长休恢复"})
+    elif char_class == "德鲁伊":
+        resources.append({"key": "wild_shape", "name": "荒野形态", "current": 2, "max": 2, "desc": "荒野形态次数；短休或长休恢复"})
+    elif char_class == "战士":
+        resources.append({"key": "second_wind", "name": "回气", "current": 1, "max": 1, "desc": "附赠动作恢复 1d10+战士等级 HP；短休或长休恢复"})
+        resources.append({"key": "action_surge", "name": "动作如潮", "current": 2 if level >= 17 else 1,
+                          "max": 2 if level >= 17 else 1, "desc": "本回合额外获得一个动作；短休或长休恢复"})
+    elif char_class == "法师":
+        recovered = (level + 1) // 2
+        resources.append({"key": "arcane_recovery", "name": "奥术回想", "current": recovered, "max": recovered,
+                          "desc": "短休恢复合计不超过该值的法术位环级（每日一次）"})
+    # 游荡者/游侠无固定次数资源：游侠有法术位，游荡者资源由叙事判定
+    return resources
+
+
+DND5_STARTER_KITS = {
+    "战士": [{"name": "长剑", "type": "weapon", "quantity": 1, "description": "1d8 挥砍，通用"},
+             {"name": "盾牌", "type": "armor", "quantity": 1, "description": "AC +2"},
+             {"name": "鳞甲", "type": "armor", "quantity": 1, "description": "AC 14 + 敏捷调整（上限 2）"},
+             {"name": "冒险者套件", "type": "kit", "quantity": 1, "description": "背包、睡袋、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+    "法师": [{"name": "法杖", "type": "focus", "quantity": 1, "description": "奥术法器"},
+             {"name": "法术书", "type": "gear", "quantity": 1, "description": "记录已准备法术"},
+             {"name": "冒险者套件", "type": "kit", "quantity": 1, "description": "背包、睡袋、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+    "游荡者": [{"name": "短剑", "type": "weapon", "quantity": 1, "description": "1d6 穿刺，灵巧，轻型"},
+               {"name": "短弓", "type": "weapon", "quantity": 1, "description": "1d6 穿刺，弹药 20"},
+               {"name": "皮甲", "type": "armor", "quantity": 1, "description": "AC 11 + 敏捷调整"},
+               {"name": "盗贼工具", "type": "tool", "quantity": 1, "description": "开锁与解除陷阱检定可用"}],
+    "牧师": [{"name": "硬头锤", "type": "weapon", "quantity": 1, "description": "1d6 钝击"},
+             {"name": "盾牌", "type": "armor", "quantity": 1, "description": "AC +2"},
+             {"name": "鳞甲", "type": "armor", "quantity": 1, "description": "AC 14 + 敏捷调整（上限 2）"},
+             {"name": "圣徽", "type": "focus", "quantity": 1, "description": "神术法器"},
+             {"name": "冒险者套件", "type": "kit", "quantity": 1, "description": "背包、睡袋、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+    "游侠": [{"name": "长剑", "type": "weapon", "quantity": 1, "description": "1d8 挥砍，通用"},
+             {"name": "长弓", "type": "weapon", "quantity": 1, "description": "1d8 穿刺，弹药 20"},
+             {"name": "皮甲", "type": "armor", "quantity": 1, "description": "AC 11 + 敏捷调整"},
+             {"name": "探险套件", "type": "kit", "quantity": 1, "description": "背包、铺盖、炊具、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+    "吟游诗人": [{"name": "细剑", "type": "weapon", "quantity": 1, "description": "1d8 穿刺，灵巧"},
+                 {"name": "鲁特琴", "type": "focus", "quantity": 1, "description": "乐器法器"},
+                 {"name": "皮甲", "type": "armor", "quantity": 1, "description": "AC 11 + 敏捷调整"},
+                 {"name": "冒险者套件", "type": "kit", "quantity": 1, "description": "背包、睡袋、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+    "武僧": [{"name": "短棍", "type": "weapon", "quantity": 1, "description": "1d6 钝击，武僧武器"},
+             {"name": "飞镖", "type": "weapon", "quantity": 10, "description": "1d4 穿刺，灵巧，投掷（20/60）"},
+             {"name": "探险套件", "type": "kit", "quantity": 1, "description": "背包、铺盖、炊具、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+    "德鲁伊": [{"name": "短弯刀", "type": "weapon", "quantity": 1, "description": "1d6 挥砍，灵巧，轻型"},
+               {"name": "木盾", "type": "armor", "quantity": 1, "description": "AC +2"},
+               {"name": "皮甲", "type": "armor", "quantity": 1, "description": "AC 11 + 敏捷调整"},
+               {"name": "德鲁伊法器", "type": "focus", "quantity": 1, "description": "槲寄生枝"},
+               {"name": "探险套件", "type": "kit", "quantity": 1, "description": "背包、铺盖、炊具、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+    "圣武士": [{"name": "长剑", "type": "weapon", "quantity": 1, "description": "1d8 挥砍，通用"},
+               {"name": "盾牌", "type": "armor", "quantity": 1, "description": "AC +2"},
+               {"name": "链甲", "type": "armor", "quantity": 1, "description": "AC 16，力量 13 方可穿着"},
+               {"name": "圣徽", "type": "focus", "quantity": 1, "description": "神术法器"},
+               {"name": "冒险者套件", "type": "kit", "quantity": 1, "description": "背包、睡袋、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+    "术士": [{"name": "轻弩", "type": "weapon", "quantity": 1, "description": "1d8 穿刺，弹药 20"},
+             {"name": "奥术法器", "type": "focus", "quantity": 1, "description": "龙晶/法珠任选"},
+             {"name": "冒险者套件", "type": "kit", "quantity": 1, "description": "背包、睡袋、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+    "野蛮人": [{"name": "巨斧", "type": "weapon", "quantity": 1, "description": "1d12 挥砍，重型，双手"},
+               {"name": "手斧", "type": "weapon", "quantity": 2, "description": "1d6 挥砍，轻型，投掷（20/60）"},
+               {"name": "探险套件", "type": "kit", "quantity": 1, "description": "背包、铺盖、炊具、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+    "邪术师": [{"name": "轻弩", "type": "weapon", "quantity": 1, "description": "1d8 穿刺，弹药 20"},
+               {"name": "奥术法器", "type": "focus", "quantity": 1, "description": "秘术法器"},
+               {"name": "皮甲", "type": "armor", "quantity": 1, "description": "AC 11 + 敏捷调整"},
+               {"name": "冒险者套件", "type": "kit", "quantity": 1, "description": "背包、睡袋、火绒盒、10 支火把、10 日口粮、水袋、50 尺麻绳"}],
+}
+COC_STARTER_KIT = [
+    {"name": "笔记本", "type": "gear", "quantity": 1, "description": "记录线索与见闻"},
+    {"name": "钢笔", "type": "gear", "quantity": 1, "description": "书写工具"},
+    {"name": "手电筒", "type": "gear", "quantity": 1, "description": "照明，电池驱动"},
+    {"name": "小刀", "type": "weapon", "quantity": 1, "description": "1d4 穿刺，格斗（小刀）"},
+    {"name": "火柴", "type": "gear", "quantity": 1, "description": "一盒火柴"},
+    {"name": "现金", "type": "gear", "quantity": 1, "description": "相当于角色年收入的零用现金"},
+]
+GENERIC_STARTER_KIT = [
+    {"name": "小刀", "type": "weapon", "quantity": 1, "description": "1d4 穿刺"},
+    {"name": "背包", "type": "gear", "quantity": 1, "description": "容纳随身物品"},
+    {"name": "绳索（50尺）", "type": "gear", "quantity": 1, "description": "攀爬与捆绑"},
+    {"name": "火把", "type": "gear", "quantity": 3, "description": "照明 1 小时"},
+    {"name": "口粮（1日）", "type": "gear", "quantity": 3, "description": "干粮与水"},
+]
+
+
+def get_starter_equipment(game_system: str, char_class: str) -> list[dict]:
+    """按规则系统与职业返回初始白板装备（仅用于空背包开局）。"""
+    if game_system == "coc":
+        return [dict(item) for item in COC_STARTER_KIT]
+    if game_system == "custom":
+        return [dict(item) for item in GENERIC_STARTER_KIT]
+    return [dict(item) for item in DND5_STARTER_KITS.get(char_class, GENERIC_STARTER_KIT)]
 
 
 def get_dnd5_derived(char_class: str, attributes: dict, level: int = 1) -> dict:

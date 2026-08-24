@@ -126,6 +126,10 @@ class KnowledgeBase:
                         d["content"] = content
                         d["chunks"] = split_text(content, mode="naive", chunk_size=900)
                         changed = True
+                    # 历史数据迁移：无 owner 的用户文档归属 default，避免跨用户可见
+                    if "owner" not in d:
+                        d["owner"] = "default"
+                        changed = True
                     cleaned_docs.append(d)
                 if changed:
                     self.documents = cleaned_docs
@@ -144,6 +148,13 @@ class KnowledgeBase:
             encoding="utf-8",
         )
 
+    def _visible_to(self, doc: dict, username: str | None) -> bool:
+        """文档可见性：内置规则与 SRD 全局可见，其余仅本人可见。"""
+        owner = doc.get("owner", "")
+        if not username or owner in ("", "builtin") or str(doc.get("source", "")).startswith("srd:"):
+            return True
+        return owner == username
+
     def add_document(
         self,
         title: str,
@@ -152,6 +163,7 @@ class KnowledgeBase:
         system: str = "custom",
         tags: list[str] | None = None,
         chunk_size: int = 900,
+        username: str | None = None,
     ) -> dict:
         self.load()
         content = _clean_content(content)
@@ -166,25 +178,31 @@ class KnowledgeBase:
             "source": _safe_source(source),
             "system": system,
             "tags": tags or [],
+            "owner": (username or "").strip(),
             "created_at": datetime.now().isoformat(),
         }
         self.documents.append(doc)
         self.save()
         return doc
 
-    def add_note(self, title: str, content: str, system: str = "custom", tags: list[str] | None = None) -> dict:
-        return self.add_document(title, content, source="player-note", system=system, tags=tags or ["备注"])
+    def add_note(self, title: str, content: str, system: str = "custom",
+                 tags: list[str] | None = None, username: str | None = None) -> dict:
+        return self.add_document(title, content, source="player-note", system=system,
+                                 tags=tags or ["备注"], username=username)
 
-    def remove_document(self, doc_id: str) -> bool:
+    def remove_document(self, doc_id: str, username: str | None = None) -> bool:
         self.load()
         before = len(self.documents)
-        self.documents = [d for d in self.documents if d["id"] != doc_id]
+        self.documents = [
+            d for d in self.documents
+            if not (d["id"] == doc_id and self._visible_to(d, username))
+        ]
         changed = len(self.documents) != before
         if changed:
             self.save()
         return changed
 
-    def list_documents(self) -> list[dict]:
+    def list_documents(self, username: str | None = None) -> list[dict]:
         self.load()
         return [
             {
@@ -196,18 +214,19 @@ class KnowledgeBase:
                 "chunk_count": len(d.get("chunks", [])),
                 "created_at": d.get("created_at", ""),
             }
-            for d in self.documents
+            for d in self.documents if self._visible_to(d, username)
         ]
 
-    def get_document(self, doc_id: str) -> dict | None:
+    def get_document(self, doc_id: str, username: str | None = None) -> dict | None:
         self.load()
         for d in self.documents:
-            if d["id"] == doc_id:
+            if d["id"] == doc_id and self._visible_to(d, username):
                 return d
         return None
 
-    def retrieve(self, query: str, system: str | None = None, top_k: int = 5) -> list[dict]:
-        """基于字符 bigram 的本地 TF-IDF 检索，返回相关片段。"""
+    def retrieve(self, query: str, system: str | None = None, top_k: int = 5,
+                 username: str | None = None) -> list[dict]:
+        """基于字符 bigram 的本地 TF-IDF 检索，返回相关片段（按用户名隔离）。"""
         self.load()
         q_terms = _tokenize(query)
         if not q_terms:
@@ -215,6 +234,8 @@ class KnowledgeBase:
 
         candidates = []
         for doc in self.documents:
+            if not self._visible_to(doc, username):
+                continue
             if system and doc.get("system") not in ("custom", system):
                 continue
             for idx, chunk in enumerate(doc.get("chunks", [])):
@@ -321,6 +342,7 @@ class KnowledgeBase:
                 "source": seed["source"],
                 "system": seed["system"],
                 "tags": seed["tags"],
+                "owner": "builtin",
                 "created_at": datetime.now().isoformat(),
             }
             if seed["id"] in existing_ids:

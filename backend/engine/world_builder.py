@@ -214,10 +214,11 @@ async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
     return ""
 
 
-def _with_knowledge(prompt: str, query: str, system: str, top_k: int = 3) -> str:
-    """从本地知识库检索相关规则/设定片段并附加到 Prompt（固定程序，零 token）。"""
+def _with_knowledge(prompt: str, query: str, system: str, top_k: int = 3,
+                    username: str | None = None) -> str:
+    """从本地知识库检索相关规则/设定片段并附加到 Prompt（按用户名隔离）。"""
     try:
-        results = get_knowledge_base().retrieve(query, system=system, top_k=top_k)
+        results = get_knowledge_base().retrieve(query, system=system, top_k=top_k, username=username)
         if results:
             block = "\n\n## 可用规则/设定参考（来自知识库，按需采用）\n"
             block += "\n".join(f"- [{r.get('title','')}] {r.get('text','')[:300]}" for r in results)
@@ -314,6 +315,7 @@ async def build_world(
     extra_attributes: dict | None = None,
     progress_callback=None,
     thinking_strength: str = "medium",
+    username: str | None = None,
 ) -> tuple[str, int, list, WorldState]:
     """多Agent分层生成世界大纲→自评→修订→提取世界状态。
 
@@ -346,7 +348,7 @@ async def build_world(
     if progress_callback: progress_callback("构建世界观与冲突核心", 10, "正在生成世界观、冲突与阵营...")
     step1 = await _llm(client, model,
         "你是一位获奖奇幻小说家。创作深刻、独特的世界观。",
-        _with_knowledge(STEP1_CONFLICT.format(player_input=pi, reference=ref), "世界观 冲突 势力 阵营 魔法 社会", game_system),
+        _with_knowledge(STEP1_CONFLICT.format(player_input=pi, reference=ref), "世界观 冲突 势力 阵营 魔法 社会", game_system, 3, username),
         max_tokens=3000, temp=0.9, timeout=60, thinking_strength=thinking_strength)
     if not step1:
         raise RuntimeError("世界生成失败：模型调用多次超时，请检查模型/网络后重试")
@@ -356,7 +358,7 @@ async def build_world(
     if progress_callback: progress_callback("编织主线三幕结构", 25, "正在设计三幕剧情、转折与结局...")
     step2 = await _llm(client, model,
         "你是一位TRPG冒险设计师。设计引人入胜的三幕结构。",
-        _with_knowledge(STEP2_PLOT.format(world_context=step1), "三幕结构 剧情节点 转折 结局", game_system),
+        _with_knowledge(STEP2_PLOT.format(world_context=step1), "三幕结构 剧情节点 转折 结局", game_system, 3, username),
         max_tokens=4000, temp=0.85, timeout=90, thinking_strength=thinking_strength)
     if not step2:
         step2 = "主线采用经典三幕结构：第一幕引入冲突，第二幕遭遇转折与背叛，第三幕迎来高潮与结局。具体情节建议结合世界观继续细化。"
@@ -366,7 +368,7 @@ async def build_world(
     if progress_callback: progress_callback("塑造NPC与支线网络", 40, "正在塑造NPC、势力与支线任务...")
     step3 = await _llm(client, model,
         "你是一位角色设计大师。创造有深度的NPC网络。",
-        _with_knowledge(STEP3_NPC.format(world_context=step1, plot_context=step2), "NPC 反派 动机 支线 关系", game_system),
+        _with_knowledge(STEP3_NPC.format(world_context=step1, plot_context=step2), "NPC 反派 动机 支线 关系", game_system, 3, username),
         max_tokens=3500, temp=0.9, timeout=90, thinking_strength=thinking_strength)
     if not step3:
         step3 = "关键NPC网络：围绕核心冲突设置至少五名角色，包含盟友、对手与隐藏敌意的中立者，并安排两条与主线隐性关联的支线。"
@@ -376,7 +378,7 @@ async def build_world(
     if progress_callback: progress_callback("布置遭遇与隐藏内容", 55, "正在设计遭遇、陷阱、宝物与秘密...")
     step4 = await _llm(client, model,
         "你是一位TRPG遭遇设计师。设计挑战与秘密。",
-        _with_knowledge(STEP4_ENCOUNTERS.format(world_context=step1, plot_context=step2, npc_context=step3), "遭遇 战斗 陷阱 魔法物品 秘密", game_system),
+        _with_knowledge(STEP4_ENCOUNTERS.format(world_context=step1, plot_context=step2, npc_context=step3), "遭遇 战斗 陷阱 魔法物品 秘密", game_system, 3, username),
         max_tokens=3500, temp=0.85, timeout=90, thinking_strength=thinking_strength)
     if not step4:
         step4 = "遭遇与隐藏内容：设计五场类型各异的遭遇（战斗、社交、探索、陷阱），三处秘密区域，以及一件带有背景故事的独特宝物。"

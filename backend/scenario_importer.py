@@ -519,6 +519,7 @@ async def generate_scenario_from_text(
         char_class=char_class,
         level=character_level,
         score=score,
+        username=username,
     )
 
     # 把世界状态中的常驻地点同步到该剧本的地点图鉴
@@ -535,15 +536,16 @@ async def generate_scenario_from_text(
         from backend.knowledge_base import get_knowledge_base
         kb = get_knowledge_base()
         scenario_source = f"scenario:{saved.id}"
-        for d in kb.list_documents():
+        for d in kb.list_documents(username):
             if d.get("source") == scenario_source:
-                kb.remove_document(d["id"])
+                kb.remove_document(d["id"], username)
         kb.add_document(
             title=f"剧本：{saved.meta.title}",
             content=source_text,
             source=scenario_source,
             system=system,
             tags=["剧本", system, splitter],
+            username=username,
         )
     except Exception as e:
         print(f"[ScenarioImporter] 知识库写入失败（不影响剧本生成）: {e}")

@@ -21,7 +21,11 @@ DICE_ROLL_TOOL = _tool("dice_roll",
     ["skill_name","dc"])
 
 UPDATE_STATE_TOOL = _tool("update_state",
-    "更新角色HP/金币/经验/物品。物品用inventory_add/inventory_remove。",
+    "更新角色HP/MP/SAN/金币/经验/背包。数值键用增量(负数表示消耗)。物品用inventory_add/inventory_remove。"
+    "职业资源用键class_resource:<key>并写增量(如术法点sorcery_points、气ki_points、狂暴rage、诗人激励bardic_inspiration、"
+    "圣疗lay_on_hands、引导神力channel_divinity、荒野形态wild_shape、回气second_wind、动作如潮action_surge、"
+    "奥术回想arcane_recovery)；法术位用键spell_slots给完整剩余值，如{\"spell_slots\":[4,3,0,...],\"pact_slots\":2}。"
+    "D&D4e行动点用action_points(0-3)。金币gold用直接赋值。",
     {"changes": {"type":"object","description":"变更"},
      "reason": {"type":"string","description":"变化原因"}},
     ["changes","reason"])
@@ -43,7 +47,7 @@ DEATH_SAVE_TOOL = _tool("death_saving_throw",
     {}, [])
 
 REST_TOOL = _tool("take_rest",
-    "短休(消耗生命骰恢复HP)或长休(完全恢复,每天1次)。",
+    "短休(消耗生命骰恢复HP，并恢复气/引导神力/荒野形态/回气/动作如潮/奥术回想/契约法术位)或长休(HP/MP/法术位/职业资源/回复力全部恢复,行动点重置为1)。",
     {"rest_type": {"type":"string","enum":["short","long"]}},
     ["rest_type"])
 

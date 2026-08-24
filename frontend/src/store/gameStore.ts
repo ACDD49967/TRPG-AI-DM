@@ -42,7 +42,9 @@ export interface CharacterStatus {
   surge_value?: number;
   speed?: string;
   proficiency_bonus?: number;
-  spell_slots?: number[] | { spell_slots?: number[]; pact_slots?: number };
+  spell_slots?: number[] | { spell_slots?: number[]; pact_slots?: number; pact_slot_level?: number };
+  class_resources?: Array<{ key: string; name: string; current: number; max: number; desc?: string }>;
+  action_points?: number;
   fortitude?: number;
   reflex?: number;
   will?: number;

@@ -21,13 +21,16 @@ function renderInline(text: string) {
   });
 }
 
-/** 渲染一段叙事文本，支持基础 Markdown */
+/** 渲染一段叙事文本，支持 Markdown 常见块级结构 */
 function NarrativeBlock({ text }: { text: string }) {
-  const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim());
+  const paragraphs = text.replace(/\r\n/g, '\n').split(/\n\s*\n/).filter(p => p.trim());
   return (
     <div className="space-y-2">
       {paragraphs.map((p, i) => {
         const trimmed = p.trim();
+        if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+          return <hr key={i} className="border-gray-200 my-2" />;
+        }
         if (trimmed.startsWith('### ')) {
           return <h4 key={i} className="text-sm font-bold text-gray-900 mt-1">{renderInline(trimmed.slice(4))}</h4>;
         }
@@ -38,13 +41,58 @@ function NarrativeBlock({ text }: { text: string }) {
           return <h2 key={i} className="text-lg font-bold text-gray-900 mt-1">{renderInline(trimmed.slice(2))}</h2>;
         }
         const lines = trimmed.split('\n');
-        if (lines.length > 1 && lines.every(l => l.trim().startsWith('- '))) {
+
+        // 引用块
+        if (lines.every(l => /^\s*>\s?/.test(l))) {
+          return (
+            <blockquote key={i} className="border-l-4 border-indigo-200 bg-indigo-50/50 rounded-r-lg px-3 py-1.5 text-gray-600 text-sm leading-relaxed">
+              {lines.map((l, j) => <p key={j} className={j > 0 ? 'mt-1' : ''}>{renderInline(l.replace(/^\s*>\s?/, ''))}</p>)}
+            </blockquote>
+          );
+        }
+
+        // 无序列表
+        if (lines.every(l => /^\s*[-*+]\s+/.test(l))) {
           return (
             <ul key={i} className="space-y-1 pl-4 list-disc marker:text-gray-400">
-              {lines.map((l, j) => <li key={j} className="text-gray-700 text-sm leading-relaxed">{renderInline(l.trim().slice(2))}</li>)}
+              {lines.map((l, j) => <li key={j} className="text-gray-700 text-sm leading-relaxed">{renderInline(l.replace(/^\s*[-*+]\s+/, ''))}</li>)}
             </ul>
           );
         }
+
+        // 有序列表
+        if (lines.every(l => /^\s*\d+[.)]\s+/.test(l))) {
+          return (
+            <ol key={i} className="space-y-1 pl-4 list-decimal marker:text-gray-400">
+              {lines.map((l, j) => <li key={j} className="text-gray-700 text-sm leading-relaxed">{renderInline(l.replace(/^\s*\d+[.)]\s+/, ''))}</li>)}
+            </ol>
+          );
+        }
+
+        // 简易表格：至少两行，且第二行是分隔行
+        const tableLines = lines.filter(l => l.includes('|'));
+        if (tableLines.length >= 2 && /^\s*\|?[\s:|-]+\|?\s*$/.test(tableLines[1])) {
+          const parseRow = (row: string) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+          const head = parseRow(tableLines[0]);
+          const body = tableLines.slice(2);
+          return (
+            <div key={i} className="overflow-x-auto border border-gray-200 rounded-lg">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-gray-50">
+                  <tr>{head.map((h, j) => <th key={j} className="px-2.5 py-1.5 font-semibold text-gray-700 border-b border-gray-200">{renderInline(h)}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {body.map((row, r) => (
+                    <tr key={r} className="even:bg-gray-50/50">
+                      {parseRow(row).map((c, j) => <td key={j} className="px-2.5 py-1.5 text-gray-600 border-b border-gray-100 last:border-0">{renderInline(c)}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+
         return <p key={i} className="text-gray-700 text-sm leading-relaxed whitespace-pre-line">{renderInline(trimmed)}</p>;
       })}
     </div>

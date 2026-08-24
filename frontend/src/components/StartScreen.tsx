@@ -232,9 +232,9 @@ export default function StartScreen(){
 
   // 自动加载已保存剧本
   useEffect(()=>{
-    fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
+    fetch(`/api/scenarios?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
     fetch('/api/classic-scenarios').then(r=>r.json()).then(d=>setClassicScenarios(d.scenarios||[])).catch(()=>{});
-    fetch('/api/knowledge').then(r=>r.json()).then(d=>setKbDocs(d.documents||[])).catch(()=>{});
+    fetch(`/api/knowledge?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setKbDocs(d.documents||[])).catch(()=>{});
     fetch(`/api/extensions?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setExtList(d.extensions||[])).catch(()=>{});
     fetch(`/api/maps?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setMaps(d.maps||[])).catch(()=>{});
     fetch(`/api/bestiary?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setBestiary(d.bestiary||[])).catch(()=>{});
@@ -423,7 +423,7 @@ export default function StartScreen(){
           }
         }
       }
-      fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
+      fetch(`/api/scenarios?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
       loadKb();
     }catch(e:unknown){setWorldGenErr(e instanceof Error?e.message:'生成失败');}
     finally{setWorldGenBusy(false);}
@@ -431,7 +431,7 @@ export default function StartScreen(){
 
   const loadScenario=async(sid:string)=>{
     try{
-      const r=await fetch(`/api/scenarios/${sid}`);
+      const r=await fetch(`/api/scenarios/${sid}?username=${encodeURIComponent(username||'default')}`);
       if(!r.ok)return;
       const d=await r.json();
       setWorldOutline(d.world_outline);setWorldStateJson(d.world_state_json||'');
@@ -450,7 +450,7 @@ export default function StartScreen(){
   const deleteScenario=async(sid:string)=>{
     if(!window.confirm('确定删除该剧本？此操作不可恢复。')) return;
     try{
-      await fetch(`/api/scenarios/${sid}`,{method:'DELETE'});
+      await fetch(`/api/scenarios/${sid}?username=${encodeURIComponent(username||'default')}`,{method:'DELETE'});
       setSavedScenarios(savedScenarios.filter(s=>s.id!==sid));
       if(selectedScenario===sid){setSelectedScenario('');setScenarioId('');}
     }catch{}
@@ -459,7 +459,7 @@ export default function StartScreen(){
   const updateScenario=async()=>{
     if(!scenarioId)return;
     try{
-      const r=await fetch(`/api/scenarios/${scenarioId}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      const r=await fetch(`/api/scenarios/${scenarioId}?username=${encodeURIComponent(username||'default')}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         summary: scenarioSummary,
         world_outline: worldOutline,
         custom_rules: customRules,
@@ -468,7 +468,7 @@ export default function StartScreen(){
         extra_attributes: extraAttributes,
       })});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'保存失败');}
-      fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
+      fetch(`/api/scenarios?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
       setWorldGenErr('');
     }catch(e:unknown){setWorldGenErr(e instanceof Error?e.message:'保存失败');}
   };
@@ -525,7 +525,7 @@ export default function StartScreen(){
           }
         }
       }
-      fetch('/api/scenarios').then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
+      fetch(`/api/scenarios?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
       loadKb();
     }catch(e:unknown){setImportErr(e instanceof Error?e.message:'导入失败');}
     finally{
@@ -536,7 +536,7 @@ export default function StartScreen(){
 
   const loadKb=async()=>{
     try{
-      const r=await fetch('/api/knowledge');
+      const r=await fetch(`/api/knowledge?username=${encodeURIComponent(username||'default')}`);
       if(r.ok)setKbDocs((await r.json()).documents||[]);
     }catch{}
   };
@@ -550,6 +550,7 @@ export default function StartScreen(){
         system:kbSystem,
         source:'player-note',
         tags:kbTags.split(',').map(s=>s.trim()).filter(Boolean),
+        username:username||'default',
       })});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'添加失败');}
       setKbTitle('');setKbContent('');setKbTags('');
@@ -567,6 +568,7 @@ export default function StartScreen(){
       fd.append('system',kbSystem);
       fd.append('source','upload');
       fd.append('tags',kbTags);
+      fd.append('username',username||'default');
       const r=await fetch('/api/knowledge/upload',{method:'POST',body:fd});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'上传失败');}
       setKbTitle('');setKbTags('');setKbUploadFile(null);
@@ -577,7 +579,7 @@ export default function StartScreen(){
 
   const deleteKb=async(id:string)=>{
     try{
-      await fetch(`/api/knowledge/${id}`,{method:'DELETE'});
+      await fetch(`/api/knowledge/${id}?username=${encodeURIComponent(username||'default')}`,{method:'DELETE'});
       await loadKb();
     }catch{}
   };

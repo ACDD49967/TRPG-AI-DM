@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
+import { useGameStore } from '../store/gameStore';
 
 type InvItem = string | { name: string; description?: string; quantity?: number; type?: string; properties?: Record<string, unknown> };
 function itemName(it: InvItem): string { return typeof it === 'string' ? it : it.name || '未知物品'; }
@@ -13,18 +14,9 @@ function itemDesc(it: InvItem): string {
   if (/药水|药剂|瓶|毒|油|圣水/.test(name)) return '消耗品：使用后产生效果，具体由主持人判定。';
   return '杂物：可能用于任务、交易或环境互动，具体用途由主持人判定。';
 }
-import { useGameStore } from '../store/gameStore';
 
-const ATTR_LABELS: Record<string, string> = {
-  str: '力量', dex: '敏捷', con: '体质', int: '智力', wis: '感知', cha: '魅力',
-  pow: '意志', siz: '体型', edu: '教育',
-};
-const ATTR_ICONS: Record<string, string> = {
-  str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA',
-  pow: 'POW', siz: 'SIZ', edu: 'EDU',
-};
 
-export default function StatusPanel() {
+export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void }) {
   const { status, combat } = useGameStore();
   const system = status.game_system || 'dnd5e';
   const [selectedItem, setSelectedItem] = useState<InvItem | null>(null);
@@ -137,33 +129,35 @@ export default function StatusPanel() {
         <span className="text-amber-600 font-medium">金币 {status.gold}</span>
       </div>
 
-      {/* 属性 */}
-      <div className="pt-1.5 border-t border-gray-200">
-        <p className="section-label mb-1">属性</p>
-        <div className="grid grid-cols-2 gap-0.5">
-          {Object.entries(ATTR_LABELS)
-            .filter(([k]) => system === 'coc'
-              ? ['str','con','dex','int','pow','cha','siz','edu'].includes(k)
-              : ['str','dex','con','int','wis','cha'].includes(k))
-            .map(([k, label]) => {
-              const v = status.attributes?.[k] ?? (system === 'coc' ? 50 : 10);
-              const m = Math.floor((v - 10) / 2);
-              return (
-                <div key={k} className="flex items-center justify-between bg-white rounded px-1.5 py-0.5 border border-gray-100">
-                  <span className="text-gray-500 text-[8px]">{ATTR_ICONS[k]} {label}</span>
-                  <span className="text-gray-700 font-mono font-medium text-[9px]">
-                    {v}
-                    {system !== 'coc' && (
-                      <span className={m >= 0 ? 'text-emerald-500' : 'text-red-400'}>
-                        ({m >= 0 ? '+' : ''}{m})
-                      </span>
-                    )}
-                  </span>
-                </div>
-              );
-            })}
+      {/* 职业资源 / 法术位摘要 */}
+      {((status.class_resources?.length || 0) > 0 || (system === 'dnd5e' && status.spell_slots) || system === 'dnd4e') && (
+        <div className="pt-1.5 border-t border-gray-200">
+          <p className="section-label mb-1">职业资源</p>
+          {(status.class_resources || []).slice(0, 4).map(r => (
+            <div key={r.key} className="flex items-center justify-between bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5">
+              <span className="text-gray-500 text-[8px] truncate">{r.name}</span>
+              <span className="text-gray-700 font-mono font-medium text-[9px]">{r.current}/{r.max}</span>
+            </div>
+          ))}
+          {system === 'dnd5e' && (() => {
+            const s = status.spell_slots;
+            const arr = Array.isArray(s) ? s : (s && typeof s === 'object' ? (s as { spell_slots?: number[] }).spell_slots : []) || [];
+            if (arr.some(n => n > 0)) {
+              return <p className="text-[8px] text-gray-400">法术位 {arr.map((n, i) => n > 0 ? `${i + 1}环×${n}` : '').filter(Boolean).join(' ')}</p>;
+            }
+            return null;
+          })()}
+          {system === 'dnd4e' && <p className="text-[8px] text-gray-400">行动点 {status.action_points ?? 1}</p>}
         </div>
-      </div>
+      )}
+
+      {/* 完整角色卡入口 */}
+      <button
+        onClick={onOpenSheet}
+        className="w-full text-center text-[10px] font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-lg py-1.5 transition-colors"
+      >
+        查看完整角色卡 →
+      </button>
 
       {/* 装备与物品 */}
       <div className="pt-1.5 border-t border-gray-200 flex-1">

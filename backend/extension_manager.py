@@ -90,13 +90,14 @@ def activate_extensions_into_kb(username: str, extension_ids: list[str]):
         if not ext:
             continue
         source = f"extension:{ext_id}"
-        for d in kb.list_documents():
+        for d in kb.list_documents(username):
             if d.get("source") == source:
-                kb.remove_document(d["id"])
+                kb.remove_document(d["id"], username)
         kb.add_document(
             title=f"扩展包：{ext.get('name','')}",
             content=ext.get("content", ""),
             source=source,
             system=ext.get("system", "custom"),
             tags=["扩展包"] + ext.get("tags", []),
+            username=username,
         )

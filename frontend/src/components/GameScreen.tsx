@@ -226,14 +226,12 @@ export default function GameScreen() {
           <button onClick={()=>setShowBeast(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">图鉴</button>
           <button onClick={()=>setShowSpells(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">法术</button>
           <button onClick={saveGame} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">存档</button>
-          <button onClick={goToStart} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">载入</button>
-          <button onClick={goToStart} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">新游戏</button>
           <button onClick={goToStart} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">大厅</button>
         </div>
       </header>
 
       <div className="flex flex-1 min-h-0">
-        <StatusPanel />
+        <StatusPanel onOpenSheet={() => setShowCharSheet(true)} />
         <div className="flex-1 flex flex-col min-w-0 border-x border-gray-200">
           <NarrativeStream />
           <DecisionPanel />

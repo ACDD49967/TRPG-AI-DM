@@ -105,5 +105,6 @@ def roll_treasure(cr: int) -> list[str]:
     return random.sample(table, min(count, len(table)))
 
 
-def search_knowledge(query: str, system: str | None = None, top_k: int = 3) -> list[dict]:
-    return get_knowledge_base().retrieve(query, system=system, top_k=top_k)
+def search_knowledge(query: str, system: str | None = None, top_k: int = 3,
+                     username: str | None = None) -> list[dict]:
+    return get_knowledge_base().retrieve(query, system=system, top_k=top_k, username=username)

@@ -117,6 +117,7 @@ async def generate_world(request: WorldGenRequest):
             target_score=75,
             max_revisions=1,
             thinking_strength=request.thinking_strength,
+            username=request.username,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"世界生成失败: {e}") from e
@@ -158,7 +159,7 @@ async def generate_world(request: WorldGenRequest):
         system=request.game_system, tone=request.tone,
         character_name=request.character_name, race=request.race,
         char_class=request.char_class, level=request.character_level,
-        score=score,
+        score=score, username=request.username,
     )
     scenario_id = saved.id
     try:
@@ -235,6 +236,7 @@ async def generate_world_stream(request: WorldGenRequest):
                     max_revisions=1,
                     progress_callback=progress,
                     thinking_strength=request.thinking_strength,
+                    username=request.username,
                 )
                 queue.put_nowait({"type": "__complete__", "data": (outline_text, score, history, world_state)})
             except Exception as e:
@@ -280,7 +282,7 @@ async def generate_world_stream(request: WorldGenRequest):
                     system=request.game_system, tone=request.tone,
                     character_name=request.character_name, race=request.race,
                     char_class=request.char_class, level=request.character_level,
-                    score=score,
+                    score=score, username=request.username,
                 )
                 try:
                     from backend.media_manager import sync_scenario_bestiary, sync_scenario_maps, sync_scenario_spells
@@ -327,10 +329,10 @@ async def generate_world_stream(request: WorldGenRequest):
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/scenarios")
-async def list_scenarios():
-    """列出所有已保存的剧本。"""
+async def list_scenarios(username: str = "default"):
+    """列出当前用户可见的剧本（按用户名隔离）。"""
     from backend.scenario_store import list_scenarios as ls
-    return {"scenarios": ls()}
+    return {"scenarios": ls(username)}
 
 
 @app.get("/api/classic-scenarios")
@@ -471,10 +473,10 @@ async def import_scenario(
 
 
 @app.get("/api/scenarios/{scenario_id}")
-async def get_scenario(scenario_id: str):
-    """加载一个已保存的剧本。"""
+async def get_scenario(scenario_id: str, username: str = "default"):
+    """加载一个已保存的剧本（按用户名隔离）。"""
     from backend.scenario_store import Scenario
-    s = Scenario.load(scenario_id)
+    s = Scenario.load(scenario_id, username)
     if s is None:
         raise HTTPException(status_code=404, detail="剧本不存在")
     return {
@@ -495,10 +497,10 @@ async def get_scenario(scenario_id: str):
 
 
 @app.post("/api/scenarios/{scenario_id}/play")
-async def record_scenario_play(scenario_id: str):
-    """记录剧本被游玩一次。"""
+async def record_scenario_play(scenario_id: str, username: str = "default"):
+    """记录剧本被游玩一次（按用户名隔离）。"""
     from backend.scenario_store import Scenario
-    s = Scenario.load(scenario_id)
+    s = Scenario.load(scenario_id, username)
     if s is None:
         raise HTTPException(status_code=404, detail="剧本不存在")
     s.record_play()
@@ -506,19 +508,19 @@ async def record_scenario_play(scenario_id: str):
 
 
 @app.delete("/api/scenarios/{scenario_id}")
-async def delete_scenario_endpoint(scenario_id: str):
-    """删除一个剧本。"""
+async def delete_scenario_endpoint(scenario_id: str, username: str = "default"):
+    """删除一个剧本（按用户名隔离）。"""
     from backend.scenario_store import delete_scenario
-    if not delete_scenario(scenario_id):
+    if not delete_scenario(scenario_id, username):
         raise HTTPException(status_code=404, detail="剧本不存在")
     return {"deleted": True}
 
 
 @app.put("/api/scenarios/{scenario_id}")
-async def update_scenario_endpoint(scenario_id: str, payload: dict):
-    """编辑剧本：更新标题/描述/总结/备注/大纲/自定义内容。"""
+async def update_scenario_endpoint(scenario_id: str, payload: dict, username: str = "default"):
+    """编辑剧本：更新标题/描述/总结/备注/大纲/自定义内容（按用户名隔离）。"""
     from backend.scenario_store import Scenario
-    s = Scenario.load(scenario_id)
+    s = Scenario.load(scenario_id, username)
     if s is None:
         raise HTTPException(status_code=404, detail="剧本不存在")
     if payload.get("title") is not None:
@@ -593,25 +595,27 @@ async def delete_save_api(save_id: str, username: str = "default"):
 
 
 @app.get("/api/knowledge")
-async def list_knowledge():
-    """列出知识库文档（不含正文片段）。"""
+async def list_knowledge(username: str = "default"):
+    """列出当前用户可见的知识库文档（不含正文片段）。"""
     from backend.knowledge_base import get_knowledge_base
-    return {"documents": get_knowledge_base().list_documents()}
+    return {"documents": get_knowledge_base().list_documents(username)}
 
 
 @app.post("/api/knowledge")
 async def add_knowledge(payload: dict):
-    """添加知识库文档/备注（JSON）。"""
+    """添加知识库文档/备注（JSON，按用户名隔离）。"""
     from backend.knowledge_base import get_knowledge_base
     title = str(payload.get("title") or "未命名知识")
     content = str(payload.get("content") or "")
     system = str(payload.get("system") or "custom")
     source = str(payload.get("source") or "user")
     tags = payload.get("tags") or []
+    username = str(payload.get("username") or "default")
     if not content.strip():
         raise HTTPException(status_code=400, detail="内容不能为空")
     doc = get_knowledge_base().add_document(
-        title=title, content=content, source=source, system=system, tags=tags
+        title=title, content=content, source=source, system=system, tags=tags,
+        username=username,
     )
     return {"doc": doc}
 
@@ -623,8 +627,9 @@ async def upload_knowledge(
     system: str = Form("custom"),
     source: str = Form("user"),
     tags: str = Form(""),
+    username: str = Form("default"),
 ):
-    """上传 PDF/DOCX/TXT/MD 到知识库（用于用户已合法获取的跑团资料）。"""
+    """上传 PDF/DOCX/TXT/MD 到知识库（按用户名隔离）。"""
     from backend.knowledge_base import get_knowledge_base
     from backend.scenario_importer import extract_text
 
@@ -641,28 +646,30 @@ async def upload_knowledge(
         source=source,
         system=system,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
+        username=username,
     )
     return {"doc": doc}
 
 
 @app.delete("/api/knowledge/{doc_id}")
-async def delete_knowledge(doc_id: str):
+async def delete_knowledge(doc_id: str, username: str = "default"):
     from backend.knowledge_base import get_knowledge_base
-    if not get_knowledge_base().remove_document(doc_id):
-        raise HTTPException(status_code=404, detail="知识文档不存在")
+    if not get_knowledge_base().remove_document(doc_id, username):
+        raise HTTPException(status_code=404, detail="知识文档不存在或无权删除")
     return {"deleted": True}
 
 
 @app.post("/api/knowledge/retrieve")
 async def retrieve_knowledge(payload: dict):
-    """RAG 检索：按查询返回最相关的知识片段。"""
+    """RAG 检索：按查询返回最相关的知识片段（按用户名隔离）。"""
     from backend.knowledge_base import get_knowledge_base
     query = str(payload.get("query") or "")
     system = payload.get("system")
     top_k = int(payload.get("top_k") or 5)
+    username = str(payload.get("username") or "default")
     if not query.strip():
         raise HTTPException(status_code=400, detail="查询不能为空")
-    results = get_knowledge_base().retrieve(query, system=system, top_k=top_k)
+    results = get_knowledge_base().retrieve(query, system=system, top_k=top_k, username=username)
     return {"results": results}
 
 
@@ -801,6 +808,18 @@ async def load_save_api(payload: dict):
         raise HTTPException(status_code=404, detail="存档不存在")
     state, session_id = restore_state_from_save(save_data)
     state.resumed = True
+    # 旧存档兼容：按当前规则系统补全职业资源与行动点
+    try:
+        _ci = state.character_info or {}
+        if _ci.get("game_system") == "dnd5e" and not _ci.get("class_resources"):
+            from backend.engine.game_systems import get_dnd5_class_resources
+            _ci["class_resources"] = get_dnd5_class_resources(
+                _ci.get("char_class", ""), _ci.get("attributes", {}), _ci.get("level", 1))
+        elif _ci.get("game_system") == "dnd4e":
+            _ci.setdefault("action_points", 1)
+            _ci.setdefault("class_resources", [])
+    except Exception:
+        pass
     # 用前端当前配置覆盖/补全存档中的模型配置，避免旧存档缺模型导致无法读档
     if payload.get("model_name"):
         state.model_name = str(payload["model_name"])
@@ -1533,6 +1552,7 @@ async def create_new_game(request: NewGameRequest):
         # 根据规则系统预填衍生数值
         if request.game_system == "dnd5e":
             from backend.engine.game_systems import (
+                get_dnd5_class_resources,
                 get_dnd5_derived,
                 get_dnd5_proficiency_bonus,
                 get_dnd5_saves,
@@ -1552,6 +1572,10 @@ async def create_new_game(request: NewGameRequest):
             character_info["passive_perception"] = get_passive_perception(
                 character_info.get("attributes", {}), character_info["proficiency_bonus"],
                 character_info.get("skill_proficiencies", []),
+            )
+            character_info["class_resources"] = get_dnd5_class_resources(
+                character_info.get("char_class", ""), character_info.get("attributes", {}),
+                character_info.get("level", 1),
             )
         elif request.game_system == "coc":
             from backend.engine.game_systems import get_coc_derived
@@ -1579,11 +1603,24 @@ async def create_new_game(request: NewGameRequest):
             character_info["fortitude"] = defenses["fortitude"]
             character_info["reflex"] = defenses["reflex"]
             character_info["will"] = defenses["will"]
+            # 4e 行动点：每次长休重置为 1，里程碑奖励 +1（前端角色卡单独渲染）
+            character_info["action_points"] = 1
+            character_info["class_resources"] = []
+
+        # 职业资源（dnd4e 已有行动点；coc/自定义无固定职业资源）
+        character_info.setdefault("class_resources", [])
+
+        # 初始白板装备：仅当玩家背包为空时按职业发放，不覆盖自定义开局
+        if not (character.inventory or {}).get("items"):
+            from backend.engine.game_systems import get_starter_equipment
+            starter_items = get_starter_equipment(request.game_system, character.char_class)
+            character_info["inventory"] = {"items": starter_items}
+            character.inventory = character_info["inventory"]
 
         # 如果指定了已保存剧本ID且不是全新世界——加载剧本
         if request.scenario_id and not request.new_world:
             from backend.scenario_store import Scenario
-            saved = Scenario.load(request.scenario_id)
+            saved = Scenario.load(request.scenario_id, request.username)
             if saved:
                 character_info["world_outline"] = saved.world_outline or character_info["world_outline"]
                 character_info["world_state_json"] = saved.world_state_json or character_info["world_state_json"]

@@ -205,6 +205,8 @@ async def sse_event_generator(
         "surge_value": info.get("surge_value", 0),
         "proficiency_bonus": info.get("proficiency_bonus", 2),
         "spell_slots": info.get("spell_slots", []),
+        "class_resources": info.get("class_resources", []),
+        "action_points": info.get("action_points", 1),
         "fortitude": info.get("fortitude", 10),
         "reflex": info.get("reflex", 10),
         "will": info.get("will", 10),

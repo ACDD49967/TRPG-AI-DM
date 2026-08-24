@@ -310,7 +310,11 @@ G1. 角色只能使用背包清单中存在的物品。
 G2. 如果你想使用某物品 → 检查背包清单 → 有则使用 → 调用update_state(inventory_remove)
 G3. 如果你想获得某物品 → 调用update_state(inventory_add)
 G4. 玩家声称有某物品但背包中没有 → 叙事拒绝："你翻遍了背包，没有找到。"
-G5. 物品重量和货币：1000铜币=100银币=10金币=1白金币
+G5. 金币是可用资源，不是装饰数字：
+    - 换算：1000铜币=100银币=10金币=1白金币；默认按金币计价。
+    - 获得金币 → update_state(gold: 新总额)；花费金币 → update_state(gold: 新总额)。两者都是直接赋值，不是增减量。
+    - 玩家购买/雇佣/贿赂/缴纳费用时：先检查金币是否足够 → 足够则扣款并把物品/服务写入叙事 → 不足则拒绝交易。
+    - 每次涉及货币结算的轮次，结算后必须在叙事正文中明确报出新余额。
 
 ================================================================================
 H节：NPC行为准则
@@ -474,6 +478,10 @@ M1. 每次回复的结构（按顺序）：
     (b) 如调用了工具，简要说明工具调用结果（如"🎲 潜行检定: d20=14+3=17 vs DC15 → 成功"）
     (c) 当前场景行：**当前场景**：地点 · 时间 · 天气 · 在场NPC
     (d) 在叙事正文之后、场景行之后，用单独一行"---"作为分隔符，然后调用suggest_choices工具给玩家建议选项。不要在叙事正文中嵌入决策建议文字。决策建议必须通过suggest_choices工具调用推送，前端会自动渲染为可点击按钮。
+
+M1.1 Markdown 兼容格式：输出可使用 **粗体**、*斜体*、#/##/### 小标题、
+     - 无序列表、1. 有序列表、> 引用块、| 表格 | 与 --- 分隔线，前端会渲染为对应排版。
+     禁止使用 ``` 代码块围栏——直接输出内容本身。
 
 M2. 决策建议格式（通过suggest_choices工具调用，不在叙事正文中）：
     - 每个选项一行
@@ -693,9 +701,12 @@ def build_character_info(state: GameSessionState) -> str:
 
     if system == "dnd5e":
         lines.append(f"熟练加值: {info.get('proficiency_bonus', 2)} | 法术位: {info.get('spell_slots', [])}")
+        resources = info.get("class_resources", [])
+        if resources:
+            lines.append("职业资源: " + " | ".join(f"{r.get('name')}: {r.get('current', 0)}/{r.get('max', 0)}" for r in resources))
     elif system == "dnd4e":
         lines.append(f"回复力: {info.get('healing_surges', 0)}/{info.get('max_healing_surges', 0)} (每次 {info.get('surge_value', 0)} HP)")
-        lines.append(f"防御: AC {info.get('ac', ac)} 强韧 {info.get('fortitude', 10)} 反射 {info.get('reflex', 10)} 意志 {info.get('will', 10)}")
+        lines.append(f"行动点: {info.get('action_points', 1)} | 防御: AC {info.get('ac', ac)} 强韧 {info.get('fortitude', 10)} 反射 {info.get('reflex', 10)} 意志 {info.get('will', 10)}")
     elif system == "coc":
         lines.append(f"MP: {info.get('mp', 0)} | SAN: {info.get('san', 0)} | 幸运: {info.get('luck', 0)} | 伤害加值: {info.get('damage_bonus', '0')}")
 
@@ -864,7 +875,7 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "generate_name": lambda a,s: generate_name(a.get("race","人类")),
         "roll_treasure": lambda a,s: "、".join(roll_treasure(int(a.get("cr",1)))),
         "npc_quirk": lambda a,s: npc_quirk(),
-        "search_knowledge": lambda a,s: str(search_knowledge(a.get("query",""), _game_system(s), int(a.get("top_k",3)))),
+        "search_knowledge": lambda a,s: str(search_knowledge(a.get("query",""), _game_system(s), int(a.get("top_k",3)), s.username)),
         "search_bestiary": _exec_search_bestiary,
         "search_locations": _exec_search_locations,
         "search_spells": _exec_search_spells,
@@ -948,18 +959,32 @@ async def _exec_update_state(args: dict, state: GameSessionState) -> str:
     # 支持各规则系统的通用数值字段（delta 更新）
     numeric_delta_fields = {
         "hp", "max_hp", "mp", "max_mp", "san", "max_san", "luck",
-        "healing_surges", "max_healing_surges", "spell_slots", "spell_points",
+        "healing_surges", "max_healing_surges", "spell_points",
         "power_encounter", "power_daily", "temporary_hp",
     }
     direct_set_fields = {"gold", "level", "ac", "proficiency_bonus"}
 
     for k, v in changes.items():
-        if k in numeric_delta_fields:
+        if k == "spell_slots":
+            # 法术位为完整剩余值，支持数组或 {spell_slots:[...], pact_slots:n}
+            current = info.get("spell_slots")
+            if not isinstance(current, dict):
+                current = {"spell_slots": [], "pact_slots": 0}
+            if isinstance(v, list):
+                current["spell_slots"] = [max(0, int(x)) for x in v]
+            elif isinstance(v, dict):
+                if isinstance(v.get("spell_slots"), list):
+                    current["spell_slots"] = [max(0, int(x)) for x in v["spell_slots"]]
+                if v.get("pact_slots") is not None:
+                    current["pact_slots"] = max(0, int(v["pact_slots"]))
+            info["spell_slots"] = current
+            applied["spell_slots"] = current
+        elif k in numeric_delta_fields:
             min_val = 0
             max_key = None
             if k.startswith("max_"):
                 min_val = 1
-            elif k in ("hp", "mp", "san", "healing_surges", "spell_slots", "spell_points", "temporary_hp"):
+            elif k in ("hp", "mp", "san", "healing_surges", "spell_points", "temporary_hp"):
                 max_key = "max_" + k if k != "temporary_hp" else None
             if max_key:
                 current = info.get(k, 0) + v
@@ -981,11 +1006,42 @@ async def _exec_update_state(args: dict, state: GameSessionState) -> str:
                 if new_level > old_level:
                     info["level"] = new_level
                     applied["level"] = new_level
-                    con = info.get("attributes", {}).get("con", 10)
-                    hp_gain = max(1, (con - 10) // 2 + 5)
-                    info["max_hp"] = info.get("max_hp", 30) + hp_gain
-                    info["hp"] = min(info.get("max_hp", 30), info.get("hp", 0) + hp_gain)
-                    applied["max_hp"] = info["max_hp"]
+                    con = int(info.get("attributes", {}).get("con", 10) or 10)
+                    cc = info.get("char_class", "战士")
+                    attrs = info.get("attributes", {})
+                    if _game_system(state) == "dnd5e":
+                        from backend.engine.game_systems import (
+                            DND5_CLASS_HD, get_dnd5_class_resources,
+                            get_dnd5_proficiency_bonus, get_dnd5_saves,
+                            get_dnd5_spell_slots, get_passive_perception,
+                        )
+                        hd = DND5_CLASS_HD.get(cc, 8)
+                        hp_gain = max(1, (hd + 1) // 2 + (con - 10) // 2)
+                        info["hit_die"] = f"{new_level}d{hd}"
+                        info["max_hp"] = info.get("max_hp", hd + (con - 10) // 2) + hp_gain
+                        info["hp"] = min(info["max_hp"], info.get("hp", 0) + hp_gain)
+                        applied["max_hp"] = info["max_hp"]
+                        prof = get_dnd5_proficiency_bonus(new_level)
+                        info["proficiency_bonus"] = prof
+                        info["saves"] = get_dnd5_saves(cc, attrs, prof)
+                        info["passive_perception"] = get_passive_perception(
+                            attrs, prof, info.get("skill_proficiencies", []))
+                        info["class_resources"] = get_dnd5_class_resources(cc, attrs, new_level)
+                        if cc in ("法师", "牧师", "吟游诗人", "德鲁伊", "术士", "圣武士", "游侠", "邪术师"):
+                            info["spell_slots"] = get_dnd5_spell_slots(cc, new_level)
+                        applied.update({
+                            "proficiency_bonus": prof, "saves": info["saves"],
+                            "passive_perception": info["passive_perception"],
+                            "class_resources": info["class_resources"],
+                        })
+                        if "spell_slots" in info:
+                            applied["spell_slots"] = info["spell_slots"]
+                    else:
+                        from backend.engine.game_systems import DND4_CLASS_HP
+                        hp_gain = DND4_CLASS_HP.get(cc, 12)
+                        info["max_hp"] = info.get("max_hp", 12 + (con - 10) // 2) + hp_gain
+                        info["hp"] = min(info["max_hp"], info.get("hp", 0) + hp_gain)
+                        applied["max_hp"] = info["max_hp"]
                     # 每2级触发特长选择（5e 规则）
                     if _game_system(state) == "dnd5e" and new_level % 2 == 0:
                         await push_event(state, "game_event", {
@@ -993,6 +1049,34 @@ async def _exec_update_state(args: dict, state: GameSessionState) -> str:
                             "description": f"🎯 升至{new_level}级！你可以选择一项新特长。",
                             "extra": {"level": new_level},
                         })
+        elif k.startswith("class_resource:"):
+            # 职业资源增减：如 class_resource:ki_points: -1，或 {"current": 0, "max": 5}
+            res_key = k.split(":", 1)[1]
+            res_list = info.setdefault("class_resources", [])
+            entry = next((r for r in res_list if isinstance(r, dict) and r.get("key") == res_key), None)
+            if entry is None:
+                entry = {"key": res_key, "name": res_key, "current": 0, "max": 0, "desc": ""}
+                res_list.append(entry)
+            if isinstance(v, dict):
+                if "current" in v:
+                    entry["current"] = max(0, min(entry.get("max", v.get("current", 0)), int(v["current"])))
+                if "max" in v:
+                    entry["max"] = max(0, int(v["max"]))
+                    entry["current"] = min(entry.get("current", 0), entry["max"])
+                if "name" in v:
+                    entry["name"] = str(v["name"])
+            else:
+                delta = int(v)
+                cap = entry.get("max", 0)
+                current = max(0, entry.get("current", 0) + delta)
+                if cap > 0:
+                    current = min(cap, current)
+                entry["current"] = current
+            applied["class_resources"] = res_list
+        elif k == "action_points":
+            current = max(0, min(3, info.get("action_points", 1) + int(v)))
+            info["action_points"] = current
+            applied["action_points"] = current
         elif k == "inventory_add":
             items = info.setdefault("inventory", {}).setdefault("items", [])
             item = _normalize_item(v)
@@ -1150,22 +1234,60 @@ async def _exec_death_save(args: dict, state: GameSessionState) -> str:
     return desc
 
 
+
+
+
+SHORT_REST_RESOURCE_KEYS = {"ki_points", "channel_divinity", "wild_shape", "second_wind", "action_surge", "arcane_recovery"}
+
+
 async def _exec_rest(args: dict, state: GameSessionState) -> str:
     rest_type = args.get("rest_type", "short")
     info = state.character_info
     hp, mhp = info.get("hp", 10), info.get("max_hp", 30)
     con_mod = (info.get("attributes", {}).get("con", 10) - 10) // 2
     level = info.get("level", 1)
+    system = _game_system(state)
+
     if rest_type == "short":
         hd_rem = getattr(state, '_hit_dice_remaining', level)
         result = short_rest(hp, mhp, level, con_mod, hd_rem)
         state._hit_dice_remaining = result["hit_dice_remaining"]
-        await _exec_update_state({"changes": {"hp": result["hp_restored"]}, "reason": "短休"}, state)
-        return f"🛌 短休: +{result['hp_restored']}HP"
-    else:
-        result = long_rest(hp, mhp, level)
-        await _exec_update_state({"changes": {"hp": result["hp_restored"]}, "reason": "长休"}, state)
-        return f"🛌 长休: 恢复至{mhp}HP"
+        changes = {"hp": result["hp_restored"]}
+        # 短休恢复的职业资源（奥术回想每日一次，由会话状态记录）
+        for r in info.get("class_resources", []):
+            if r.get("key") not in SHORT_REST_RESOURCE_KEYS:
+                continue
+            if r.get("key") == "arcane_recovery" and getattr(state, "_arcane_recovery_used", False):
+                continue
+            changes[f"class_resource:{r['key']}"] = {"current": r.get("max", r.get("current", 0))}
+            if r.get("key") == "arcane_recovery":
+                state._arcane_recovery_used = True
+        # 邪术师契约法术位短休恢复
+        if system == "dnd5e" and info.get("char_class") == "邪术师":
+            from backend.engine.game_systems import get_dnd5_spell_slots
+            changes["spell_slots"] = get_dnd5_spell_slots("邪术师", level)
+        await _exec_update_state({"changes": changes, "reason": "短休"}, state)
+        return f"🛌 短休: +{result['hp_restored']}HP，短休资源已恢复"
+
+    # 长休：HP/MP 全满，全部职业资源与法术位恢复
+    changes = {"hp": max(0, mhp - hp)}
+    if info.get("max_mp"):
+        changes["mp"] = max(0, info.get("max_mp", 0) - info.get("mp", 0))
+    for r in info.get("class_resources", []):
+        changes[f"class_resource:{r['key']}"] = {"current": r.get("max", r.get("current", 0))}
+    if system == "dnd5e":
+        from backend.engine.game_systems import get_dnd5_spell_slots
+        cc = info.get("char_class", "")
+        if cc in ("法师", "牧师", "吟游诗人", "德鲁伊", "术士", "圣武士", "游侠", "邪术师"):
+            changes["spell_slots"] = get_dnd5_spell_slots(cc, level)
+    elif system == "dnd4e":
+        changes["action_points"] = 1 - info.get("action_points", 1)
+        if info.get("max_healing_surges"):
+            changes["healing_surges"] = info.get("max_healing_surges", 0) - info.get("healing_surges", 0)
+    state._hit_dice_remaining = level
+    state._arcane_recovery_used = False
+    await _exec_update_state({"changes": changes, "reason": "长休"}, state)
+    return f"🛌 长休: HP/法术位/职业资源全部恢复"
 
 
 async def _exec_suggest_choices(args: dict, state: GameSessionState) -> str:
@@ -1598,6 +1720,7 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
         player_input,
         system=_game_system(state),
         top_k=3 if lite else skill.rag_top_k,
+        username=state.username,
     )
     sp = build_system_prompt(state, retrieved_chunks=retrieved)
 

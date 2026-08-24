@@ -109,6 +109,39 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
         </div>
       </div>
 
+      {/* 职业资源 */}
+      {((status.class_resources?.length || 0) > 0 || status.game_system === 'dnd4e') && (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {(status.class_resources || []).map((r, i) => (
+            <div key={r.key || i} className="bg-white/70 border border-amber-900/20 rounded-lg p-2">
+              <div className="flex items-baseline justify-between">
+                <p className="text-[10px] uppercase tracking-widest text-gray-500">{r.name}</p>
+                <p className="paper-title text-lg font-bold">{r.current}/{r.max}</p>
+              </div>
+              {r.desc ? <p className="text-[9px] text-gray-500 mt-0.5">{r.desc}</p> : null}
+            </div>
+          ))}
+          {status.game_system === 'dnd4e' && (
+            <>
+              <div className="bg-white/70 border border-amber-900/20 rounded-lg p-2">
+                <div className="flex items-baseline justify-between">
+                  <p className="text-[10px] uppercase tracking-widest text-gray-500">行动点</p>
+                  <p className="paper-title text-lg font-bold">{status.action_points ?? 1}</p>
+                </div>
+                <p className="text-[9px] text-gray-500 mt-0.5">长休重置为 1，里程碑 +1</p>
+              </div>
+              <div className="bg-white/70 border border-amber-900/20 rounded-lg p-2">
+                <div className="flex items-baseline justify-between">
+                  <p className="text-[10px] uppercase tracking-widest text-gray-500">回复力</p>
+                  <p className="paper-title text-lg font-bold">{status.healing_surges ?? 0}/{status.max_healing_surges ?? 0}</p>
+                </div>
+                <p className="text-[9px] text-gray-500 mt-0.5">每次回复 {status.surge_value ?? 0} HP</p>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* 六维属性 */}
       <div className="mt-4">
         <p className="section-label mb-2">属性</p>
@@ -193,7 +226,7 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
                 <div key={i} className="flex items-center justify-between border-b border-gray-100 py-0.5 last:border-0">
                   <span className="text-[10px] text-gray-700">{name}</span>
                   <span className="text-[10px] text-gray-500 font-mono">
-                    d20{atkMod >= 0 ? `+${atkMod}` : atkMod} · {weaponDice(name)}{useDex || !status.saves?.str ? `+${Math.floor((Number(attrs[attrKey] ?? 10) - 10) / 2)}` : `+${Math.floor((Number(attrs[attrKey] ?? 10) - 10) / 2)}`} 伤害
+                    d20{atkMod >= 0 ? `+${atkMod}` : atkMod} · {weaponDice(name)}+{Math.floor((Number(attrs[attrKey] ?? 10) - 10) / 2)} 伤害
                   </span>
                 </div>
               );
@@ -209,11 +242,15 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
           <div className="text-[10px] text-gray-700 space-y-0.5">
             <p>施法属性：{ATTR_CN[castAttr] || castAttr}（法术攻击 d20{castMod + prof >= 0 ? `+${castMod + prof}` : castMod + prof}）</p>
             <p>法术位：{
-              Array.isArray(spellSlots)
-                ? spellSlots.join(' / ')
-                : (typeof spellSlots === 'object' && spellSlots
-                  ? ((spellSlots as { spell_slots?: number[] }).spell_slots || []).join(' / ') + ((spellSlots as { pact_slots?: number }).pact_slots ? ` · 契约${(spellSlots as { pact_slots?: number }).pact_slots}` : '')
-                  : '—')
+              (() => {
+                const arr = Array.isArray(spellSlots)
+                  ? spellSlots
+                  : (typeof spellSlots === 'object' && spellSlots ? (spellSlots as { spell_slots?: number[] }).spell_slots : []) || [];
+                const rings = arr.map((n, i) => n > 0 ? `${i + 1}环×${n}` : null).filter(Boolean).join(' · ');
+                const pact = !Array.isArray(spellSlots) && typeof spellSlots === 'object' && spellSlots && (spellSlots as { pact_slots?: number; pact_slot_level?: number }).pact_slots;
+                const pactLevel = !Array.isArray(spellSlots) && typeof spellSlots === 'object' && spellSlots && (spellSlots as { pact_slot_level?: number }).pact_slot_level;
+                return (rings || '—') + (pact ? ` · 契约法术位×${pact}（${pactLevel ?? 1}环）` : '');
+              })()
             }</p>
           </div>
         </div>

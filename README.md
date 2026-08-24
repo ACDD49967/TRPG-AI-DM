@@ -1,65 +1,67 @@
 # TRPG AI 跑团主持
 
-> 单人 TRPG 智能主持人：剧本先行、多规则系统、AI 叙事、RAG 知识库、地图/图鉴/存档一站式。
+单人 TRPG 智能主持应用：先创建或导入剧本，再创建角色卡，由大语言模型担任主持人，完成叙事推进、规则检定、战斗结算、世界状态与资源管理。
 
-## 项目简介
+## 功能概览
 
-TRPG-AI-DM 是一个面向单人 TRPG 跑团的 AI 主持应用。玩家先选择/导入/生成剧本，再创建角色卡，随后由大语言模型担任主持人推进剧情、处理检定、管理世界状态。
+### 剧本
 
-项目不绑定单一规则系统，内置 D&D 5e、D&D 4e、克苏鲁的呼唤 7e（COC）与自定义规则，角色系统与剧本系统相互独立。
+- 内置免费经典剧本，支持 PDF、TXT、DOCX、DOC、MD 导入
+- 文本自动切分（段落 + 语义），生成约 400 字剧本摘要
+- 根据描述生成完整世界大纲（世界观、主线、NPC、遭遇、规则），生成过程通过 SSE 实时显示进度
+- 自动识别规则系统（D&D 5e / D&D 4e / COC / 自定义），可手动覆盖
 
-## 功能特性
+### 规则系统
 
-- **剧本先行**
-  - 已有剧本直接使用
-  - 上传 PDF / TXT / DOCX / DOC / MD 自动切分
-  - AI 根据描述生成完整世界大纲
-  - 自动生成约 400 字剧本总结
-- **多规则系统**
-  - D&D 5e：官方购点、法术位、熟练加值、死亡豁免
-  - D&D 4e：威能、回复力、四类防御
-  - COC 7e：官方属性掷骰、双池技能点、理智/魔法/幸运
-  - 自定义：玩家提供规则文本
-- **AI 主持人**
-  - 流式世界生成，实时显示进度
-  - 开场导语、沉浸叙事、决策建议
-  - 工具化检定：d20 / d100 / 战斗结算 / 状态更新
-  - 长短期记忆与自动摘要
-- **本地 RAG 知识库**
-  - 内置规则备注与 5etools SRD 数据
-  - 支持上传 PDF/DOCX/TXT/MD
-  - 按规则系统过滤检索
-- **角色卡与存档**
-  - 多张角色卡保存/复用
-  - 自动/手动存档，独立存档管理页
-  - 读档恢复完整对话历史，不重新开场
-- **地图与图鉴**
-  - 地图/生物支持自定义图片
-  - 生物图鉴搜索、地点↔生物关联
-  - DM 工具：手动新增 NPC / 地点 / 生物
-- **接口与部署**
-  - OpenAI 兼容接口，可保存自定义 API 链接
-  - 思维强度选择（轻量 / 标准 / 深度思考）
-  - 一键 setup / run 脚本，支持打包发布
+- D&D 5e：购点/掷骰属性、职业生命骰、熟练加值、豁免、被动感知、1–9 环法术位、邪术师契约法术位
+- D&D 5e 职业资源：术法点、气、狂暴次数、诗人激励、圣疗、引导神力、荒野形态、回气、动作如潮、奥术回想
+- D&D 4e：生命值、回复力、四类防御、行动点
+- COC 7e：官方属性掷骰、双池技能点（教育×4 职业 / 智力×2 兴趣）、HP=(CON+SIZ)/10、MP=POW/5、SAN=POW
+- 自定义规则：由玩家提供规则文本，角色与剧本互不绑定
+
+### 主持与叙事
+
+- Function Calling 工具化处理：属性检定、战斗轮、死亡豁免、短休/长休、状态更新、世界状态、信息揭示、场景更新
+- 短期记忆（精简 5 轮 / 深度 10 轮）+ 自动摘要压缩 + 按用户隔离的长期记忆
+- 按规则系统切换提示词、技能与思维链（CoT）
+- 轻量 / 标准 / 深度思考三档
+- DM 输出兼容 Markdown：标题、列表、引用、分隔线、表格均可在前端正确渲染
+
+### 知识与图鉴
+
+- 本地 RAG：jieba 分词 + TF-IDF + BM25 融合检索，零 token 消耗
+- 内置规则备注与 5etools SRD，支持上传知识库文档，按规则系统过滤
+- 地图、生物图鉴、法术图鉴均按剧本隔离；DM 可通过工具检索并向当前剧本添加条目
+- 世界生成时自动提取 NPC、地点、生物、法术进入图鉴
+
+### 角色与存档
+
+- 角色卡独立于剧本保存，可复用；D&D 与 COC 使用对应官方纸面角色卡布局
+- 新角色自动获得职业初始装备；空背包才发放，不覆盖玩家自定义开局
+- 金币参与交易结算：购买、雇佣、贿赂等行为由 DM 工具直接更新余额
+- 自动 / 手动存档，独立存档页；读档恢复完整对话历史，不重新调用模型生成开场
+
+### 接口与部署
+
+- OpenAI 兼容接口：启动时自动探测 `/models` 与 `/v1/models`，前端模型下拉框直接选择
+- 前端可保存多组 API 配置；剧本、存档、角色卡、扩展、媒体文件与用户知识文档均按用户名隔离（内置规则与 SRD 为全局共享）
+- 一键安装 / 启动脚本；GitHub Release 提供打包产物
 
 ## 技术栈
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Python 3.11+、FastAPI、SQLAlchemy（异步）、SQLite |
-| AI | OpenAI 兼容 API（DeepSeek 等）、SSE 流式输出 |
+| 后端 | Python 3.11+、FastAPI、SQLAlchemy 异步、SQLite |
+| AI | OpenAI 兼容 API、SSE 流式输出 |
 | 前端 | React 18、TypeScript、Vite、Tailwind CSS、Zustand |
-| 检索 | 本地字符 bigram TF-IDF RAG（零 token 消耗） |
-| 部署 | 本地运行、可打包为 zip / GitHub Release |
+| 检索 | jieba + TF-IDF + BM25（本地计算） |
+| 部署 | 本地运行、zip 打包、GitHub Release |
 
 ## 快速开始
 
-### 环境要求
+环境要求：Python 3.11+、Node.js 18+。
 
-- Python 3.11+
-- Node.js 18+
-
-### 安装
+安装：
 
 ```bash
 # Windows
@@ -69,19 +71,9 @@ setup.bat
 bash setup.sh
 ```
 
-### 配置
+配置：复制 `.env.example` 为 `.env`，填写 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME`。也可以跳过 `.env`，在网页顶部的 API 设置中填写。
 
-复制 `.env.example` 为 `.env`，填写 API Key：
-
-```
-LLM_API_KEY=sk-你的密钥
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL_NAME=你的模型名
-```
-
-也可以不配置 `.env`，直接在网页顶部填写 API 地址、Key、模型，并支持保存多个自定义链接。
-
-### 启动
+启动：
 
 ```bash
 # Windows
@@ -101,55 +93,46 @@ TRPG-AI-DM/
 │   ├── main.py                 # FastAPI 路由 + SSE
 │   ├── config.py               # 配置
 │   ├── schemas.py              # 请求/响应模型
-│   ├── scenario_importer.py    # 剧本导入/切分/总结
+│   ├── scenario_importer.py    # 剧本导入、切分、摘要
 │   ├── scenario_store.py       # 剧本存储
-│   ├── knowledge_base.py       # 本地 RAG 知识库
+│   ├── knowledge_base.py       # RAG 知识库
 │   ├── save_manager.py         # 存档管理
 │   ├── character_card_manager.py # 角色卡管理
-│   ├── media_manager.py        # 地图/图鉴/图片管理
-│   ├── classic_scenarios.py    # 免费经典剧本参考
+│   ├── media_manager.py        # 地图 / 图鉴 / 图片
+│   ├── classic_scenarios.py    # 免费经典剧本
 │   └── engine/
-│       ├── dm_agent.py         # AI 主持人核心
+│       ├── dm_agent.py         # AI 主持核心
 │       ├── world_builder.py    # 多步世界生成
-│       ├── game_systems.py     # 规则系统
+│       ├── game_systems.py     # 规则计算与职业资源
 │       ├── world_state.py      # 世界状态
 │       ├── session.py          # 会话与 SSE
 │       └── memory.py           # 记忆系统
-├── frontend/
-│   └── src/
-│       ├── components/         # UI 组件
-│       ├── hooks/              # SSE Hook
-│       ├── store/              # Zustand 状态
-│       └── types/              # 类型定义
-├── scenarios/                  # 已保存剧本（本地数据）
-├── knowledge_base/             # 知识库数据（本地数据）
-├── saves/                      # 存档（本地数据）
-├── media/                      # 图片/地图（本地数据）
-├── characters/                 # 角色卡（本地数据）
+├── frontend/src/
+│   ├── components/             # UI 组件
+│   ├── hooks/                  # SSE Hook
+│   ├── store/                  # Zustand 状态
+│   └── types/                  # 类型定义
+├── scenarios/                  # 运行时数据，不入库
+├── knowledge_base/             # 运行时数据，不入库
+├── saves/                      # 运行时数据，不入库
+├── media/                      # 运行时数据，不入库
+├── characters/                 # 运行时数据，不入库
 ├── setup.bat / setup.sh        # 一键安装
-├── run.bat / run.sh            # 一键启动
-└── README.md
+└── run.bat / run.sh            # 一键启动
 ```
 
-## 目录说明
-
-- `scenarios/`、`knowledge_base/`、`saves/`、`media/`、`characters/` 为运行时用户数据，已加入 `.gitignore`，不会提交到 GitHub。
-- 打包发布的压缩包会包含清理后的知识库（内置规则 + SRD）与免费经典剧本参考。
+`scenarios/`、`knowledge_base/`、`saves/`、`media/`、`characters/` 为运行时用户数据，已加入 `.gitignore`。发布包内包含清理后的内置知识库（规则备注 + SRD）与免费经典剧本。
 
 ## 常见问题
 
-### 无法获取模型列表？
-- 确认 API 地址为 OpenAI 兼容格式（如 `https://api.deepseek.com/v1` 或 `https://api.deepseek.com`）。
-- 确认 API Key 有效。
-- 后端会自动尝试 `/models` 与 `/v1/models`。
+**无法获取模型列表？**
+确认 API 地址为 OpenAI 兼容格式（如 `https://api.deepseek.com/v1` 或 `https://api.deepseek.com`），并确认 API Key 有效。后端会自动尝试 `/models` 与 `/v1/models`。
 
-### 上传图片不显示？
-- 开发模式已通过 Vite 代理 `/media` 到后端。
-- 生产模式由 FastAPI 静态目录 `/media` 提供。
+**上传图片不显示？**
+开发模式经 Vite 代理 `/media` 到后端，生产模式由 FastAPI 静态目录提供。
 
-### 读档后没有对话历史？
-- 当前版本读档会直接恢复完整对话历史，不重新生成开场白。
-- 如果看不到历史，请确认使用的是最新 release 包。
+**读档后没有对话历史？**
+读档通过 SSE `history` 事件恢复完整对话，不重新生成开场白。若仍看不到历史，请使用最新 release 包。
 
 ## License
 
