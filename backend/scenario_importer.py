@@ -399,6 +399,7 @@ async def generate_scenario_from_text(
     chunks: list[str],
     title: str = "",
     description: str = "",
+    username: str = "default",
     tone: str = "史诗奇幻",
     system: str | None = None,
     custom_rules: str = "",
@@ -519,6 +520,13 @@ async def generate_scenario_from_text(
         level=character_level,
         score=score,
     )
+
+    # 把世界状态中的常驻地点同步到该剧本的地点图鉴
+    try:
+        from backend.media_manager import sync_scenario_maps
+        sync_scenario_maps(username, saved.id, world_state.locations, system)
+    except Exception:
+        pass
 
     # 将剧本细节写入本地知识库，供后续 RAG 检索
     try:

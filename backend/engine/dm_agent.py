@@ -864,6 +864,8 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "roll_treasure": lambda a,s: "、".join(roll_treasure(int(a.get("cr",1)))),
         "npc_quirk": lambda a,s: npc_quirk(),
         "search_knowledge": lambda a,s: str(search_knowledge(a.get("query",""), _game_system(s), int(a.get("top_k",3)))),
+        "search_bestiary": _exec_search_bestiary,
+        "search_locations": _exec_search_locations,
     }
     fn = handlers.get(name)
     return await fn(args, state) if fn else f"未知: {name}"
@@ -1304,6 +1306,58 @@ async def _exec_add_scenario_map(args: dict, state: GameSessionState) -> str:
     return f"已加入当前剧本地图: {item['name']}"
 
 
+async def _exec_search_bestiary(args: dict, state: GameSessionState) -> str:
+    from backend.media_manager import list_bestiary
+    query = str(args.get("query", "")).strip().lower()
+    top_k = max(1, min(5, int(args.get("top_k", 3) or 3)))
+    scenario_id = state.character_info.get("scenario_id", "")
+    items = list_bestiary(state.username or "default", scenario_id or None)
+    if not query:
+        picked = items[:top_k]
+    else:
+        scored = []
+        for it in items:
+            hay = " ".join([
+                it.get("name", ""), it.get("description", ""),
+                " ".join(it.get("tags", [])), " ".join(str(v) for v in (it.get("stats") or {}).values()),
+            ]).lower()
+            scored.append((hay.count(query), it))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        picked = [it for _, it in scored if _ > 0][:top_k]
+    if not picked:
+        return "图鉴中没有匹配的生物"
+    return "\n".join(
+        f"- {it.get('name','')}: {str(it.get('description',''))[:80]}" + (f" | {it.get('stats',{}).get('HP','')}" if it.get('stats',{}).get('HP') else "")
+        for it in picked
+    )
+
+
+async def _exec_search_locations(args: dict, state: GameSessionState) -> str:
+    from backend.media_manager import list_maps
+    query = str(args.get("query", "")).strip().lower()
+    top_k = max(1, min(5, int(args.get("top_k", 3) or 3)))
+    scenario_id = state.character_info.get("scenario_id", "")
+    items = list_maps(state.username or "default", scenario_id or None)
+    if not query:
+        picked = items[:top_k]
+    else:
+        scored = []
+        for it in items:
+            hay = " ".join([
+                it.get("name", ""), it.get("description", ""),
+                " ".join(str(l.get("name","")) for l in it.get("locations", [])),
+            ]).lower()
+            scored.append((hay.count(query), it))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        picked = [it for _, it in scored if _ > 0][:top_k]
+    if not picked:
+        return "地点图鉴中没有匹配的地点"
+    return "\n".join(
+        f"- {it.get('name','')}: {str(it.get('description',''))[:80]}"
+        for it in picked
+    )
+
+
 async def _exec_character_note(args: dict, state: GameSessionState) -> str:
     ws = getattr(state, 'world_state', None)
     if ws is None: return "无世界状态"
@@ -1439,6 +1493,7 @@ async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2
     stream = await client.chat.completions.create(
         model=model, messages=messages, tools=tools,
         max_tokens=max_tokens, temperature=temp, stream=True,
+        tool_choice="auto",
     )
     content = ""; tc_map = {}
     had_tool_call = False  # P0-2修复：追踪工具调用边界

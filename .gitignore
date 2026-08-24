@@ -73,3 +73,4 @@ _backend_launch.bat
 _frontend_launch.bat
 
 test/
+CHANGELOG.md

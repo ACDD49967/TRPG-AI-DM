@@ -135,6 +135,27 @@ def list_maps(username: str, scenario_id: str | None = None) -> list[dict]:
     return items
 
 
+def sync_scenario_maps(username: str, scenario_id: str, locations: list[dict], system: str = "custom"):
+    """把世界状态中的常驻地点同步到该剧本的地点图鉴（幂等）。"""
+    if not scenario_id:
+        return
+    existing = {i.get("name") for i in list_maps(username, scenario_id)}
+    for loc in locations:
+        name = str(loc.get("name", "")).strip() if isinstance(loc, dict) else str(loc).strip()
+        if not name or name in existing:
+            continue
+        add_map(
+            username=username,
+            name=name,
+            description=str(loc.get("description", "")) if isinstance(loc, dict) else "",
+            image_path="",
+            locations=[],
+            system=system,
+            scenario_id=scenario_id,
+        )
+        existing.add(name)
+
+
 def delete_map(username: str, map_id: str) -> bool:
     items = _load_meta(username, "maps")
     new = [i for i in items if i["id"] != map_id]

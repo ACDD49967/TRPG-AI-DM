@@ -143,6 +143,18 @@ SEARCH_KNOWLEDGE_TOOL = _tool("search_knowledge",
      "top_k": {"type": "integer", "description": "返回数量，默认3"}},
     ["query"])
 
+SEARCH_BESTIARY_TOOL = _tool("search_bestiary",
+    "快速查询当前剧本生物图鉴，返回匹配生物的精简摘要。用于遭遇/引入怪物前快速确认数值与设定，避免消耗过多 token。",
+    {"query": {"type": "string", "description": "生物名称或关键词"},
+     "top_k": {"type": "integer", "description": "返回数量，默认3，最大5"}},
+    ["query"])
+
+SEARCH_LOCATIONS_TOOL = _tool("search_locations",
+    "快速查询当前剧本地点图鉴，返回匹配地点的精简摘要。用于推进剧情时确认地点设定，避免消耗过多 token。",
+    {"query": {"type": "string", "description": "地点名称或关键词"},
+     "top_k": {"type": "integer", "description": "返回数量，默认3，最大5"}},
+    ["query"])
+
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, ADD_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
@@ -150,4 +162,5 @@ DM_TOOLS = [
     ADD_CHARACTER_NOTE_TOOL, UPDATE_BESTIARY_TOOL, UPDATE_CITY_TOOL,
     ADD_SCENARIO_BESTIARY_TOOL, ADD_SCENARIO_MAP_TOOL,
     GENERATE_NAME_TOOL, ROLL_TREASURE_TOOL, NPC_QUIRK_TOOL, SEARCH_KNOWLEDGE_TOOL,
+    SEARCH_BESTIARY_TOOL, SEARCH_LOCATIONS_TOOL,
 ]

@@ -161,6 +161,11 @@ async def generate_world(request: WorldGenRequest):
         score=score,
     )
     scenario_id = saved.id
+    try:
+        from backend.media_manager import sync_scenario_maps
+        sync_scenario_maps(request.username, scenario_id, world_state.locations, request.game_system)
+    except Exception:
+        pass
 
     return {
         "scenario_id": scenario_id,
@@ -275,6 +280,11 @@ async def generate_world_stream(request: WorldGenRequest):
                     char_class=request.char_class, level=request.character_level,
                     score=score,
                 )
+                try:
+                    from backend.media_manager import sync_scenario_maps
+                    sync_scenario_maps(request.username, saved.id, world_state.locations, request.game_system)
+                except Exception:
+                    pass
                 result = {
                     "type": "complete",
                     "scenario_id": saved.id,
@@ -332,6 +342,7 @@ async def import_scenario(
     splitter: str = Form("naive"),
     chunk_size: int = Form(900),
     title: str = Form(""),
+    username: str = Form("default"),
     description: str = Form(""),
     tone: str = Form("史诗奇幻"),
     system: str | None = Form(None),
@@ -407,6 +418,7 @@ async def import_scenario(
                 source_text=text,
                 chunks=chunks,
                 title=title,
+                username=username,
                 description=description,
                 tone=tone,
                 system=system,

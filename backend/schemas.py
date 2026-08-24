@@ -81,6 +81,7 @@ class ActionRequest(BaseModel):
 class WorldGenRequest(BaseModel):
     """世界大纲生成请求。"""
     description: str = Field(min_length=1, max_length=3000)  # 玩家对世界的描述
+    username: str = Field(default="default", min_length=1, max_length=32)
     character_name: str = Field(default="冒险者", max_length=32)
     race: str = Field(default="人类", max_length=32)
     char_class: str = Field(default="战士", max_length=32)

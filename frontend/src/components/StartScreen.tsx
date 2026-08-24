@@ -381,7 +381,8 @@ export default function StartScreen(){
     setWorldGenBusy(true);setWorldGenErr('');setWorldGenStage(0);
     try{
       const r=await fetch('/api/generate/world/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-        description:worldDesc||'一个'+worldTone+'的冒险',character_name:charName||'冒险者',
+        description:worldDesc||'一个'+worldTone+'的冒险',username:username||'default',
+        character_name:charName||'冒险者',
         race:rc.name,char_class:cc.name,tone:worldTone,
         game_system:gameSystem,custom_rules:customRules||undefined,
         custom_classes:customClasses,custom_skills:customSkills,extra_attributes:extraAttributes,
@@ -478,6 +479,7 @@ export default function StartScreen(){
     try{
       const fd=new FormData();
       fd.append('file',file);
+      fd.append('username',username||'default');
       fd.append('splitter',splitter);
       fd.append('chunk_size',String(chunkSize));
       fd.append('tone',worldTone);
