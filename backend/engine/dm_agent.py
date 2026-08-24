@@ -860,12 +860,14 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "update_city_entry": _exec_update_city,
         "add_scenario_bestiary": _exec_add_scenario_bestiary,
         "add_scenario_map": _exec_add_scenario_map,
+        "add_scenario_spell": _exec_add_scenario_spell,
         "generate_name": lambda a,s: generate_name(a.get("race","人类")),
         "roll_treasure": lambda a,s: "、".join(roll_treasure(int(a.get("cr",1)))),
         "npc_quirk": lambda a,s: npc_quirk(),
         "search_knowledge": lambda a,s: str(search_knowledge(a.get("query",""), _game_system(s), int(a.get("top_k",3)))),
         "search_bestiary": _exec_search_bestiary,
         "search_locations": _exec_search_locations,
+        "search_spells": _exec_search_spells,
     }
     fn = handlers.get(name)
     return await fn(args, state) if fn else f"未知: {name}"
@@ -1306,6 +1308,28 @@ async def _exec_add_scenario_map(args: dict, state: GameSessionState) -> str:
     return f"已加入当前剧本地图: {item['name']}"
 
 
+async def _exec_add_scenario_spell(args: dict, state: GameSessionState) -> str:
+    from backend.media_manager import add_spell
+    scenario_id = state.character_info.get("scenario_id", "") or ""
+    item = add_spell(
+        username=state.username or "default",
+        name=args.get("name", "未命名法术"),
+        system=_game_system(state),
+        description=args.get("description", "") or "",
+        level=str(args.get("level", "0")),
+        school=args.get("school", "") or "",
+        ritual=bool(args.get("ritual", False)),
+        casting_time=args.get("casting_time", "") or "",
+        range_=args.get("range", "") or "",
+        components=args.get("components", "") or "",
+        duration=args.get("duration", "") or "",
+        classes=args.get("classes") or [],
+        scenario_id=scenario_id,
+    )
+    await push_event(state, "spells_updated", {})
+    return f"已加入当前剧本法术/仪式: {item['name']}"
+
+
 async def _exec_search_bestiary(args: dict, state: GameSessionState) -> str:
     from backend.media_manager import list_bestiary
     query = str(args.get("query", "")).strip().lower()
@@ -1354,6 +1378,32 @@ async def _exec_search_locations(args: dict, state: GameSessionState) -> str:
         return "地点图鉴中没有匹配的地点"
     return "\n".join(
         f"- {it.get('name','')}: {str(it.get('description',''))[:80]}"
+        for it in picked
+    )
+
+
+async def _exec_search_spells(args: dict, state: GameSessionState) -> str:
+    from backend.media_manager import list_spells
+    query = str(args.get("query", "")).strip().lower()
+    top_k = max(1, min(5, int(args.get("top_k", 3) or 3)))
+    scenario_id = state.character_info.get("scenario_id", "")
+    items = list_spells(state.username or "default", scenario_id or None)
+    if not query:
+        picked = items[:top_k]
+    else:
+        scored = []
+        for it in items:
+            hay = " ".join([
+                it.get("name", ""), it.get("description", ""),
+                it.get("school", ""), " ".join(it.get("classes", [])),
+            ]).lower()
+            scored.append((hay.count(query), it))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        picked = [it for _, it in scored if _ > 0][:top_k]
+    if not picked:
+        return "法术图鉴中没有匹配的法术/仪式"
+    return "\n".join(
+        f"- {it.get('name','')}（{it.get('level','?')}环 {it.get('school','')}{' 仪式' if it.get('ritual') else ''}）: {str(it.get('description',''))[:80]}"
         for it in picked
     )
 

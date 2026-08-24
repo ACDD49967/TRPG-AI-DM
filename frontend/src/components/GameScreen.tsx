@@ -56,10 +56,14 @@ export default function GameScreen() {
   const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;stats:Record<string,string>;image_path:string;tags?:string[];details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
   const [beastQuery, setBeastQuery] = useState('');
   const [mapQuery, setMapQuery] = useState('');
+  const [showSpells, setShowSpells] = useState(false);
+  const [spells, setSpells] = useState<Array<{id:string;name:string;system:string;description:string;level:string;school:string;ritual:boolean;casting_time:string;range:string;components:string;duration:string;classes:string[]}>>([]);
+  const [spellQuery, setSpellQuery] = useState('');
   const [showDmTools, setShowDmTools] = useState(false);
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
   const [dmMap, setDmMap] = useState({ name: '', description: '' });
   const [dmBeast, setDmBeast] = useState({ name: '', description: '', stats: '' });
+  const [dmSpell, setDmSpell] = useState({ name: '', description: '', level: '0', school: '' });
   const [dmNpcImage, setDmNpcImage] = useState<File | null>(null);
   const [dmMapImage, setDmMapImage] = useState<File | null>(null);
   const [dmBeastImage, setDmBeastImage] = useState<File | null>(null);
@@ -70,6 +74,7 @@ export default function GameScreen() {
     const sid = status.scenario_id || '';
     fetch(`/api/maps?username=${encodeURIComponent(u)}&scenario_id=${encodeURIComponent(sid)}`).then(r=>r.json()).then(d=>setMaps((d.maps||[]).filter((m: {system?:string})=>m.system===sys || m.system==='custom'))).catch(()=>{});
     fetch(`/api/bestiary?username=${encodeURIComponent(u)}&scenario_id=${encodeURIComponent(sid)}`).then(r=>r.json()).then(d=>setBestiary((d.bestiary||[]).filter((b: {system?:string})=>b.system===sys || b.system==='custom'))).catch(()=>{});
+    fetch(`/api/spells?username=${encodeURIComponent(u)}&scenario_id=${encodeURIComponent(sid)}`).then(r=>r.json()).then(d=>setSpells((d.spells||[]).filter((s: {system?:string})=>s.system===sys || s.system==='custom'))).catch(()=>{});
   }, [status.username, status.game_system, status.scenario_id, mediaVersion]);
 
   const saveGame = async () => {
@@ -161,6 +166,23 @@ export default function GameScreen() {
     } catch {}
   };
 
+  const addDmSpell = async () => {
+    if (!dmSpell.name.trim()) return;
+    try {
+      const u = status.username || 'default';
+      const sid = status.scenario_id || '';
+      await fetch('/api/spells', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: u, name: dmSpell.name, description: dmSpell.description,
+          level: dmSpell.level, school: dmSpell.school, system: status.game_system || 'custom', scenario_id: sid,
+        }),
+      });
+      setDmSpell({ name: '', description: '', level: '0', school: '' });
+      useGameStore.getState().bumpMediaVersion();
+    } catch {}
+  };
+
   return (
     <div className="h-screen flex flex-col bg-white">
       {/* 顶栏：标题 + 场景信息 + 角色名 */}
@@ -202,6 +224,7 @@ export default function GameScreen() {
           <button onClick={()=>setShowDmTools(true)} className="text-xs text-amber-600 hover:text-amber-800 transition-colors">DM</button>
           <button onClick={()=>setShowMap(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">地图</button>
           <button onClick={()=>setShowBeast(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">图鉴</button>
+          <button onClick={()=>setShowSpells(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">法术</button>
           <button onClick={saveGame} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">存档</button>
           <button onClick={goToStart} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">载入</button>
           <button onClick={goToStart} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">新游戏</button>
@@ -537,6 +560,36 @@ export default function GameScreen() {
         </div>
       )}
 
+      {/* 法术图鉴 */}
+      {showSpells && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowSpells(false)}>
+          <div className="paper-card rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-gray-900">法术 / 仪式</h3>
+              <button onClick={()=>setShowSpells(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+            </div>
+            <input value={spellQuery} onChange={e=>setSpellQuery(e.target.value)} placeholder="搜索法术/仪式..." className="input-field text-xs mb-3" />
+            {spells.filter(s=>!spellQuery || `${s.name} ${s.school} ${s.level} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <p className="text-xs text-gray-400">暂无匹配法术。</p>}
+            {spells.filter(s=>!spellQuery || `${s.name} ${s.school} ${s.level} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).map(s=>(
+              <div key={s.id} className="mb-3 border-2 border-amber-900/30 rounded-lg p-3 bg-[#fffdf5]">
+                <div className="flex items-center justify-between">
+                  <p className="paper-title text-base font-bold">{s.name}</p>
+                  <span className="text-[10px] text-gray-500">{s.level}环 · {s.school}{s.ritual?' · 仪式':''}</span>
+                </div>
+                <p className="text-[10px] text-gray-600 mt-1">{s.description}</p>
+                <div className="text-[10px] text-gray-500 mt-1 space-y-0.5">
+                  {s.casting_time&&<p>施法时间：{s.casting_time}</p>}
+                  {s.range&&<p>距离：{s.range}</p>}
+                  {s.components&&<p>成分：{s.components}</p>}
+                  {s.duration&&<p>持续时间：{s.duration}</p>}
+                  {s.classes.length>0&&<p>职业：{s.classes.join('、')}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* DM 工具：新增角色/地点/生物 */}
       {showDmTools && (
         <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowDmTools(false)}>
@@ -583,6 +636,18 @@ export default function GameScreen() {
               </div>
               <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmBeastImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-gray-500" />
               <button onClick={addDmBeast} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增生物</button>
+            </div>
+
+            {/* 新增法术/仪式 */}
+            <div className="mt-4 pt-3 border-t border-amber-900/10">
+              <p className="text-xs font-bold text-gray-700 mb-2">新增法术 / 仪式</p>
+              <div className="grid grid-cols-2 gap-2">
+                <input value={dmSpell.name} onChange={e=>setDmSpell({...dmSpell,name:e.target.value})} placeholder="法术名称 *" className="input-field text-xs" />
+                <input value={dmSpell.level} onChange={e=>setDmSpell({...dmSpell,level:e.target.value})} placeholder="环位" className="input-field text-xs" />
+                <input value={dmSpell.school} onChange={e=>setDmSpell({...dmSpell,school:e.target.value})} placeholder="学派" className="input-field text-xs" />
+                <textarea value={dmSpell.description} onChange={e=>setDmSpell({...dmSpell,description:e.target.value})} placeholder="效果描述" rows={2} className="input-field text-xs resize-none" />
+              </div>
+              <button onClick={addDmSpell} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增法术</button>
             </div>
           </div>
         </div>

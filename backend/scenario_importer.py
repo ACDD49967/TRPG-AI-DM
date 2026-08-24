@@ -523,8 +523,10 @@ async def generate_scenario_from_text(
 
     # 把世界状态中的常驻地点同步到该剧本的地点图鉴
     try:
-        from backend.media_manager import sync_scenario_maps
+        from backend.media_manager import sync_scenario_bestiary, sync_scenario_maps, sync_scenario_spells
         sync_scenario_maps(username, saved.id, world_state.locations, system)
+        sync_scenario_bestiary(username, saved.id, world_state.creatures, system)
+        sync_scenario_spells(username, saved.id, world_state.spells, system)
     except Exception:
         pass
 

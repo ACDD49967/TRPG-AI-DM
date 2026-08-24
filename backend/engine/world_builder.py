@@ -162,6 +162,8 @@ EXTRACT_STATE_PROMPT = """请从以下TRPG冒险大纲中提取关键的结构�
 2. plot_flags: 关键剧情节点，每个包含 key(旗标名), status(默认"未触发"), description
 3. locations: 关键地点，每个包含 name, description, secrets(如有)
 4. world_rules: 这个世界独特的规则（魔法限制、社会规则等）
+5. creatures: 剧本中出现的关键生物/怪物，每个包含 name, description, stats(对象，可含 HP/AC/速度/六维/技能等), tags(数组)
+6. spells: 剧本中涉及的重要法术/仪式，每个包含 name, level, school, ritual, casting_time, range, components, duration, description, classes(数组)
 
 ## 严格输出格式（必须遵守）
 - 只输出一个 JSON 对象，不要 Markdown 代码块（不要 ```json），不要任何解释、前后缀或注释。
@@ -169,7 +171,7 @@ EXTRACT_STATE_PROMPT = """请从以下TRPG冒险大纲中提取关键的结构�
 - 数组为空时输出 []，字符串为空时输出 ""。
 
 输出纯JSON：
-{{"npcs":[...],"plot_flags":[...],"locations":[...],"world_rules":"..."}}"""
+{{"npcs":[...],"plot_flags":[...],"locations":[...],"creatures":[...],"spells":[...],"world_rules":"..."}}"""
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -490,6 +492,8 @@ async def build_world(
                 name=l.get("name",""), description=l.get("description",""),
                 secrets=l.get("secrets",""),
             ))
+        ws.creatures = state_data.get("creatures", [])
+        ws.spells = state_data.get("spells", [])
         ws.world_rules = state_data.get("world_rules", "")
     except Exception:
         pass  # 提取失败不影响核心流程

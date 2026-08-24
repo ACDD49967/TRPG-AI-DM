@@ -156,6 +156,28 @@ def sync_scenario_maps(username: str, scenario_id: str, locations: list[dict], s
         existing.add(name)
 
 
+def sync_scenario_bestiary(username: str, scenario_id: str, creatures: list[dict], system: str = "custom"):
+    """把世界状态中提取的生物同步到该剧本的生物图鉴（幂等）。"""
+    if not scenario_id:
+        return
+    existing = {i.get("name") for i in list_bestiary(username, scenario_id)}
+    for c in creatures:
+        name = str(c.get("name", "")).strip() if isinstance(c, dict) else str(c).strip()
+        if not name or name in existing:
+            continue
+        add_bestiary(
+            username=username,
+            name=name,
+            system=system,
+            description=str(c.get("description", "")) if isinstance(c, dict) else "",
+            stats=c.get("stats") if isinstance(c, dict) else {},
+            tags=c.get("tags") if isinstance(c, dict) else [],
+            details={"source": "剧本生成"},
+            scenario_id=scenario_id,
+        )
+        existing.add(name)
+
+
 def delete_map(username: str, map_id: str) -> bool:
     items = _load_meta(username, "maps")
     new = [i for i in items if i["id"] != map_id]
@@ -387,3 +409,76 @@ def delete_bestiary(username: str, beast_id: str) -> bool:
         return False
     _save_meta(username, "bestiary", new)
     return True
+
+
+# ── 法术/仪式 ──
+
+def add_spell(username: str, name: str, system: str, description: str,
+              level: str = "0", school: str = "", ritual: bool = False,
+              casting_time: str = "", range_: str = "", components: str = "",
+              duration: str = "", classes: list[str] | None = None,
+              scenario_id: str = "") -> dict:
+    items = _load_meta(username, "spells")
+    item = {
+        "id": uuid.uuid4().hex[:16],
+        "name": name or "未命名法术",
+        "system": system,
+        "description": description or "",
+        "level": str(level),
+        "school": school or "",
+        "ritual": bool(ritual),
+        "casting_time": casting_time or "",
+        "range": range_ or "",
+        "components": components or "",
+        "duration": duration or "",
+        "classes": classes or [],
+        "scenario_id": scenario_id or "",
+        "created_at": datetime.now().isoformat(),
+    }
+    items.append(item)
+    _save_meta(username, "spells", items)
+    return item
+
+
+def list_spells(username: str, scenario_id: str | None = None) -> list[dict]:
+    ensure_seeded(username)
+    items = _load_meta(username, "spells")
+    if scenario_id is not None:
+        return [i for i in items if not i.get("scenario_id") or i.get("scenario_id") == scenario_id]
+    return items
+
+
+def delete_spell(username: str, spell_id: str) -> bool:
+    items = _load_meta(username, "spells")
+    new = [i for i in items if i["id"] != spell_id]
+    if len(new) == len(items):
+        return False
+    _save_meta(username, "spells", new)
+    return True
+
+
+def sync_scenario_spells(username: str, scenario_id: str, spells: list[dict], system: str = "custom"):
+    """把世界状态中提取的法术/仪式同步到该剧本的法术图鉴（幂等）。"""
+    if not scenario_id:
+        return
+    existing = {i.get("name") for i in list_spells(username, scenario_id)}
+    for s in spells:
+        name = str(s.get("name", "")).strip() if isinstance(s, dict) else str(s).strip()
+        if not name or name in existing:
+            continue
+        add_spell(
+            username=username,
+            name=name,
+            system=system,
+            description=str(s.get("description", "")) if isinstance(s, dict) else "",
+            level=str(s.get("level", "0")) if isinstance(s, dict) else "0",
+            school=str(s.get("school", "")) if isinstance(s, dict) else "",
+            ritual=bool(s.get("ritual", False)) if isinstance(s, dict) else False,
+            casting_time=str(s.get("casting_time", "")) if isinstance(s, dict) else "",
+            range_=str(s.get("range", "")) if isinstance(s, dict) else "",
+            components=str(s.get("components", "")) if isinstance(s, dict) else "",
+            duration=str(s.get("duration", "")) if isinstance(s, dict) else "",
+            classes=list(s.get("classes", [])) if isinstance(s, dict) else [],
+            scenario_id=scenario_id,
+        )
+        existing.add(name)

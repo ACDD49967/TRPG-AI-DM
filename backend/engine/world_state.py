@@ -204,6 +204,8 @@ class WorldState:
     npcs: list[NpcEntry] = field(default_factory=list)
     plot_flags: list[PlotFlag] = field(default_factory=list)
     locations: list[LocationEntry] = field(default_factory=list)
+    creatures: list = field(default_factory=list)
+    spells: list = field(default_factory=list)
 
     scene: SceneInfo = field(default_factory=SceneInfo)
 
@@ -242,6 +244,8 @@ class WorldState:
             ws.locations = [LocationEntry(**{k: v for k, v in l.items()
                                              if k in ["name","description","status","secrets","discovered"]})
                             for l in data.get("locations", [])]
+            ws.creatures = data.get("creatures", [])
+            ws.spells = data.get("spells", [])
 
             sc = data.get("scene", {})
             ws.scene = SceneInfo(
@@ -273,6 +277,8 @@ class WorldState:
             "npcs": [{**asdict(n), "visibility": n.visibility.to_dict()} for n in self.npcs],
             "plot_flags": [asdict(p) for p in self.plot_flags],
             "locations": [asdict(l) for l in self.locations],
+            "creatures": self.creatures,
+            "spells": self.spells,
             "scene": asdict(self.scene),
             "character_notes": [asdict(cn) for cn in self.character_notes],
             "turn_count": self.turn_count,

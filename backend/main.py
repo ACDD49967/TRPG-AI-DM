@@ -162,8 +162,10 @@ async def generate_world(request: WorldGenRequest):
     )
     scenario_id = saved.id
     try:
-        from backend.media_manager import sync_scenario_maps
+        from backend.media_manager import sync_scenario_bestiary, sync_scenario_maps, sync_scenario_spells
         sync_scenario_maps(request.username, scenario_id, world_state.locations, request.game_system)
+        sync_scenario_bestiary(request.username, scenario_id, world_state.creatures, request.game_system)
+        sync_scenario_spells(request.username, scenario_id, world_state.spells, request.game_system)
     except Exception:
         pass
 
@@ -281,8 +283,10 @@ async def generate_world_stream(request: WorldGenRequest):
                     score=score,
                 )
                 try:
-                    from backend.media_manager import sync_scenario_maps
+                    from backend.media_manager import sync_scenario_bestiary, sync_scenario_maps, sync_scenario_spells
                     sync_scenario_maps(request.username, saved.id, world_state.locations, request.game_system)
+                    sync_scenario_bestiary(request.username, saved.id, world_state.creatures, request.game_system)
+                    sync_scenario_spells(request.username, saved.id, world_state.spells, request.game_system)
                 except Exception:
                     pass
                 result = {
@@ -874,6 +878,41 @@ async def delete_map_api(map_id: str, username: str = "default"):
     from backend.media_manager import delete_map
     if not delete_map(username, map_id):
         raise HTTPException(status_code=404, detail="地图不存在")
+    return {"deleted": True}
+
+
+@app.get("/api/spells")
+async def list_spells_api(username: str = "default", scenario_id: str | None = None):
+    from backend.media_manager import list_spells
+    return {"spells": list_spells(username, scenario_id)}
+
+
+@app.post("/api/spells")
+async def add_spell_api(payload: dict):
+    from backend.media_manager import add_spell
+    item = add_spell(
+        username=str(payload.get("username") or "default"),
+        name=str(payload.get("name") or "未命名法术"),
+        system=str(payload.get("system") or "custom"),
+        description=str(payload.get("description") or ""),
+        level=str(payload.get("level") or "0"),
+        school=str(payload.get("school") or ""),
+        ritual=bool(payload.get("ritual", False)),
+        casting_time=str(payload.get("casting_time") or ""),
+        range_=str(payload.get("range") or ""),
+        components=str(payload.get("components") or ""),
+        duration=str(payload.get("duration") or ""),
+        classes=payload.get("classes") or [],
+        scenario_id=str(payload.get("scenario_id") or ""),
+    )
+    return {"spell": item}
+
+
+@app.delete("/api/spells/{spell_id}")
+async def delete_spell_api(spell_id: str, username: str = "default"):
+    from backend.media_manager import delete_spell
+    if not delete_spell(username, spell_id):
+        raise HTTPException(status_code=404, detail="法术不存在")
     return {"deleted": True}
 
 

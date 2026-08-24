@@ -178,6 +178,10 @@ export function useSSE(sessionId: string | null) {
         store.getState().bumpMediaVersion();
       },
 
+      spells_updated: () => {
+        store.getState().bumpMediaVersion();
+      },
+
       scene_update: (data) => {
         store.getState().setSceneInfo({
           location: data.location as string || '',
@@ -206,7 +210,7 @@ export function useSSE(sessionId: string | null) {
     const eventTypes = [
       'intro', 'narrative', 'narrative_flush', 'dice_roll',
       'state_update', 'choices', 'game_event', 'error', 'end_of_turn',
-      'journal_update', 'scene_update', 'maps_updated', 'bestiary_updated', 'history',
+      'journal_update', 'scene_update', 'maps_updated', 'bestiary_updated', 'spells_updated', 'history',
     ];
 
     for (const eventType of eventTypes) {

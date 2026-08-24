@@ -123,6 +123,20 @@ ADD_SCENARIO_MAP_TOOL = _tool("add_scenario_map",
      "locations": {"type": "array", "items": {"type": "object"}, "description": "可选地点标记 [{name,x,y}]"}},
     ["name"])
 
+ADD_SCENARIO_SPELL_TOOL = _tool("add_scenario_spell",
+    "在当前剧本中新增法术/仪式（仅当前剧本生效，不写入知识库）。用于玩家习得新法术、发现仪式或需要展示施法细节时。",
+    {"name": {"type": "string", "description": "法术/仪式名称"},
+     "description": {"type": "string", "description": "效果描述"},
+     "level": {"type": "string", "description": "环位，如 0/1/2"},
+     "school": {"type": "string", "description": "学派，如 防护/塑能"},
+     "ritual": {"type": "boolean", "description": "是否仪式"},
+     "casting_time": {"type": "string"},
+     "range": {"type": "string"},
+     "components": {"type": "string"},
+     "duration": {"type": "string"},
+     "classes": {"type": "array", "items": {"type": "string"}}},
+    ["name"])
+
 GENERATE_NAME_TOOL = _tool("generate_name",
     "生成一个符合种族/背景的 NPC 名字。",
     {"race": {"type": "string", "description": "种族，如人类/精灵/矮人"}},
@@ -155,12 +169,18 @@ SEARCH_LOCATIONS_TOOL = _tool("search_locations",
      "top_k": {"type": "integer", "description": "返回数量，默认3，最大5"}},
     ["query"])
 
+SEARCH_SPELLS_TOOL = _tool("search_spells",
+    "快速查询当前剧本法术/仪式图鉴，返回匹配法术的精简摘要。用于施法、仪式或玩家询问法术细节时确认设定，避免消耗过多 token。",
+    {"query": {"type": "string", "description": "法术/仪式名称或关键词"},
+     "top_k": {"type": "integer", "description": "返回数量，默认3，最大5"}},
+    ["query"])
+
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, ADD_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
     UPDATE_WORLD_STATE_TOOL, REVEAL_INFO_TOOL, UPDATE_SCENE_TOOL,
     ADD_CHARACTER_NOTE_TOOL, UPDATE_BESTIARY_TOOL, UPDATE_CITY_TOOL,
-    ADD_SCENARIO_BESTIARY_TOOL, ADD_SCENARIO_MAP_TOOL,
+    ADD_SCENARIO_BESTIARY_TOOL, ADD_SCENARIO_MAP_TOOL, ADD_SCENARIO_SPELL_TOOL,
     GENERATE_NAME_TOOL, ROLL_TREASURE_TOOL, NPC_QUIRK_TOOL, SEARCH_KNOWLEDGE_TOOL,
-    SEARCH_BESTIARY_TOOL, SEARCH_LOCATIONS_TOOL,
+    SEARCH_BESTIARY_TOOL, SEARCH_LOCATIONS_TOOL, SEARCH_SPELLS_TOOL,
 ]
