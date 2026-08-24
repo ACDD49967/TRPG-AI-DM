@@ -11,6 +11,7 @@ import Choices from './Choices';
 import DiceRollOverlay from './DiceRoll';
 import DecisionPanel from './DecisionPanel';
 import RulebookModal from './RulebookModal';
+import SpellCard from './SpellCard';
 import DndCharacterSheet from './DndCharacterSheet';
 import CocInvestigatorSheet from './CocInvestigatorSheet';
 
@@ -350,6 +351,14 @@ export default function GameScreen() {
               </div>
             )}
 
+            {/* 已习得法术 */}
+            {((status.known_spells?.length ?? 0) > 0) && (
+              <div className="space-y-1 mb-4">
+                <p className="text-[10px] text-gray-400 font-medium mb-1">已习得法术</p>
+                {status.known_spells!.map(s => <SpellCard key={s.name} spell={s} />)}
+              </div>
+            )}
+
             {/* 剧本专属 / 额外属性 */}
             {((status.custom_classes?.length ?? 0)>0 || (status.custom_skills?.length ?? 0)>0 || (status.extra_attributes && Object.keys(status.extra_attributes).length>0)) && (
               <div className="space-y-2 mb-4">
@@ -460,11 +469,17 @@ export default function GameScreen() {
               const traits = get('特性','Traits','traits');
               const actions = get('动作','Actions','actions');
               return (
-                <div key={b.id} className="mb-4 border-2 border-amber-900/30 rounded-lg p-3 bg-[#fffdf5] shadow-sm">
+                <details key={b.id} className="group mb-3 border-2 border-amber-900/30 rounded-lg p-3 bg-[#fffdf5] shadow-sm">
+                  <summary className="cursor-pointer select-none list-none">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="paper-title text-base font-bold text-gray-900">{b.name}</span>
+                      <span className="text-[9px] text-gray-400 shrink-0">{challenge!=='—'?`CR ${challenge}${xp!=='—'?`（XP ${xp}）`:''} · `:''}HP {get('HP','hp','生命')} · AC {get('AC','ac','护甲')}<span className="ml-1 group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span></span>
+                    </div>
+                  </summary>
+                  <div className="mt-2">
                   <div className="flex items-start gap-3">
                     {b.image_path&&<img src={b.image_path} alt={b.name} className="w-20 h-20 object-cover rounded-lg border border-amber-900/20" />}
                     <div className="min-w-0 flex-1">
-                      <p className="paper-title text-base font-bold text-gray-900">{b.name}</p>
                       <p className="text-[10px] text-gray-500 italic">{b.system}{b.tags&&b.tags.length>0?` · ${b.tags.join('、')}`:''}</p>
                       <div className="grid grid-cols-3 gap-1 mt-1.5 text-[10px]">
                         <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-gray-500">AC</span> <b>{get('AC','ac','护甲')}</b></div>
@@ -551,7 +566,8 @@ export default function GameScreen() {
                       <div className="flex flex-wrap gap-1">{relatedMaps.map(m=><span key={m.id} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 rounded px-1.5 py-0.5">{m.name}</span>)}</div>
                     </div>
                   )}
-                </div>
+                  </div>
+                </details>
               );
             })}
           </div>
@@ -569,20 +585,19 @@ export default function GameScreen() {
             <input value={spellQuery} onChange={e=>setSpellQuery(e.target.value)} placeholder="搜索法术/仪式..." className="input-field text-xs mb-3" />
             {spells.filter(s=>!spellQuery || `${s.name} ${s.school} ${s.level} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <p className="text-xs text-gray-400">暂无匹配法术。</p>}
             {spells.filter(s=>!spellQuery || `${s.name} ${s.school} ${s.level} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).map(s=>(
-              <div key={s.id} className="mb-3 border-2 border-amber-900/30 rounded-lg p-3 bg-[#fffdf5]">
-                <div className="flex items-center justify-between">
-                  <p className="paper-title text-base font-bold">{s.name}</p>
-                  <span className="text-[10px] text-gray-500">{s.level}环 · {s.school}{s.ritual?' · 仪式':''}</span>
+              <details key={s.id} className="group mb-2 border-2 border-amber-900/30 rounded-lg p-2.5 bg-[#fffdf5]">
+                <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
+                  <span className="paper-title text-sm font-bold">{s.name}：{Number(s.level)===0?'戏法':`${s.level}环`} {s.school}</span>
+                  <span className="text-[9px] text-gray-400 shrink-0">{s.ritual?'仪式 · ':''}{s.classes.length>0?`${s.classes.join('、')} · `:''}<span className="group-open:hidden">▸ 详情</span><span className="hidden group-open:inline">▾</span></span>
+                </summary>
+                <div className="mt-2 pt-2 border-t border-amber-900/10 text-[10px] text-gray-600 space-y-1">
+                  {s.casting_time&&<p><span className="text-gray-400">施法时间：</span>{s.casting_time}</p>}
+                  {s.range&&<p><span className="text-gray-400">施法距离：</span>{s.range}</p>}
+                  {s.components&&<p><span className="text-gray-400">法术成分：</span>{s.components}</p>}
+                  {s.duration&&<p><span className="text-gray-400">持续时间：</span>{s.duration}</p>}
+                  {s.description&&<p className="text-gray-700 whitespace-pre-line">{s.description}</p>}
                 </div>
-                <p className="text-[10px] text-gray-600 mt-1">{s.description}</p>
-                <div className="text-[10px] text-gray-500 mt-1 space-y-0.5">
-                  {s.casting_time&&<p>施法时间：{s.casting_time}</p>}
-                  {s.range&&<p>距离：{s.range}</p>}
-                  {s.components&&<p>成分：{s.components}</p>}
-                  {s.duration&&<p>持续时间：{s.duration}</p>}
-                  {s.classes.length>0&&<p>职业：{s.classes.join('、')}</p>}
-                </div>
-              </div>
+              </details>
             ))}
           </div>
         </div>
@@ -595,6 +610,16 @@ export default function GameScreen() {
             <div className="flex items-center justify-between mb-3">
               <h3 className="paper-title text-lg font-bold">DM 工具</h3>
               <button onClick={()=>setShowDmTools(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+            </div>
+
+            {/* 低 token 快捷工具说明 */}
+            <div className="mb-4 border-b border-amber-900/10 pb-3">
+              <p className="text-xs font-bold text-gray-700 mb-1">DM 低 token 快捷工具（Function Calling）</p>
+              <p className="text-[10px] text-gray-500 leading-relaxed">
+                get_character_state（查状态）· adjust_resource（资源增减）· cast_spell（扣法术位）·
+                learn_spell / forget_spell（习得/遗忘法术）· search_npcs（查NPC）· adjust_npc（NPC数值增减）·
+                search_bestiary / adjust_bestiary（查/改生物）· search_spells（查法术）
+              </p>
             </div>
 
             {/* 新增角色/NPC */}

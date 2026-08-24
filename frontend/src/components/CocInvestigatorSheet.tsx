@@ -1,6 +1,7 @@
 /** COC 7e 官方调查员卡样式 */
 
 import { useGameStore } from '../store/gameStore';
+import SpellCard from './SpellCard';
 
 const COC_ATTRS: Array<[string, string]> = [
   ['str', '力量'], ['con', '体质'], ['dex', '敏捷'], ['int', '智力'],
@@ -67,6 +68,16 @@ export default function CocInvestigatorSheet({ onClose }: { onClose?: () => void
                 <span className="paper-title text-sm font-bold">{v}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* 法术 / 仪式（克苏鲁神话或剧本法术） */}
+      {((status.known_spells?.length ?? 0) > 0) && (
+        <div className="mt-4">
+          <p className="section-label mb-2">法术 / 仪式</p>
+          <div className="space-y-1">
+            {status.known_spells!.map(s => <SpellCard key={s.name} spell={s} paper />)}
           </div>
         </div>
       )}

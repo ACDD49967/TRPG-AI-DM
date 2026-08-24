@@ -44,6 +44,11 @@ export interface CharacterStatus {
   proficiency_bonus?: number;
   spell_slots?: number[] | { spell_slots?: number[]; pact_slots?: number; pact_slot_level?: number };
   class_resources?: Array<{ key: string; name: string; current: number; max: number; desc?: string }>;
+  known_spells?: Array<{
+    name: string; level: string; school?: string; description?: string;
+    casting_time?: string; range?: string; components?: string; duration?: string;
+    classes?: string[]; ritual?: boolean; prepared?: boolean;
+  }>;
   action_points?: number;
   fortitude?: number;
   reflex?: number;

@@ -179,6 +179,70 @@ SEARCH_SPELLS_TOOL = _tool("search_spells",
      "top_k": {"type": "integer", "description": "返回数量，默认3，最大5"}},
     ["query"])
 
+# ── 低 token 角色资源/法术/NPC 快速工具 ──
+
+GET_CHARACTER_STATE_TOOL = _tool("get_character_state",
+    "以最小 token 返回角色当前状态摘要：HP/AC/金币/等级/职业资源/法术位/已习得法术。需要确认玩家现状或结算前后时调用，勿凭记忆推断。",
+    {"fields": {"type": "array", "items": {"type": "string", "enum": ["core", "resources", "spell_slots", "known_spells", "inventory"]}}},
+    [])
+
+ADJUST_RESOURCE_TOOL = _tool("adjust_resource",
+    "以最小 token 增减一个职业资源（自动限制在 0~上限）。resource 只填资源 key。",
+    {"resource": {"type": "string", "enum": ["sorcery_points", "ki_points", "rage", "bardic_inspiration",
+                                             "lay_on_hands", "channel_divinity", "wild_shape", "second_wind",
+                                             "action_surge", "arcane_recovery", "action_points"]},
+     "delta": {"type": "integer", "description": "正数恢复/获得，负数消耗"},
+     "reason": {"type": "string"}},
+    ["resource", "delta"])
+
+CAST_SPELL_TOOL = _tool("cast_spell",
+    "玩家施放一个法术时调用：自动扣减对应环位法术位（邪术师扣契约法术位），返回剩余法术位。level=法术环位，0环戏法不扣。",
+    {"name": {"type": "string", "description": "法术名（用于记录）"},
+     "level": {"type": "integer", "minimum": 0, "maximum": 9, "description": "法术环位"},
+     "pact": {"type": "boolean", "description": "邪术师使用契约法术位时填 true"}},
+    ["level"])
+
+LEARN_SPELL_TOOL = _tool("learn_spell",
+    "玩家习得一个新法术后调用，写入角色卡已习得法术。法术详情应从 search_spells 结果或剧本图鉴中取，不要编造。",
+    {"name": {"type": "string"},
+     "level": {"type": "string", "description": "环位，如 0/1/2/3"},
+     "school": {"type": "string"},
+     "description": {"type": "string"},
+     "casting_time": {"type": "string"},
+     "range": {"type": "string"},
+     "components": {"type": "string"},
+     "duration": {"type": "string"},
+     "classes": {"type": "array", "items": {"type": "string"}},
+     "prepared": {"type": "boolean"}},
+    ["name"])
+
+FORGET_SPELL_TOOL = _tool("forget_spell",
+    "玩家失去/遗忘一个已习得法术时调用。",
+    {"name": {"type": "string"}},
+    ["name"])
+
+SEARCH_NPC_TOOL = _tool("search_npcs",
+    "快速查询世界状态中的 NPC 数值（HP/AC/态度/位置），返回精简摘要。与NPC互动或战斗结算前确认数值时调用，避免消耗过多 token。",
+    {"query": {"type": "string", "description": "NPC 名称或关键词，留空返回前几个"},
+     "top_k": {"type": "integer", "description": "返回数量，默认3，最大5"}},
+    [])
+
+ADJUST_NPC_TOOL = _tool("adjust_npc",
+    "以最小 token 增减世界状态中 NPC 的数值。field 只填：hp/ac/max_hp/level；delta 负数=受伤/消耗。",
+    {"name": {"type": "string", "description": "NPC 名称"},
+     "field": {"type": "string", "enum": ["hp", "ac", "max_hp", "level"]},
+     "delta": {"type": "integer"},
+     "reason": {"type": "string"}},
+    ["name", "field", "delta"])
+
+ADJUST_BESTIARY_TOOL = _tool("adjust_bestiary",
+    "以最小 token 修改本局临时生物图鉴条目数值（仅本局生效）。field 可填 stats 中的任意键，如 HP/AC/攻击。",
+    {"name": {"type": "string", "description": "生物名称"},
+     "field": {"type": "string", "description": "数值字段名，如 HP/AC"},
+     "delta": {"type": "integer"},
+     "reason": {"type": "string"}},
+    ["name", "field", "delta"])
+
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, ADD_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
@@ -187,4 +251,7 @@ DM_TOOLS = [
     ADD_SCENARIO_BESTIARY_TOOL, ADD_SCENARIO_MAP_TOOL, ADD_SCENARIO_SPELL_TOOL,
     GENERATE_NAME_TOOL, ROLL_TREASURE_TOOL, NPC_QUIRK_TOOL, SEARCH_KNOWLEDGE_TOOL,
     SEARCH_BESTIARY_TOOL, SEARCH_LOCATIONS_TOOL, SEARCH_SPELLS_TOOL,
+    GET_CHARACTER_STATE_TOOL, ADJUST_RESOURCE_TOOL, CAST_SPELL_TOOL,
+    LEARN_SPELL_TOOL, FORGET_SPELL_TOOL, SEARCH_NPC_TOOL, ADJUST_NPC_TOOL,
+    ADJUST_BESTIARY_TOOL,
 ]

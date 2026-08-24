@@ -208,6 +208,22 @@ def add_bestiary(username: str, name: str, system: str, description: str,
     return item
 
 
+def update_bestiary(username: str, name: str, changes: dict) -> dict | None:
+    """按 ID 或名称更新生物条目；仅更新传入字段，返回更新后的条目。"""
+    items = _load_meta(username, "bestiary")
+    for item in items:
+        if item.get("id") != name and item.get("name") != name:
+            continue
+        for k, v in (changes or {}).items():
+            if k == "stats" and isinstance(v, dict):
+                item["stats"] = {**item.get("stats", {}), **v}
+            else:
+                item[k] = v
+        _save_meta(username, "bestiary", items)
+        return item
+    return None
+
+
 def _import_kb_monsters(username: str):
     """从知识库中的 5etools 怪物 JSON 导入标准怪物卡（幂等，仅一次）。"""
     user_dir = _user_media_dir(username)
@@ -438,6 +454,19 @@ def add_spell(username: str, name: str, system: str, description: str,
     items.append(item)
     _save_meta(username, "spells", items)
     return item
+
+
+def update_spell(username: str, name: str, changes: dict) -> dict | None:
+    """按名称更新法术/仪式条目。"""
+    items = _load_meta(username, "spells")
+    for item in items:
+        if item.get("name") != name:
+            continue
+        for k, v in (changes or {}).items():
+            item[k] = v
+        _save_meta(username, "spells", items)
+        return item
+    return None
 
 
 def list_spells(username: str, scenario_id: str | None = None) -> list[dict]:

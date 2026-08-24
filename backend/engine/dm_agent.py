@@ -4,6 +4,30 @@ import asyncio, json, random, re
 from typing import Any
 
 
+def _normalize_spell(item: Any) -> dict:
+    """将已习得法术统一为 {name, level, school, description, casting_time, range, components, duration, classes, prepared}。"""
+    if isinstance(item, dict):
+        return {
+            "name": str(item.get("name") or "未命名法术"),
+            "level": str(item.get("level") or "0"),
+            "school": str(item.get("school") or ""),
+            "description": str(item.get("description") or ""),
+            "casting_time": str(item.get("casting_time") or ""),
+            "range": str(item.get("range") or ""),
+            "components": str(item.get("components") or ""),
+            "duration": str(item.get("duration") or ""),
+            "classes": list(item.get("classes") or []),
+            "ritual": bool(item.get("ritual", False)),
+            "prepared": bool(item.get("prepared", True)),
+        }
+    return {
+        "name": str(item),
+        "level": "0", "school": "", "description": "",
+        "casting_time": "", "range": "", "components": "", "duration": "",
+        "classes": [], "ritual": False, "prepared": True,
+    }
+
+
 def _normalize_item(item: Any) -> dict:
     """将背包条目统一为结构化对象：{name, description, quantity, type, properties}。"""
     if isinstance(item, dict):
@@ -175,6 +199,12 @@ B1. 碰到以下情况，必须调用对应工具，不允许用叙事代替：
     - HP降到0 → death_saving_throw（每回合一次。d20≥10=成功，自然20=醒，自然1=计2次失败。3成功=稳定，3失败=死亡。详见F节）
     - 角色短休或长休 → take_rest
     - 角色HP/金币/经验/物品变化 → update_state
+    - 确认角色当前资源/法术位/已习得法术 → get_character_state（勿凭记忆推断）
+    - 术法点/气/狂暴等职业资源增减 → adjust_resource
+    - 玩家施法 → cast_spell（自动扣法术位；先确认有对应环位）
+    - 玩家习得/遗忘法术 → learn_spell / forget_spell
+    - 查询/增减 NPC 数值 → search_npcs / adjust_npc
+    - 查询/增减本局生物图鉴数值 → search_bestiary / adjust_bestiary
     - 重要剧情事实 → add_memory
     - 玩家不知道下一步做什么 → suggest_choices
     - 玩家行动产生世界级影响 → update_world_state
@@ -704,11 +734,20 @@ def build_character_info(state: GameSessionState) -> str:
         resources = info.get("class_resources", [])
         if resources:
             lines.append("职业资源: " + " | ".join(f"{r.get('name')}: {r.get('current', 0)}/{r.get('max', 0)}" for r in resources))
+        known_spells = info.get("known_spells", [])
+        if known_spells:
+            lines.append("已习得法术: " + "、".join(
+                f"{s.get('name')}({s.get('level', '?')}环{s.get('school', '')})" for s in known_spells))
     elif system == "dnd4e":
         lines.append(f"回复力: {info.get('healing_surges', 0)}/{info.get('max_healing_surges', 0)} (每次 {info.get('surge_value', 0)} HP)")
         lines.append(f"行动点: {info.get('action_points', 1)} | 防御: AC {info.get('ac', ac)} 强韧 {info.get('fortitude', 10)} 反射 {info.get('reflex', 10)} 意志 {info.get('will', 10)}")
     elif system == "coc":
         lines.append(f"MP: {info.get('mp', 0)} | SAN: {info.get('san', 0)} | 幸运: {info.get('luck', 0)} | 伤害加值: {info.get('damage_bonus', '0')}")
+
+    known_spells_all = info.get("known_spells", [])
+    if known_spells_all and system != "dnd5e":
+        lines.append("已习得法术: " + "、".join(
+            f"{s.get('name')}({s.get('level', '?')}环{s.get('school', '')})" for s in known_spells_all))
 
     if attrs:
         names = {"str":"力","dex":"敏","con":"体","int":"智","wis":"感","cha":"魅"}
@@ -879,6 +918,14 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "search_bestiary": _exec_search_bestiary,
         "search_locations": _exec_search_locations,
         "search_spells": _exec_search_spells,
+        "get_character_state": _exec_get_character_state,
+        "adjust_resource": _exec_adjust_resource,
+        "cast_spell": _exec_cast_spell,
+        "learn_spell": _exec_learn_spell,
+        "forget_spell": _exec_forget_spell,
+        "search_npcs": _exec_search_npcs,
+        "adjust_npc": _exec_adjust_npc,
+        "adjust_bestiary": _exec_adjust_bestiary,
     }
     fn = handlers.get(name)
     return await fn(args, state) if fn else f"未知: {name}"
@@ -1077,6 +1124,17 @@ async def _exec_update_state(args: dict, state: GameSessionState) -> str:
             current = max(0, min(3, info.get("action_points", 1) + int(v)))
             info["action_points"] = current
             applied["action_points"] = current
+        elif k == "spells_known_add":
+            spells = info.setdefault("known_spells", [])
+            spell = _normalize_spell(v)
+            if not any((s.get("name") if isinstance(s, dict) else s) == spell["name"] for s in spells):
+                spells.append(spell)
+            applied["known_spells"] = spells
+        elif k == "spells_known_remove":
+            spells = info.setdefault("known_spells", [])
+            name = v if isinstance(v, str) else (v.get("name") if isinstance(v, dict) else str(v))
+            spells[:] = [s for s in spells if (s.get("name") if isinstance(s, dict) else s) != name]
+            applied["known_spells"] = spells
         elif k == "inventory_add":
             items = info.setdefault("inventory", {}).setdefault("items", [])
             item = _normalize_item(v)
@@ -1528,6 +1586,189 @@ async def _exec_search_spells(args: dict, state: GameSessionState) -> str:
         f"- {it.get('name','')}（{it.get('level','?')}环 {it.get('school','')}{' 仪式' if it.get('ritual') else ''}）: {str(it.get('description',''))[:80]}"
         for it in picked
     )
+
+
+async def _exec_get_character_state(args: dict, state: GameSessionState) -> str:
+    """低 token 角色状态摘要：核心数值/职业资源/法术位/已习得法术。"""
+    info = state.character_info
+    fields = set(args.get("fields") or ["core", "resources", "spell_slots", "known_spells"])
+    lines = []
+    if not fields or "core" in fields:
+        lines.append(
+            f"HP {info.get('hp', 0)}/{info.get('max_hp', 0)} | AC {info.get('ac', 10)} | "
+            f"Lv{info.get('level', 1)} | 金币 {info.get('gold', 0)}"
+        )
+        if info.get("game_system") == "coc":
+            lines.append(f"MP {info.get('mp', 0)}/{info.get('max_mp', 0)} | SAN {info.get('san', 0)} | 幸运 {info.get('luck', 0)}")
+    if "resources" in fields:
+        res = info.get("class_resources", [])
+        if res:
+            lines.append("资源: " + " ".join(f"{r.get('name')}{r.get('current', 0)}/{r.get('max', 0)}" for r in res))
+        if info.get("action_points") is not None:
+            lines.append(f"行动点 {info['action_points']}/3")
+    if "spell_slots" in fields:
+        ss = info.get("spell_slots")
+        if isinstance(ss, dict):
+            arr = ss.get("spell_slots") or []
+            if arr:
+                lines.append("法术位: " + "/".join(str(x) for x in arr))
+            if ss.get("pact_slots"):
+                lines.append(f"契约法术位: {ss['pact_slots']}（{ss.get('pact_slot_level', 1)}环）")
+    if "known_spells" in fields:
+        spells = info.get("known_spells", [])
+        if spells:
+            lines.append("已习得: " + "、".join(
+                f"{s.get('name')}({s.get('level', '?')}环{s.get('school', '')})" for s in spells
+            ))
+    if "inventory" in fields:
+        items = (info.get("inventory") or {}).get("items", []) if isinstance(info.get("inventory"), dict) else []
+        if items:
+            lines.append("背包: " + "、".join(
+                (i.get("name") if isinstance(i, dict) else str(i)) for i in items[:8]
+            ))
+    return "\n".join(lines) or "角色状态为空"
+
+
+async def _exec_adjust_resource(args: dict, state: GameSessionState) -> str:
+    key = str(args.get("resource", "")).strip()
+    delta = int(args.get("delta", 0) or 0)
+    reason = str(args.get("reason", "") or "资源调整")
+    result = await _exec_update_state(
+        {"changes": {f"class_resource:{key}": delta}, "reason": reason}, state)
+    return result
+
+
+async def _exec_cast_spell(args: dict, state: GameSessionState) -> str:
+    name = str(args.get("name", "") or "法术")
+    level = int(args.get("level", 0) or 0)
+    pact = bool(args.get("pact", False))
+    info = state.character_info
+    if level <= 0:
+        return f"🎲 {name}（戏法）不消耗法术位"
+    current = info.get("spell_slots")
+    if not isinstance(current, dict):
+        current = {"spell_slots": [], "pact_slots": 0}
+    if pact:
+        if int(current.get("pact_slots", 0) or 0) <= 0:
+            return f"⚠ 契约法术位不足，无法施放 {name}"
+        current["pact_slots"] = int(current["pact_slots"]) - 1
+        remain = f"契约 {current['pact_slots']}（{current.get('pact_slot_level', '?')}环）"
+    else:
+        arr = list(current.get("spell_slots") or [])
+        if level > len(arr) or int(arr[level - 1] or 0) <= 0:
+            return f"⚠ 第{level}环法术位不足，无法施放 {name}"
+        arr[level - 1] = int(arr[level - 1]) - 1
+        current["spell_slots"] = arr
+        remain = f"{level}环剩余 {arr[level - 1]}"
+    info["spell_slots"] = current
+    await push_event(state, "state_update", {"spell_slots": current})
+    return f"🎲 {name}：已消耗法术位 → {remain}"
+
+
+async def _exec_learn_spell(args: dict, state: GameSessionState) -> str:
+    spell = _normalize_spell(args)
+    await _exec_update_state({"changes": {"spells_known_add": spell},
+                              "reason": f"习得 {spell['name']}"}, state)
+    return f"✅ 已习得: {spell['name']}（{spell['level']}环 {spell['school']}）"
+
+
+async def _exec_forget_spell(args: dict, state: GameSessionState) -> str:
+    name = str(args.get("name", ""))
+    if not name:
+        return "⚠ 缺少法术名"
+    await _exec_update_state({"changes": {"spells_known_remove": name},
+                              "reason": f"遗忘 {name}"}, state)
+    return f"✅ 已遗忘: {name}"
+
+
+async def _exec_search_npcs(args: dict, state: GameSessionState) -> str:
+    ws = getattr(state, "world_state", None)
+    if ws is None:
+        return "无世界状态"
+    query = str(args.get("query", "")).strip().lower()
+    top_k = max(1, min(5, int(args.get("top_k", 3) or 3)))
+    npcs = list(ws.npcs)
+    if query:
+        scored = []
+        for n in npcs:
+            hay = " ".join([n.name, n.role, n.location, n.attitude]).lower()
+            scored.append((hay.count(query), n))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        npcs = [n for c, n in scored if c > 0][:top_k]
+    else:
+        npcs = npcs[:top_k]
+    if not npcs:
+        return "世界状态中没有匹配的 NPC"
+    return "\n".join(
+        f"- {n.name} [{n.role or '未知'}] HP{n.hp}/{n.max_hp} AC{n.ac} Lv{n.level} "
+        f"{n.attitude} @{n.location or '未知'}" + (" ☠" if not n.alive else "")
+        for n in npcs
+    )
+
+
+async def _exec_adjust_npc(args: dict, state: GameSessionState) -> str:
+    ws = getattr(state, "world_state", None)
+    if ws is None:
+        return "无世界状态"
+    name = str(args.get("name", "")).strip()
+    field = str(args.get("field", "")).strip()
+    delta = int(args.get("delta", 0) or 0)
+    npc = ws.get_npc(name)
+    if npc is None:
+        return f"⚠ NPC 不存在: {name}"
+    if field == "alive":
+        npc.alive = bool(args.get("value", True))
+        ws.save()
+    elif field in ("hp", "max_hp", "ac", "level"):
+        current = getattr(npc, field, 0)
+        setattr(npc, field, max(0, int(current) + delta))
+        if field == "hp" and npc.hp > npc.max_hp:
+            npc.hp = npc.max_hp
+        ws.save()
+    else:
+        return f"⚠ 不支持的字段: {field}"
+    await push_event(state, "journal_update", ws.to_player_journal())
+    return (f"✅ {name} {field}: {getattr(npc, field)} "
+            f"(HP {npc.hp}/{npc.max_hp} AC {npc.ac} Lv {npc.level})")
+
+
+async def _exec_adjust_bestiary(args: dict, state: GameSessionState) -> str:
+    name = str(args.get("name", "")).strip()
+    field = str(args.get("field", "")).strip()
+    delta = int(args.get("delta", 0) or 0)
+    if not name or not field:
+        return "⚠ 需要 name 与 field"
+    # 先从当前剧本图鉴取现值，找不到再查本局临时覆写
+    current_stats: dict = {}
+    try:
+        from backend.media_manager import list_bestiary, update_bestiary
+        scenario_id = state.character_info.get("scenario_id", "") or None
+        for item in list_bestiary(state.username or "default", scenario_id):
+            if item.get("name") == name or item.get("id") == name:
+                current_stats = dict(item.get("stats") or {})
+                target_id = item.get("id", name)
+                break
+        else:
+            target_id = name
+    except Exception:
+        target_id = name
+    override = dict(state.bestiary_overrides.get(name, {}))
+    if not current_stats:
+        current_stats = dict(override.get("stats", {}))
+    try:
+        new_value = max(0, int(str(current_stats.get(field, 0)).replace("+", "") or 0) + delta)
+    except (TypeError, ValueError):
+        new_value = max(0, delta)
+    merged_stats = {**current_stats, field: str(new_value)}
+    override["stats"] = merged_stats
+    state.bestiary_overrides[name] = override
+    try:
+        from backend.media_manager import update_bestiary
+        update_bestiary(state.username or "default", target_id, {"stats": {field: str(new_value)}})
+    except Exception:
+        pass
+    await push_event(state, "bestiary_updated", {})
+    return f"✅ 生物 {name} {field}: {new_value}"
 
 
 async def _exec_character_note(args: dict, state: GameSessionState) -> str:

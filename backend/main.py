@@ -818,6 +818,7 @@ async def load_save_api(payload: dict):
         elif _ci.get("game_system") == "dnd4e":
             _ci.setdefault("action_points", 1)
             _ci.setdefault("class_resources", [])
+        _ci.setdefault("known_spells", [])
     except Exception:
         pass
     # 用前端当前配置覆盖/补全存档中的模型配置，避免旧存档缺模型导致无法读档
@@ -1547,6 +1548,7 @@ async def create_new_game(request: NewGameRequest):
             "custom_classes": request.custom_classes,
             "custom_skills": request.custom_skills,
             "extra_attributes": request.extra_attributes,
+            "known_spells": request.known_spells or [],
         }
 
         # 根据规则系统预填衍生数值

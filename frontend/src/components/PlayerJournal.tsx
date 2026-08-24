@@ -1,7 +1,6 @@
 /** 玩家笔记 —— 白色简洁 · 场景/NPC/剧情/角色笔记 */
 
 import { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
 
 interface CharNote { target:string;comment:string;clue?:string;turn:number; }
@@ -16,60 +15,63 @@ interface JournalData {
 }
 
 function NpcCard({npc,cat}:{npc:NpcView;cat:string}){
-  const [exp,setExp]=useState(false);
-  const colors:Record<string,string>={ally:'border-emerald-200 bg-emerald-50/50',enemy:'border-red-200 bg-red-50/50',neutral:'border-gray-200 bg-gray-50/50'};
-  const icons:Record<string,string>={ally:'🟢',enemy:'🔴',neutral:'⚪'};
+  const colors:Record<string,string>={ally:'border-emerald-200 bg-emerald-50/40',enemy:'border-red-200 bg-red-50/40',neutral:'border-gray-200 bg-gray-50/60'};
   const labels:Record<string,string>={ally:'友善',enemy:'敌对',neutral:'中立'};
+  const attrNames:Record<string,string>={str:'力量',dex:'敏捷',con:'体质',int:'智力',wis:'感知',cha:'魅力',pow:'意志',siz:'体型',edu:'教育'};
+  const mod = (v: number) => `${Math.floor((v - 10) / 2) >= 0 ? '+' : ''}${Math.floor((v - 10) / 2)}`;
   return (
-    <motion.div initial={{opacity:0,y:2}} animate={{opacity:1,y:0}} className={`rounded-lg border p-1.5 ${colors[cat]||colors.neutral} text-[10px]`}>
-      <div className="flex items-center justify-between cursor-pointer" onClick={()=>setExp(!exp)}>
-        <div className="flex items-center gap-1 min-w-0">
-          {npc.image_path ? <img src={npc.image_path} alt={npc.name} className="w-5 h-5 rounded object-cover border border-gray-200" /> : <span className="text-[9px]">{icons[cat]||'⚪'}</span>}
-          <span className="font-medium text-gray-700 truncate">{npc.name}</span>
-          {npc._hidden_fields>0&&!exp&&<span className="text-[8px] text-indigo-500 bg-indigo-50 px-1 rounded">{npc._hidden_fields}隐藏</span>}
-        </div>
-        <span className="text-[9px] text-gray-400">{exp?'▾':'▸'}</span>
-      </div>
-      <AnimatePresence>
-        {exp&&<motion.div initial={{height:0}} animate={{height:'auto'}} exit={{height:0}} className="overflow-hidden">
-          <div className="mt-1.5 pt-1.5 border-t border-gray-100 space-y-1">
-            <Row k="身份" v={npc.role}/><Row k="种族" v={npc.race}/><Row k="位置" v={npc.location}/>
-            <Row k="状态" v={npc.alive===false?'☠ 已故':labels[cat]}/>
-            {npc.appearance&&<Row k="外貌" v={npc.appearance}/>}
-            {npc.personality&&<Row k="性格" v={npc.personality} c="text-indigo-600"/>}
-            {npc.motivation&&<Row k="动机" v={npc.motivation} c="text-amber-600"/>}
-            {npc.secret&&<Row k="秘密" v={npc.secret} c="text-red-500"/>}
-            {npc.relation_to_plot&&<Row k="关联" v={npc.relation_to_plot} c="text-blue-600"/>}
-            {(npc.hp || npc.ac || npc.level) && (
-              <div className="grid grid-cols-3 gap-1 pt-1 mt-1 border-t border-gray-100">
-                <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">HP</span><span className="ml-1 font-bold">{npc.hp}/{npc.max_hp}</span></div>
-                <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">AC</span><span className="ml-1 font-bold">{npc.ac}</span></div>
-                <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">Lv</span><span className="ml-1 font-bold">{npc.level}</span></div>
-              </div>
-            )}
-            {npc.attributes && Object.keys(npc.attributes).length>0 && (
-              <div className="grid grid-cols-3 gap-1 pt-1 mt-1 border-t border-gray-100">
-                {Object.entries(npc.attributes).map(([k,v])=>(
-                  <div key={k} className="bg-white rounded px-1 py-0.5 border border-gray-100 flex justify-between"><span className="text-gray-400 uppercase text-[8px]">{k}</span><span className="font-bold">{v}</span></div>
-                ))}
-              </div>
-            )}
-            {npc.skills && npc.skills.length>0 && (
-              <div className="pt-1 mt-1 border-t border-gray-100">
-                <p className="text-[8px] text-gray-400 font-medium mb-0.5">技能</p>
-                <div className="flex flex-wrap gap-1">{npc.skills.map((s,i)=><span key={i} className="text-[9px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1 py-0.5">{s}</span>)}</div>
-              </div>
-            )}
-            {npc.traits && npc.traits.length>0 && (
-              <div className="pt-1 mt-1 border-t border-gray-100">
-                <p className="text-[8px] text-gray-400 font-medium mb-0.5">特性/动作</p>
-                <div className="space-y-0.5">{npc.traits.map((t,i)=><p key={i} className="text-[9px] text-gray-600">· {t}</p>)}</div>
-              </div>
-            )}
+    <details className={`group rounded-lg border p-1.5 ${colors[cat]||colors.neutral} text-[10px]`}>
+      <summary className="cursor-pointer select-none list-none">
+        <div className="flex items-center justify-between gap-1">
+          <div className="flex items-center gap-1 min-w-0">
+            {npc.image_path ? <img src={npc.image_path} alt={npc.name} className="w-5 h-5 rounded object-cover border border-gray-200" /> : <span className="w-1.5 h-1.5 rounded-full bg-current opacity-40" />}
+            <span className="font-bold text-gray-800 truncate">{npc.name}</span>
+            {npc._hidden_fields>0&&<span className="text-[8px] text-indigo-500 bg-indigo-50 px-1 rounded shrink-0">{npc._hidden_fields}隐藏</span>}
           </div>
-        </motion.div>}
-      </AnimatePresence>
-    </motion.div>
+          <span className="text-[9px] text-gray-400 shrink-0">HP {npc.hp}/{npc.max_hp} · AC {npc.ac} <span className="group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span></span>
+        </div>
+      </summary>
+
+      {/* D&D 官方 NPC 卡样式 */}
+      <div className="mt-1.5 pt-1.5 border-t-2 border-amber-900/60 bg-[#fffdf5] rounded px-2 py-1.5">
+        <p className="text-center font-bold text-gray-900">{npc.name}</p>
+        <p className="text-center text-[8px] text-gray-500 italic">
+          {npc.role||'未知身份'}{npc.race&&npc.race!=='???'?` · ${npc.race}`:''} · {npc.alive===false?'已故':labels[cat]}
+        </p>
+        <div className="my-1 border-t border-amber-900/60" />
+        <div className="flex justify-between gap-1 text-[9px]">
+          <span><b className="text-gray-500">护甲等级</b> <b>{npc.ac}</b></span>
+          <span><b className="text-gray-500">生命值</b> <b>{npc.hp}/{npc.max_hp}</b></span>
+          <span><b className="text-gray-500">等级</b> <b>{npc.level}</b></span>
+        </div>
+        {npc.location&&<p className="text-[9px] text-gray-500 mt-0.5">位置：{npc.location}</p>}
+        {npc.attributes && Object.keys(npc.attributes).length>0 && (
+          <>
+            <div className="my-1 border-t border-amber-900/60" />
+            <div className="grid grid-cols-3 gap-x-1 gap-y-0.5">
+              {Object.entries(npc.attributes).map(([k,v])=>(
+                <div key={k} className="text-center leading-tight">
+                  <p className="text-[7px] uppercase tracking-wide text-gray-400">{attrNames[k]||k}</p>
+                  <p className="text-[11px] font-bold">{v}<span className="ml-0.5 text-[8px] text-gray-500">({mod(Number(v))})</span></p>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        {npc.skills && npc.skills.length>0 && (
+          <><div className="my-1 border-t border-amber-900/60" /><p className="text-[9px]"><span className="font-bold text-gray-500">技能 </span>{npc.skills.join('、')}</p></>
+        )}
+        {npc.traits && npc.traits.length>0 && (
+          <><div className="my-1 border-t border-amber-900/60" /><p className="text-[8px] font-bold text-gray-500">特性 / 动作</p>{npc.traits.map((t,i)=><p key={i} className="text-[9px] text-gray-700">· {t}</p>)}</>
+        )}
+        <div className="my-1 border-t border-amber-900/60" />
+        <Row k="外貌" v={npc.appearance}/>
+        <Row k="性格" v={npc.personality} c="text-indigo-600"/>
+        <Row k="动机" v={npc.motivation} c="text-amber-600"/>
+        <Row k="秘密" v={npc.secret} c="text-red-500"/>
+        <Row k="关联" v={npc.relation_to_plot} c="text-blue-600"/>
+      </div>
+    </details>
   );
 }
 function Row({k,v,c}:{k:string;v:string;c?:string}){

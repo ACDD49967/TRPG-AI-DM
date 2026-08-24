@@ -2,6 +2,7 @@
 
 import { useGameStore } from '../store/gameStore';
 import type { CharacterStatus } from '../store/gameStore';
+import SpellCard from './SpellCard';
 
 const ATTR_CN: Record<string, string> = {
   str: '力量', dex: '敏捷', con: '体质', int: '智力', wis: '感知', cha: '魅力',
@@ -113,13 +114,13 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
       {((status.class_resources?.length || 0) > 0 || status.game_system === 'dnd4e') && (
         <div className="mt-2 grid grid-cols-2 gap-2">
           {(status.class_resources || []).map((r, i) => (
-            <div key={r.key || i} className="bg-white/70 border border-amber-900/20 rounded-lg p-2">
-              <div className="flex items-baseline justify-between">
-                <p className="text-[10px] uppercase tracking-widest text-gray-500">{r.name}</p>
+            <details key={r.key || i} className="group bg-white/70 border border-amber-900/20 rounded-lg p-2">
+              <summary className="cursor-pointer flex items-baseline justify-between">
+                <p className="text-[10px] uppercase tracking-widest text-gray-500">{r.name}<span className="ml-1 group-open:hidden">▸</span></p>
                 <p className="paper-title text-lg font-bold">{r.current}/{r.max}</p>
-              </div>
-              {r.desc ? <p className="text-[9px] text-gray-500 mt-0.5">{r.desc}</p> : null}
-            </div>
+              </summary>
+              {r.desc ? <p className="text-[9px] text-gray-500 mt-1 pt-1 border-t border-amber-900/10">{r.desc}</p> : null}
+            </details>
           ))}
           {status.game_system === 'dnd4e' && (
             <>
@@ -240,7 +241,9 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
         <div className="mt-4 bg-white/70 border border-amber-900/20 rounded-lg p-3">
           <p className="section-label mb-2">施法</p>
           <div className="text-[10px] text-gray-700 space-y-0.5">
-            <p>施法属性：{ATTR_CN[castAttr] || castAttr}（法术攻击 d20{castMod + prof >= 0 ? `+${castMod + prof}` : castMod + prof}）</p>
+            <p>施法属性：{ATTR_CN[castAttr] || castAttr}</p>
+            <p>法术攻击加值：d20{castMod + prof >= 0 ? `+${castMod + prof}` : castMod + prof}</p>
+            <p>法术豁免 DC：{8 + castMod + prof}（8 + 熟练{prof >= 0 ? `+${prof}` : prof} + {ATTR_CN[castAttr] || castAttr}调整{castMod >= 0 ? `+${castMod}` : castMod}）</p>
             <p>法术位：{
               (() => {
                 const arr = Array.isArray(spellSlots)
@@ -252,6 +255,13 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
                 return (rings || '—') + (pact ? ` · 契约法术位×${pact}（${pactLevel ?? 1}环）` : '');
               })()
             }</p>
+          </div>
+          <div className="mt-2 space-y-1">
+            <p className="section-label">已习得法术（{(status.known_spells || []).length}）</p>
+            {(status.known_spells || []).length === 0 && (
+              <p className="text-[10px] text-gray-400">暂无。习得新法术后会自动出现在这里，点开可查看完整效果。</p>
+            )}
+            {(status.known_spells || []).map(s => <SpellCard key={s.name} spell={s} paper />)}
           </div>
         </div>
       )}
