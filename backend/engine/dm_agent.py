@@ -1685,57 +1685,101 @@ async def _exec_update_city(args: dict, state: GameSessionState) -> str:
 
 
 async def _exec_add_scenario_bestiary(args: dict, state: GameSessionState) -> str:
-    from backend.media_manager import add_bestiary
+    from backend.media_manager import add_bestiary, list_bestiary, update_bestiary
+    username = state.username or "default"
     scenario_id = state.character_info.get("scenario_id", "") or ""
-    item = add_bestiary(
-        username=state.username or "default",
-        name=args.get("name", "未命名生物"),
-        system=_game_system(state),
-        description=args.get("description", "") or "",
-        stats=args.get("stats") or {},
-        tags=args.get("tags") or [],
-        scenario_id=scenario_id,
-    )
+    name = str(args.get("name", "未命名生物"))
+    existing = next((it for it in list_bestiary(username, scenario_id or None) if it.get("name") == name), None)
+    if existing:
+        item = update_bestiary(username, existing["id"], {
+            "description": args.get("description", "") or "",
+            "stats": args.get("stats") or {},
+            "tags": args.get("tags") or [],
+        })
+        action = "更新"
+    else:
+        item = add_bestiary(
+            username=username,
+            name=name,
+            system=_game_system(state),
+            description=args.get("description", "") or "",
+            stats=args.get("stats") or {},
+            tags=args.get("tags") or [],
+            scenario_id=scenario_id,
+        )
+        action = "新增"
     await push_event(state, "bestiary_updated", {})
-    return f"已加入当前剧本图鉴: {item['name']}"
+    return f"✅ 已{action}当前剧本图鉴: {item['name']}"
 
 
 async def _exec_add_scenario_map(args: dict, state: GameSessionState) -> str:
-    from backend.media_manager import add_map
+    from backend.media_manager import add_map, list_maps, update_map
+    username = state.username or "default"
     scenario_id = state.character_info.get("scenario_id", "") or ""
-    item = add_map(
-        username=state.username or "default",
-        name=args.get("name", "未命名地图"),
-        description=args.get("description", "") or "",
-        image_path="",
-        locations=args.get("locations") or [],
-        system=_game_system(state),
-        scenario_id=scenario_id,
-    )
+    name = str(args.get("name", "未命名地图"))
+    existing = next((it for it in list_maps(username, scenario_id or None) if it.get("name") == name), None)
+    if existing:
+        item = update_map(username, existing["id"], {
+            "description": args.get("description", "") or "",
+            "locations": args.get("locations") or [],
+            "system": _game_system(state),
+            "scenario_id": scenario_id,
+        })
+        action = "更新"
+    else:
+        item = add_map(
+            username=username,
+            name=name,
+            description=args.get("description", "") or "",
+            image_path="",
+            locations=args.get("locations") or [],
+            system=_game_system(state),
+            scenario_id=scenario_id,
+        )
+        action = "新增"
     await push_event(state, "maps_updated", {})
-    return f"已加入当前剧本地图: {item['name']}"
+    return f"✅ 已{action}当前剧本地图: {item['name']}"
 
 
 async def _exec_add_scenario_spell(args: dict, state: GameSessionState) -> str:
-    from backend.media_manager import add_spell
+    from backend.media_manager import add_spell, list_spells, update_spell
+    username = state.username or "default"
     scenario_id = state.character_info.get("scenario_id", "") or ""
-    item = add_spell(
-        username=state.username or "default",
-        name=args.get("name", "未命名法术"),
-        system=_game_system(state),
-        description=args.get("description", "") or "",
-        level=str(args.get("level", "0")),
-        school=args.get("school", "") or "",
-        ritual=bool(args.get("ritual", False)),
-        casting_time=args.get("casting_time", "") or "",
-        range_=args.get("range", "") or "",
-        components=args.get("components", "") or "",
-        duration=args.get("duration", "") or "",
-        classes=args.get("classes") or [],
-        scenario_id=scenario_id,
-    )
+    name = str(args.get("name", "未命名法术"))
+    existing = next((it for it in list_spells(username, scenario_id or None) if it.get("name") == name), None)
+    if existing:
+        item = update_spell(username, existing["id"], {
+            "description": args.get("description", "") or "",
+            "level": str(args.get("level", "0")),
+            "school": args.get("school", "") or "",
+            "ritual": bool(args.get("ritual", False)),
+            "casting_time": args.get("casting_time", "") or "",
+            "range": args.get("range", "") or "",
+            "components": args.get("components", "") or "",
+            "duration": args.get("duration", "") or "",
+            "classes": args.get("classes") or [],
+            "scenario_id": scenario_id,
+        })
+        action = "更新"
+    else:
+        item = add_spell(
+            username=username,
+            name=name,
+            system=_game_system(state),
+            description=args.get("description", "") or "",
+            level=str(args.get("level", "0")),
+            school=args.get("school", "") or "",
+            ritual=bool(args.get("ritual", False)),
+            casting_time=args.get("casting_time", "") or "",
+            range_=args.get("range", "") or "",
+            components=args.get("components", "") or "",
+            duration=args.get("duration", "") or "",
+            classes=args.get("classes") or [],
+            scenario_id=scenario_id,
+        )
+        action = "新增"
     await push_event(state, "spells_updated", {})
-    return f"已加入当前剧本法术/仪式: {item['name']}"
+    return f"✅ 已{action}当前剧本法术/仪式: {item['name']}"
 
 
 async def _exec_search_bestiary(args: dict, state: GameSessionState) -> str:

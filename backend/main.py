@@ -857,17 +857,29 @@ async def list_maps_api(username: str = "default", scenario_id: str | None = Non
 
 @app.post("/api/maps")
 async def add_map_api(payload: dict):
-    from backend.media_manager import add_map
+    from backend.media_manager import add_map, list_maps, update_map
     username = str(payload.get("username") or "default")
-    item = add_map(
-        username=username,
-        name=str(payload.get("name") or "未命名地图"),
-        description=str(payload.get("description") or ""),
-        image_path=str(payload.get("image_path") or ""),
-        locations=payload.get("locations") or [],
-        system=str(payload.get("system") or "custom"),
-        scenario_id=str(payload.get("scenario_id") or ""),
-    )
+    name = str(payload.get("name") or "未命名地图")
+    scenario_id = str(payload.get("scenario_id") or "")
+    existing = next((it for it in list_maps(username, scenario_id or None) if it.get("name") == name), None)
+    if existing:
+        item = update_map(username, existing["id"], {
+            "description": str(payload.get("description") or ""),
+            "image_path": str(payload.get("image_path") or ""),
+            "locations": payload.get("locations") or [],
+            "system": str(payload.get("system") or "custom"),
+            "scenario_id": scenario_id,
+        })
+    else:
+        item = add_map(
+            username=username,
+            name=name,
+            description=str(payload.get("description") or ""),
+            image_path=str(payload.get("image_path") or ""),
+            locations=payload.get("locations") or [],
+            system=str(payload.get("system") or "custom"),
+            scenario_id=scenario_id,
+        )
     return {"map": item}
 
 
@@ -881,7 +893,7 @@ async def upload_map_api(
     locations: str = Form("[]"),
     scenario_id: str = Form(""),
 ):
-    from backend.media_manager import add_map, save_image
+    from backend.media_manager import add_map, list_maps, save_image, update_map
     import json as _json
     data = await file.read()
     image_path = save_image(username, data, file.filename or "map.png")
@@ -889,7 +901,14 @@ async def upload_map_api(
         locs = _json.loads(locations) if locations.strip() else []
     except Exception:
         locs = []
-    item = add_map(username, name, description, image_path, locs, system, scenario_id=scenario_id)
+    existing = next((it for it in list_maps(username, scenario_id or None) if it.get("name") == name), None)
+    if existing:
+        item = update_map(username, existing["id"], {
+            "description": description, "image_path": image_path, "locations": locs,
+            "system": system, "scenario_id": scenario_id,
+        })
+    else:
+        item = add_map(username, name, description, image_path, locs, system, scenario_id=scenario_id)
     return {"map": item}
 
 
@@ -909,23 +928,44 @@ async def list_spells_api(username: str = "default", scenario_id: str | None = N
 
 @app.post("/api/spells")
 async def add_spell_api(payload: dict):
-    from backend.media_manager import add_spell
-    item = add_spell(
-        username=str(payload.get("username") or "default"),
-        name=str(payload.get("name") or "未命名法术"),
-        system=str(payload.get("system") or "custom"),
-        description=str(payload.get("description") or ""),
-        level=str(payload.get("level") or "0"),
-        school=str(payload.get("school") or ""),
-        ritual=bool(payload.get("ritual", False)),
-        casting_time=str(payload.get("casting_time") or ""),
-        range_=str(payload.get("range") or ""),
-        components=str(payload.get("components") or ""),
-        duration=str(payload.get("duration") or ""),
-        classes=payload.get("classes") or [],
-        scenario_id=str(payload.get("scenario_id") or ""),
-        tags=payload.get("tags") or ["自建", "法术"],
-    )
+    from backend.media_manager import add_spell, list_spells, update_spell
+    username = str(payload.get("username") or "default")
+    name = str(payload.get("name") or "未命名法术")
+    scenario_id = str(payload.get("scenario_id") or "")
+    existing = next((it for it in list_spells(username, scenario_id or None) if it.get("name") == name), None)
+    changes = {
+        "system": str(payload.get("system") or "custom"),
+        "description": str(payload.get("description") or ""),
+        "level": str(payload.get("level") or "0"),
+        "school": str(payload.get("school") or ""),
+        "ritual": bool(payload.get("ritual", False)),
+        "casting_time": str(payload.get("casting_time") or ""),
+        "range": str(payload.get("range") or ""),
+        "components": str(payload.get("components") or ""),
+        "duration": str(payload.get("duration") or ""),
+        "classes": payload.get("classes") or [],
+        "scenario_id": scenario_id,
+        "tags": payload.get("tags") or ["自建", "法术"],
+    }
+    if existing:
+        item = update_spell(username, existing["id"], changes)
+    else:
+        item = add_spell(
+            username=username,
+            name=name,
+            system=str(payload.get("system") or "custom"),
+            description=str(payload.get("description") or ""),
+            level=str(payload.get("level") or "0"),
+            school=str(payload.get("school") or ""),
+            ritual=bool(payload.get("ritual", False)),
+            casting_time=str(payload.get("casting_time") or ""),
+            range_=str(payload.get("range") or ""),
+            components=str(payload.get("components") or ""),
+            duration=str(payload.get("duration") or ""),
+            classes=payload.get("classes") or [],
+            scenario_id=scenario_id,
+            tags=payload.get("tags") or ["自建", "法术"],
+        )
     return {"spell": item}
 
 
@@ -1027,18 +1067,30 @@ async def list_bestiary_api(username: str = "default", scenario_id: str | None =
 
 @app.post("/api/bestiary")
 async def add_bestiary_api(payload: dict):
-    from backend.media_manager import add_bestiary
+    from backend.media_manager import add_bestiary, list_bestiary, update_bestiary
     username = str(payload.get("username") or "default")
-    item = add_bestiary(
-        username=username,
-        name=str(payload.get("name") or "未命名生物"),
-        system=str(payload.get("system") or "custom"),
-        description=str(payload.get("description") or ""),
-        stats=payload.get("stats") or {},
-        image_path=str(payload.get("image_path") or ""),
-        tags=payload.get("tags") or [],
-        scenario_id=str(payload.get("scenario_id") or ""),
-    )
+    name = str(payload.get("name") or "未命名生物")
+    scenario_id = str(payload.get("scenario_id") or "")
+    existing = next((it for it in list_bestiary(username, scenario_id or None) if it.get("name") == name), None)
+    if existing:
+        item = update_bestiary(username, existing["id"], {
+            "description": str(payload.get("description") or ""),
+            "stats": payload.get("stats") or {},
+            "image_path": str(payload.get("image_path") or ""),
+            "tags": payload.get("tags") or [],
+            "scenario_id": scenario_id,
+        })
+    else:
+        item = add_bestiary(
+            username=username,
+            name=name,
+            system=str(payload.get("system") or "custom"),
+            description=str(payload.get("description") or ""),
+            stats=payload.get("stats") or {},
+            image_path=str(payload.get("image_path") or ""),
+            tags=payload.get("tags") or [],
+            scenario_id=scenario_id,
+        )
     return {"bestiary": item}
 
 
@@ -1053,7 +1105,7 @@ async def upload_bestiary_api(
     tags: str = Form(""),
     scenario_id: str = Form(""),
 ):
-    from backend.media_manager import add_bestiary, save_image
+    from backend.media_manager import add_bestiary, list_bestiary, save_image, update_bestiary
     import json as _json
     data = await file.read()
     image_path = save_image(username, data, file.filename or "creature.png")
@@ -1061,9 +1113,16 @@ async def upload_bestiary_api(
         stats_data = _json.loads(stats) if stats.strip() else {}
     except Exception:
         stats_data = {}
-    item = add_bestiary(username, name, system, description, stats_data, image_path,
-                        [t.strip() for t in tags.split(",") if t.strip()],
-                        scenario_id=scenario_id)
+    tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+    existing = next((it for it in list_bestiary(username, scenario_id or None) if it.get("name") == name), None)
+    if existing:
+        item = update_bestiary(username, existing["id"], {
+            "description": description, "stats": stats_data, "image_path": image_path,
+            "tags": tags_list, "scenario_id": scenario_id,
+        })
+    else:
+        item = add_bestiary(username, name, system, description, stats_data, image_path,
+                            tags_list, scenario_id=scenario_id)
     return {"bestiary": item}
 
 

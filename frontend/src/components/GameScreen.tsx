@@ -58,9 +58,10 @@ export default function GameScreen() {
   const [beastQuery, setBeastQuery] = useState('');
   const [mapQuery, setMapQuery] = useState('');
   const [showSpells, setShowSpells] = useState(false);
-  const [spells, setSpells] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;name_zh?:string;level:string;school:string;ritual:boolean;casting_time:string;range:string;components:string;duration:string;classes:string[]}>>([]);
+  const [spells, setSpells] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;name_zh?:string;level:string;school:string;ritual:boolean;casting_time:string;range:string;components:string;duration:string;classes:string[];tags?:string[]}>>([]);
   const [spellQuery, setSpellQuery] = useState('');
   const [srdTranslating, setSrdTranslating] = useState(false);
+  const [srdProgress, setSrdProgress] = useState<{done:number; total:number} | null>(null);
   const [showSpellBuilder, setShowSpellBuilder] = useState(false);
   const [showDmTools, setShowDmTools] = useState(false);
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
@@ -192,21 +193,35 @@ export default function GameScreen() {
 
   const translateSrd = async () => {
     if (!sessionId || srdTranslating) return;
+    const untranslated = spells.filter(s => (s.tags || []).includes('SRD') && !s.description_zh);
+    if (untranslated.length === 0) {
+      alert('没有需要翻译的 SRD 法术');
+      return;
+    }
+    const ids = untranslated.map(s => s.id);
+    const total = ids.length;
     setSrdTranslating(true);
+    setSrdProgress({ done: 0, total });
     try {
-      const r = await fetch(`/api/game/${sessionId}/translate-srd`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
-      });
-      if (!r.ok) {
-        const e = await r.json().catch(() => ({}));
-        alert(e.detail || '翻译失败');
-        return;
+      const batchSize = 15;
+      for (let i = 0; i < ids.length; i += batchSize) {
+        const batch = ids.slice(i, i + batchSize);
+        const r = await fetch(`/api/game/${sessionId}/translate-srd`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spell_ids: batch }),
+        });
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}));
+          alert(e.detail || '翻译失败');
+          break;
+        }
+        setSrdProgress({ done: Math.min(i + batchSize, total), total });
       }
       useGameStore.getState().bumpMediaVersion();
     } catch {
       alert('翻译请求失败');
     } finally {
       setSrdTranslating(false);
+      setSrdProgress(null);
     }
   };
 
@@ -616,6 +631,17 @@ export default function GameScreen() {
                 <button onClick={()=>setShowSpells(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
               </div>
             </div>
+            {srdProgress && (
+              <div className="mb-3">
+                <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1">
+                  <span>批量机翻 SRD 法术</span>
+                  <span>{srdProgress.done}/{srdProgress.total}</span>
+                </div>
+                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                  <div className="h-full bg-indigo-500 transition-all" style={{ width: `${srdProgress.total ? Math.round((srdProgress.done / srdProgress.total) * 100) : 0}%` }} />
+                </div>
+              </div>
+            )}
             <input value={spellQuery} onChange={e=>setSpellQuery(e.target.value)} placeholder="搜索法术/仪式..." className="input-field text-xs mb-3" />
             {showSpellBuilder && (
               <div className="mb-3 border border-amber-900/20 rounded-lg p-3 bg-amber-50/40 space-y-2">

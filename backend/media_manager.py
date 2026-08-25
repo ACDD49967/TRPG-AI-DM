@@ -108,6 +108,19 @@ def add_map(username: str, name: str, description: str, image_path: str,
     return item
 
 
+def update_map(username: str, name_or_id: str, changes: dict) -> dict | None:
+    """按 ID 或名称更新地图；返回更新后的条目。"""
+    items = _load_meta(username, "maps")
+    for item in items:
+        if item.get("id") != name_or_id and item.get("name") != name_or_id:
+            continue
+        for k, v in (changes or {}).items():
+            item[k] = v
+        _save_meta(username, "maps", items)
+        return item
+    return None
+
+
 def list_maps(username: str, scenario_id: str | None = None) -> list[dict]:
     ensure_seeded(username)
     items = _load_meta(username, "maps")
@@ -829,11 +842,11 @@ def add_spell(username: str, name: str, system: str, description: str,
     return item
 
 
-def update_spell(username: str, name: str, changes: dict) -> dict | None:
-    """按名称更新法术/仪式条目。"""
+def update_spell(username: str, name_or_id: str, changes: dict) -> dict | None:
+    """按 ID 或名称更新法术/仪式条目。"""
     items = _load_meta(username, "spells")
     for item in items:
-        if item.get("name") != name:
+        if item.get("id") != name_or_id and item.get("name") != name_or_id:
             continue
         for k, v in (changes or {}).items():
             item[k] = v
