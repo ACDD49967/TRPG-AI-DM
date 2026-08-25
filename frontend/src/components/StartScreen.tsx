@@ -333,10 +333,12 @@ export default function StartScreen(){
 
   // ── 法术选择：按职业/种族配额 ──
   const wisMod = Math.floor((Number(finalAttrs.wis ?? 10)-10)/2);
-  const cantripQuota = (cc.cantrips||0) + (race==='高等精灵'?1:0);
+  const cantripQuota = (cc.cantrips||0) + (race==='高等精灵'?1:0) + (race==='提夫林'?1:0);
   const spellQuota = cc.prepared && cc.spells===0 ? Math.max(1, wisMod+1) : (cc.spells||0);
   const availableCantrips = spellPool.filter(s=>s.level==='0' && (
-    (s.classes||[]).includes(cc.name) || (race==='高等精灵'&&(s.classes||[]).includes('法师'))
+    (s.classes||[]).includes(cc.name) ||
+    (race==='高等精灵'&&(s.classes||[]).includes('法师')) ||
+    (race==='提夫林'&&(s.classes||[]).includes('提夫林'))
   ));
   const availableLevel1 = spellPool.filter(s=>s.level==='1' && (s.classes||[]).includes(cc.name));
   const selectedCantrips = spellPicks.filter(p=>p.level==='0');

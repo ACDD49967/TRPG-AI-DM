@@ -238,10 +238,11 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
         </div>
       )}
 
-      {/* 施法 */}
-      {spellSlots && (
+      {/* 施法 / 已习得法术 */}
+      {(spellSlots || (status.known_spells?.length || 0) > 0) && (
         <div className="mt-4 bg-white/70 border border-amber-900/20 rounded-lg p-3">
           <p className="section-label mb-2">施法</p>
+          {spellSlots && (
           <div className="text-[10px] text-gray-700 space-y-0.5">
             <p>施法属性：{ATTR_CN[castAttr] || castAttr}</p>
             <p>法术攻击加值：d20{castMod + prof >= 0 ? `+${castMod + prof}` : castMod + prof}</p>
@@ -256,8 +257,9 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
                 const pactLevel = !Array.isArray(spellSlots) && typeof spellSlots === 'object' && spellSlots && (spellSlots as { pact_slot_level?: number }).pact_slot_level;
                 return (rings || '—') + (pact ? ` · 契约法术位×${pact}（${pactLevel ?? 1}环）` : '');
               })()
-            }</p>
+              }</p>
           </div>
+          )}
           <div className="mt-2 space-y-1">
             <p className="section-label">已习得法术（{(status.known_spells || []).length}）</p>
             {(status.known_spells || []).length === 0 && (

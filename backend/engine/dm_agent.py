@@ -6,6 +6,14 @@ from typing import Any
 
 def _normalize_spell(item: Any) -> dict:
     """将已习得法术统一为 {name, level, school, description, casting_time, range, components, duration, classes, prepared}。"""
+
+    def _norm_classes(value: Any) -> list:
+        if isinstance(value, str):
+            return [x.strip() for x in re.split(r"[,，、]", value) if x.strip()]
+        if isinstance(value, list):
+            return [str(x) for x in value if x]
+        return []
+
     if isinstance(item, dict):
         return {
             "name": str(item.get("name") or "未命名法术"),
@@ -16,7 +24,7 @@ def _normalize_spell(item: Any) -> dict:
             "range": str(item.get("range") or ""),
             "components": str(item.get("components") or ""),
             "duration": str(item.get("duration") or ""),
-            "classes": list(item.get("classes") or []),
+            "classes": _norm_classes(item.get("classes")),
             "ritual": bool(item.get("ritual", False)),
             "prepared": bool(item.get("prepared", True)),
         }
@@ -1388,6 +1396,9 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
         player_ac = max(8, min(22, player_ac))
 
     if system == "coc":
+        # COC 敌人技能是百分比；NPC 卡没有 str/dex 时不能套 D&D 加值，回退到 40%
+        if args.get("enemy_attack_modifier") is None and e_mod <= 10:
+            e_mod = 40
         p_skill = max(1, min(99, int(p_mod or 50)))
         e_skill = max(1, min(99, int(e_mod or 40)))
         pr = random.randint(1, 100)
@@ -1844,8 +1855,9 @@ async def _exec_adjust_resource(args: dict, state: GameSessionState) -> str:
 async def _exec_cast_spell(args: dict, state: GameSessionState) -> str:
     name = str(args.get("name", "") or "法术")
     level = int(args.get("level", 0) or 0)
-    pact = bool(args.get("pact", False))
     info = state.character_info
+    # 邪术师未显式指定时默认消耗契约法术位
+    pact = bool(args.get("pact", info.get("char_class") == "邪术师"))
     if level <= 0:
         return f"🎲 {name}（戏法）不消耗法术位"
     current = info.get("spell_slots")
@@ -1859,6 +1871,12 @@ async def _exec_cast_spell(args: dict, state: GameSessionState) -> str:
     else:
         arr = list(current.get("spell_slots") or [])
         if level > len(arr) or int(arr[level - 1] or 0) <= 0:
+            # 邪术师常规环位不足时自动回落到契约法术位
+            if info.get("char_class") == "邪术师" and int(current.get("pact_slots", 0) or 0) > 0:
+                current["pact_slots"] = int(current["pact_slots"]) - 1
+                info["spell_slots"] = current
+                await push_event(state, "state_update", {"spell_slots": current})
+                return f"🎲 {name}：已消耗契约法术位 → 契约 {current['pact_slots']}（{current.get('pact_slot_level', '?')}环）"
             return f"⚠ 第{level}环法术位不足，无法施放 {name}"
         arr[level - 1] = int(arr[level - 1]) - 1
         current["spell_slots"] = arr
