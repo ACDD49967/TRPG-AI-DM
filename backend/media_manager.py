@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.default_content import CLASSIC_BESTIARY, COMMON_CITIES
+from backend.srd_spell_classes import SRD_SPELL_CLASSES
 
 MEDIA_ROOT = Path("media")
 
@@ -752,6 +753,8 @@ def _import_kb_spells(username: str):
                 existing.add(name)
                 classes_raw = (s.get("classes") or {}).get("fromClassList", []) if isinstance(s.get("classes"), dict) else []
                 classes = [_CLASS_CN.get(str(c), str(c)) for c in classes_raw]
+                if not classes:
+                    classes = _srd_spell_classes(name)
                 items.append({
                     "id": uuid.uuid4().hex[:16],
                     "name": name,
@@ -784,6 +787,17 @@ def _norm_spell_classes(value: Any) -> list[str]:
         return [x.strip() for x in re.split(r"[,，、]", value) if x.strip()]
     if isinstance(value, list):
         return [str(x) for x in value if x]
+    return []
+
+
+def _srd_spell_classes(name: str) -> list[str]:
+    """按名称查 SRD 职业映射，兼容大小写差异。"""
+    if name in SRD_SPELL_CLASSES:
+        return list(SRD_SPELL_CLASSES[name])
+    lower = name.lower()
+    for k, v in SRD_SPELL_CLASSES.items():
+        if k.lower() == lower:
+            return list(v)
     return []
 
 
@@ -828,10 +842,25 @@ def update_spell(username: str, name: str, changes: dict) -> dict | None:
     return None
 
 
+def _fill_srd_spell_classes(username: str):
+    """为旧导入的 SRD 法术补齐职业映射（离线映射表）。"""
+    items = _load_meta(username, "spells")
+    changed = False
+    for item in items:
+        if "SRD" in (item.get("tags") or []) and not item.get("classes"):
+            mapped = _srd_spell_classes(item.get("name"))
+            if mapped:
+                item["classes"] = mapped
+                changed = True
+    if changed:
+        _save_meta(username, "spells", items)
+
+
 def list_spells(username: str, scenario_id: str | None = None) -> list[dict]:
     ensure_seeded(username)
     _seed_classic_spells(username)
     _import_kb_spells(username)
+    _fill_srd_spell_classes(username)
     items = _load_meta(username, "spells")
     # 兼容旧数据/外部写入：classes 统一为数组
     changed = False
