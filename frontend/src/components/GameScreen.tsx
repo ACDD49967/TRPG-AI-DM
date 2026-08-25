@@ -58,8 +58,10 @@ export default function GameScreen() {
   const [beastQuery, setBeastQuery] = useState('');
   const [mapQuery, setMapQuery] = useState('');
   const [showSpells, setShowSpells] = useState(false);
-  const [spells, setSpells] = useState<Array<{id:string;name:string;system:string;description:string;level:string;school:string;ritual:boolean;casting_time:string;range:string;components:string;duration:string;classes:string[]}>>([]);
+  const [spells, setSpells] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;name_zh?:string;level:string;school:string;ritual:boolean;casting_time:string;range:string;components:string;duration:string;classes:string[]}>>([]);
   const [spellQuery, setSpellQuery] = useState('');
+  const [srdTranslating, setSrdTranslating] = useState(false);
+  const [showSpellBuilder, setShowSpellBuilder] = useState(false);
   const [showDmTools, setShowDmTools] = useState(false);
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
   const [dmMap, setDmMap] = useState({ name: '', description: '' });
@@ -186,6 +188,26 @@ export default function GameScreen() {
       setDmSpell({ name: '', description: '', level: '0', school: '', ritual: false, casting_time: '', range: '', components: '', duration: '', classes: '' });
       useGameStore.getState().bumpMediaVersion();
     } catch {}
+  };
+
+  const translateSrd = async () => {
+    if (!sessionId || srdTranslating) return;
+    setSrdTranslating(true);
+    try {
+      const r = await fetch(`/api/game/${sessionId}/translate-srd`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        alert(e.detail || '翻译失败');
+        return;
+      }
+      useGameStore.getState().bumpMediaVersion();
+    } catch {
+      alert('翻译请求失败');
+    } finally {
+      setSrdTranslating(false);
+    }
   };
 
   return (
@@ -584,14 +606,42 @@ export default function GameScreen() {
           <div className="paper-card rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900">法术 / 仪式</h3>
-              <button onClick={()=>setShowSpells(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+              <div className="flex items-center gap-2">
+                <button onClick={()=>setShowSpellBuilder(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
+                  {showSpellBuilder ? '收起自建' : '自建法术'}
+                </button>
+                <button onClick={translateSrd} disabled={srdTranslating} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
+                  {srdTranslating ? '机翻中...' : '翻译 SRD 法术'}
+                </button>
+                <button onClick={()=>setShowSpells(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+              </div>
             </div>
             <input value={spellQuery} onChange={e=>setSpellQuery(e.target.value)} placeholder="搜索法术/仪式..." className="input-field text-xs mb-3" />
-            {spells.filter(s=>!spellQuery || `${s.name} ${s.school} ${s.level} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <p className="text-xs text-gray-400">暂无匹配法术。</p>}
-            {spells.filter(s=>!spellQuery || `${s.name} ${s.school} ${s.level} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).map(s=>(
+            {showSpellBuilder && (
+              <div className="mb-3 border border-amber-900/20 rounded-lg p-3 bg-amber-50/40 space-y-2">
+                <p className="text-xs font-bold text-gray-700">自建法术 / 仪式</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={dmSpell.name} onChange={e=>setDmSpell({...dmSpell,name:e.target.value})} placeholder="法术名称 *" className="input-field text-xs" />
+                  <input value={dmSpell.level} onChange={e=>setDmSpell({...dmSpell,level:e.target.value})} placeholder="环位（0=戏法）" className="input-field text-xs" />
+                  <input value={dmSpell.school} onChange={e=>setDmSpell({...dmSpell,school:e.target.value})} placeholder="学派（塑能/防护/...）" className="input-field text-xs" />
+                  <input value={dmSpell.casting_time} onChange={e=>setDmSpell({...dmSpell,casting_time:e.target.value})} placeholder="施法时间（1 动作）" className="input-field text-xs" />
+                  <input value={dmSpell.range} onChange={e=>setDmSpell({...dmSpell,range:e.target.value})} placeholder="施法距离（150 尺/触及/自身）" className="input-field text-xs" />
+                  <input value={dmSpell.components} onChange={e=>setDmSpell({...dmSpell,components:e.target.value})} placeholder="成分（V、S、M）" className="input-field text-xs" />
+                  <input value={dmSpell.duration} onChange={e=>setDmSpell({...dmSpell,duration:e.target.value})} placeholder="持续时间（立即/专注）" className="input-field text-xs" />
+                  <input value={dmSpell.classes} onChange={e=>setDmSpell({...dmSpell,classes:e.target.value})} placeholder="职业（术士、法师）" className="input-field text-xs" />
+                </div>
+                <label className="flex items-center gap-2 text-[10px] text-gray-500">
+                  <input type="checkbox" checked={dmSpell.ritual} onChange={e=>setDmSpell({...dmSpell,ritual:e.target.checked})} /> 仪式法术
+                </label>
+                <textarea value={dmSpell.description} onChange={e=>setDmSpell({...dmSpell,description:e.target.value})} placeholder="效果描述（含伤害、豁免、升环效应）" rows={3} className="input-field text-xs resize-none w-full" />
+                <button onClick={()=>{addDmSpell(); setShowSpellBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本法术库</button>
+              </div>
+            )}
+            {spells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <p className="text-xs text-gray-400">暂无匹配法术。</p>}
+            {spells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).map(s=>(
               <details key={s.id} className="group mb-2 border-2 border-amber-900/30 rounded-lg p-2.5 bg-[#fffdf5]">
                 <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
-                  <span className="paper-title text-sm font-bold">{s.name}：{Number(s.level)===0?'戏法':`${s.level}环`} {s.school}</span>
+                  <span className="paper-title text-sm font-bold">{s.name_zh||s.name}：{Number(s.level)===0?'戏法':`${s.level}环`} {s.school}{s.name_zh&&s.name_zh!==s.name?<span className="text-gray-400 font-normal">（{s.name}）</span>:null}</span>
                   <span className="text-[9px] text-gray-400 shrink-0">{s.ritual?'仪式 · ':''}{s.classes.length>0?`${s.classes.join('、')} · `:''}<span className="group-open:hidden">▸ 详情</span><span className="hidden group-open:inline">▾</span></span>
                 </summary>
                 <div className="mt-2 pt-2 border-t border-amber-900/10 text-[10px] text-gray-600 space-y-1">
@@ -599,7 +649,8 @@ export default function GameScreen() {
                   {s.range&&<p><span className="text-gray-400">施法距离：</span>{s.range}</p>}
                   {s.components&&<p><span className="text-gray-400">法术成分：</span>{s.components}</p>}
                   {s.duration&&<p><span className="text-gray-400">持续时间：</span>{s.duration}</p>}
-                  {s.description&&<p className="text-gray-700 whitespace-pre-line">{s.description}</p>}
+                  {(s.description_zh||s.description)&&<p className="text-gray-700 whitespace-pre-line">{s.description_zh||s.description}</p>}
+                  {s.description_zh&&s.description&&<p className="text-gray-400 italic whitespace-pre-line">原文：{s.description}</p>}
                 </div>
               </details>
             ))}

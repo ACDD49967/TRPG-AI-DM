@@ -937,6 +937,88 @@ async def delete_spell_api(spell_id: str, username: str = "default"):
     return {"deleted": True}
 
 
+@app.post("/api/game/{session_id}/translate-srd")
+async def translate_srd_spells_api(session_id: str, payload: dict):
+    """使用当前会话的 LLM 配置，批量机翻 SRD 法术为简体中文（名称+描述）。"""
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    try:
+        api_key = ensure_valid_api_key(state.api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    from backend.media_manager import _load_meta, _save_meta, list_spells
+
+    list_spells(state.username or "default", None)  # 确保已导入
+    items = _load_meta(state.username or "default", "spells")
+    spell_ids = payload.get("spell_ids") or []
+    targets = [
+        s for s in items
+        if "SRD" in (s.get("tags") or []) and not s.get("description_zh")
+        and (not spell_ids or s.get("id") in spell_ids)
+    ]
+    if not targets:
+        return {"translated": 0, "remaining": 0, "message": "没有需要翻译的 SRD 法术"}
+
+    client = AsyncOpenAI(api_key=api_key, base_url=getattr(state, "base_url", None) or settings.LLM_BASE_URL)
+    model = state.model_name or settings.LLM_MODEL_NAME
+    if not model:
+        raise HTTPException(status_code=400, detail="当前会话没有可用模型")
+
+    items_by_id = {s["id"]: s for s in items}
+    translated = 0
+    batch_size = 15
+    for start in range(0, len(targets), batch_size):
+        batch = targets[start:start + batch_size]
+        prompt = (
+            "你是 D&D 5e 法术简体中文翻译器。将下面的 JSON 数组中每个法术的 name 与 description 翻译成简体中文。"
+            "保留 D&D 规则术语：豁免、施法距离、法术成分(V/S/M)、专注、动作、反应、环位、学派等。"
+            "description 保持完整并符合中文 TRPG 表达。只输出 JSON 数组，不要解释。\n"
+            + json.dumps([
+                {"name": s["name"], "description": s.get("description", "")} for s in batch
+            ], ensure_ascii=False)
+        )
+        try:
+            resp = await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=4000,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            text = text.replace("```json", "").replace("```", "").strip()
+            try:
+                data = json.loads(text)
+            except Exception:
+                from json_repair import repair_json
+                data = json.loads(repair_json(text, return_objects=False))
+            if isinstance(data, dict):
+                data = data.get("spells") or data.get("translations") or []
+            if not isinstance(data, list):
+                continue
+            for i, spell in enumerate(batch):
+                if i >= len(data):
+                    break
+                item = items_by_id.get(spell["id"])
+                if item is None:
+                    continue
+                item["name_zh"] = str(data[i].get("name") or spell["name"])
+                item["description_zh"] = str(data[i].get("description") or spell.get("description", ""))
+                translated += 1
+        except Exception:
+            continue
+
+    if translated:
+        _save_meta(state.username or "default", "spells", items)
+        try:
+            await push_event(state, "spells_updated", {})
+        except Exception:
+            pass
+
+    remaining = len(targets) - translated
+    return {"translated": translated, "remaining": remaining}
+
+
 @app.get("/api/bestiary")
 async def list_bestiary_api(username: str = "default", scenario_id: str | None = None):
     from backend.media_manager import list_bestiary

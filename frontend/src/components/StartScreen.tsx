@@ -85,6 +85,7 @@ const SKILLS=[
 
 interface SpellOption {
   id: string; name: string; system: string; description: string;
+  description_zh?: string; name_zh?: string;
   level: string; school: string; ritual: boolean;
   casting_time: string; range: string; components: string; duration: string;
   classes: string[]; scenario_id?: string; tags?: string[];
@@ -876,7 +877,7 @@ export default function StartScreen(){
         custom_skills:customSkills,
         extra_attributes:extraAttributes,
         known_spells:gameSystem==='dnd5e'?spellPicks.map(s=>({
-          name:s.name,level:s.level,school:s.school,description:s.description,
+          name:s.name,name_zh:s.name_zh,level:s.level,school:s.school,description:s.description,description_zh:s.description_zh,
           casting_time:s.casting_time,range:s.range,components:s.components,
           duration:s.duration,classes:s.classes,ritual:s.ritual,prepared:true,
         })):[],
@@ -1139,10 +1140,10 @@ export default function StartScreen(){
                           return (
                             <button key={s.name} onClick={()=>toggleSpell(s)} className={`w-full text-left p-2 rounded-lg border text-xs transition-all ${sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
                               <div className="flex items-center justify-between">
-                                <span className="font-medium">{s.name}</span>
+                                <span className="font-medium">{s.name_zh||s.name}</span>
                                 <span className="text-[9px] text-gray-400">{s.school}</span>
                               </div>
-                              <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{s.description}</p>
+                              <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{s.description_zh||s.description}</p>
                             </button>
                           );
                         })}
@@ -1158,10 +1159,10 @@ export default function StartScreen(){
                           return (
                             <button key={s.name} onClick={()=>toggleSpell(s)} className={`w-full text-left p-2 rounded-lg border text-xs transition-all ${sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
                               <div className="flex items-center justify-between">
-                                <span className="font-medium">{s.name}</span>
+                                <span className="font-medium">{s.name_zh||s.name}</span>
                                 <span className="text-[9px] text-gray-400">{s.school}{s.ritual?' · 仪式':''}</span>
                               </div>
-                              <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{s.description}</p>
+                              <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{s.description_zh||s.description}</p>
                             </button>
                           );
                         })}

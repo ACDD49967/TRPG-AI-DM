@@ -12,6 +12,8 @@ export interface SpellData {
   classes?: string[];
   ritual?: boolean;
   prepared?: boolean;
+  name_zh?: string;
+  description_zh?: string;
 }
 
 function ringLabel(level: string): string {
@@ -22,11 +24,14 @@ function ringLabel(level: string): string {
 
 export default function SpellCard({ spell, paper = false }: { spell: SpellData; paper?: boolean }) {
   const classes = (spell.classes || []).join('、');
+  const displayName = spell.name_zh || spell.name;
+  const displayDesc = spell.description_zh || spell.description || '';
   return (
     <details className={`group rounded-lg border ${paper ? 'border-amber-900/20 bg-white/70' : 'border-gray-200 bg-white'}`}>
       <summary className="cursor-pointer select-none px-2.5 py-1.5 flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-gray-800">
-          {spell.name}：{ringLabel(spell.level)} {spell.school || '未知学派'}
+          {displayName}：{ringLabel(spell.level)} {spell.school || '未知学派'}
+          {spell.name_zh && spell.name !== spell.name_zh && <span className="text-gray-400 font-normal">（{spell.name}）</span>}
           {classes && <span className="text-gray-400 font-normal">（{classes}）</span>}
         </span>
         <span className="text-[9px] text-gray-400 shrink-0">
@@ -40,7 +45,8 @@ export default function SpellCard({ spell, paper = false }: { spell: SpellData; 
         {spell.range && <p><span className="text-gray-400">施法距离：</span>{spell.range}</p>}
         {spell.components && <p><span className="text-gray-400">法术成分：</span>{spell.components}</p>}
         {spell.duration && <p><span className="text-gray-400">持续时间：</span>{spell.duration}</p>}
-        {spell.description && <p className="text-gray-700 whitespace-pre-line">{spell.description}</p>}
+        {displayDesc && <p className="text-gray-700 whitespace-pre-line">{displayDesc}</p>}
+        {spell.description_zh && spell.description && <p className="text-gray-400 text-[10px] italic whitespace-pre-line">原文：{spell.description}</p>}
       </div>
     </details>
   );
