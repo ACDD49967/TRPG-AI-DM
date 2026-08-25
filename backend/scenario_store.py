@@ -83,6 +83,8 @@ class Scenario:
     @classmethod
     def load(cls, sid: str, username: str | None = None) -> "Scenario | None":
         """加载剧本。指定 username 时仅查找该用户的目录（default 兼容 legacy 根目录）。"""
+        if username and _safe_username(username) != "default":
+            _migrate_legacy_scenarios(username)
         for path in _candidate_paths(sid, username):
             if not os.path.exists(path):
                 continue
@@ -153,12 +155,16 @@ class Scenario:
 
 
 def _migrate_legacy_scenarios(username: str):
-    """把 legacy 根目录剧本迁移到当前用户目录，使已有剧本立即可见。"""
+    """把 legacy 根目录剧本复制到当前用户目录，使已有剧本立即可见且不独占根目录。"""
     safe = _safe_username(username)
     if safe == "default" or not os.path.isdir(SCENARIO_DIR):
         return
+    target_dir = _user_scenario_dir(username)
+    os.makedirs(target_dir, exist_ok=True)
     for fname in os.listdir(SCENARIO_DIR):
         if not fname.endswith(".json"):
+            continue
+        if os.path.exists(os.path.join(target_dir, fname)):
             continue
         legacy = os.path.join(SCENARIO_DIR, fname)
         try:
@@ -170,14 +176,8 @@ def _migrate_legacy_scenarios(username: str):
         if owner and owner != username:
             continue
         data.setdefault("meta", {})["username"] = username
-        target_dir = _user_scenario_dir(username)
-        os.makedirs(target_dir, exist_ok=True)
         with open(os.path.join(target_dir, fname), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        try:
-            os.remove(legacy)
-        except Exception:
-            pass
 
 
 def list_scenarios(username: str | None = None) -> list[dict]:

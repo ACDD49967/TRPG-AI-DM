@@ -738,6 +738,7 @@ export default function StartScreen(){
       custom_skills: customSkills,
       extra_attributes: extraAttributes,
       cocLuck: gameSystem==='coc'?cocLuck:undefined,
+      known_spells: gameSystem==='dnd5e'?spellPicks:[],
     };
     try{
       const r=await fetch('/api/characters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username||'default',card})});
@@ -788,6 +789,7 @@ export default function StartScreen(){
       if(Array.isArray(c.custom_skills))setCustomSkillsText(c.custom_skills.join(', '));
       if(c.extra_attributes)setExtraAttributesText(Object.entries(c.extra_attributes).map(([k,v])=>`${k}:${v}`).join('\n'));
       if(c.cocLuck)setCocLuck(c.cocLuck);
+      if(Array.isArray(c.known_spells))setSpellPicks(c.known_spells as SpellOption[]);
     }catch{}
   };
 

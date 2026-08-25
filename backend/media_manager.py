@@ -566,6 +566,31 @@ CLASSIC_SPELLS = [
      "description": "60 尺锥形寒流爆发，范围内生物体质豁免失败受到 8d8 寒冷伤害，成功减半。豁免失败的生物若 HP 因此归零会被冻成冰雕。升环：每高一环 +1d8。"},
 ]
 
+_CLASSIC_SPELL_NAMES = {s["name"] for s in CLASSIC_SPELLS}
+
+
+def _deleted_builtin_path(username: str) -> Path:
+    return _user_media_dir(username) / "deleted_builtin_spells.json"
+
+
+def _load_deleted_builtin_spells(username: str) -> set[str]:
+    p = _deleted_builtin_path(username)
+    try:
+        return set(json.loads(p.read_text(encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def _mark_deleted_builtin_spell(username: str, name: str):
+    if name not in _CLASSIC_SPELL_NAMES:
+        return
+    deleted = _load_deleted_builtin_spells(username)
+    deleted.add(name)
+    _deleted_builtin_path(username).write_text(
+        json.dumps(sorted(deleted), ensure_ascii=False), encoding="utf-8"
+    )
+
+
 _DND5_ENTRY_RE = re.compile(r"\{@(?:damage|dice|hit|chance)\s+([^}]+)\}")
 _DND5_SPELL_RE = re.compile(r"\{@spell\s+([^}]+)\}")
 
@@ -673,11 +698,12 @@ def _fmt_duration(data: Any) -> str:
 
 
 def _seed_classic_spells(username: str):
-    """把内置经典法术写入用户法术图鉴（幂等，按名称补齐）。"""
+    """把内置经典法术写入用户法术图鉴（幂等，按名称补齐；用户删除过的经典法术不再补回）。"""
     existing = _load_meta(username, "spells")
     names = {i.get("name") for i in existing}
+    deleted = _load_deleted_builtin_spells(username)
     for sp in CLASSIC_SPELLS:
-        if sp["name"] in names:
+        if sp["name"] in names or sp["name"] in deleted:
             continue
         add_spell(
             username=username,
@@ -805,9 +831,12 @@ def list_spells(username: str, scenario_id: str | None = None) -> list[dict]:
 
 def delete_spell(username: str, spell_id: str) -> bool:
     items = _load_meta(username, "spells")
+    removed = next((i for i in items if i["id"] == spell_id), None)
     new = [i for i in items if i["id"] != spell_id]
     if len(new) == len(items):
         return False
+    if removed:
+        _mark_deleted_builtin_spell(username, str(removed.get("name", "")))
     _save_meta(username, "spells", new)
     return True
 
