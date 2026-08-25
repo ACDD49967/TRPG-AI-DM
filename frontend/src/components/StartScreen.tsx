@@ -329,8 +329,8 @@ export default function StartScreen(){
     if(gameSystem==='custom') return customAttrs;
     return aiGen?.attributes||attrs;
   },[attrs,aiGen,gameSystem,cocAttrs,customAttrs]);
-  const rc=RACES[race]||RACES['人类'];
-  const cc=CLASSES[charClass]||CLASSES['战士'];
+  const rc=RACES[race]||{name:race||'人类',traits:[]};
+  const cc=CLASSES[charClass]||{name:charClass||'战士',pri:'str',hd:'?',profs:[]};
 
   // ── 法术选择：按职业/种族配额 ──
   const wisMod = Math.floor((Number(finalAttrs.wis ?? 10)-10)/2);
@@ -1888,7 +1888,7 @@ export default function StartScreen(){
                       <div key={m.id} className="flex items-center gap-2 bg-white rounded-lg p-2 border border-gray-200">
                         {m.image_path&&<img src={m.image_path} alt={m.name} className="w-10 h-10 object-cover rounded border" />}
                         <div className="min-w-0 flex-1"><p className="text-xs font-medium truncate">{m.name}</p><p className="text-[9px] text-gray-400">{m.locations.length} 个地点</p></div>
-                        <button onClick={()=>deleteMap(m.id)} className="text-[10px] text-red-500">删除</button>
+                        {!String(m.id).startsWith('kb-') && <button onClick={()=>deleteMap(m.id)} className="text-[10px] text-red-500">删除</button>}
                       </div>
                     ))}
                   </div>
@@ -1916,7 +1916,7 @@ export default function StartScreen(){
                       <div key={b.id} className="flex items-center gap-2 bg-white rounded-lg p-2 border border-gray-200">
                         {b.image_path&&<img src={b.image_path} alt={b.name} className="w-10 h-10 object-cover rounded border" />}
                         <div className="min-w-0 flex-1"><p className="text-xs font-medium truncate">{b.name}</p><p className="text-[9px] text-gray-400">{b.system} · {Object.keys(b.stats||{}).length} 项属性</p></div>
-                        <button onClick={()=>deleteBeast(b.id)} className="text-[10px] text-red-500">删除</button>
+                        {!String(b.id).startsWith('kb-') && <button onClick={()=>deleteBeast(b.id)} className="text-[10px] text-red-500">删除</button>}
                       </div>
                     ))}
                   </div>

@@ -861,7 +861,8 @@ async def add_map_api(payload: dict):
     username = str(payload.get("username") or "default")
     name = str(payload.get("name") or "未命名地图")
     scenario_id = str(payload.get("scenario_id") or "")
-    existing = next((it for it in list_maps(username, scenario_id or None) if it.get("name") == name), None)
+    existing = next((it for it in list_maps(username, scenario_id or None)
+                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
     if existing:
         item = update_map(username, existing["id"], {
             "description": str(payload.get("description") or ""),
@@ -901,7 +902,8 @@ async def upload_map_api(
         locs = _json.loads(locations) if locations.strip() else []
     except Exception:
         locs = []
-    existing = next((it for it in list_maps(username, scenario_id or None) if it.get("name") == name), None)
+    existing = next((it for it in list_maps(username, scenario_id or None)
+                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
     if existing:
         item = update_map(username, existing["id"], {
             "description": description, "image_path": image_path, "locations": locs,
@@ -1071,9 +1073,11 @@ async def add_bestiary_api(payload: dict):
     username = str(payload.get("username") or "default")
     name = str(payload.get("name") or "未命名生物")
     scenario_id = str(payload.get("scenario_id") or "")
-    existing = next((it for it in list_bestiary(username, scenario_id or None) if it.get("name") == name), None)
+    existing = next((it for it in list_bestiary(username, scenario_id or None)
+                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
     if existing:
         item = update_bestiary(username, existing["id"], {
+            "system": str(payload.get("system") or "custom"),
             "description": str(payload.get("description") or ""),
             "stats": payload.get("stats") or {},
             "image_path": str(payload.get("image_path") or ""),
@@ -1114,9 +1118,11 @@ async def upload_bestiary_api(
     except Exception:
         stats_data = {}
     tags_list = [t.strip() for t in tags.split(",") if t.strip()]
-    existing = next((it for it in list_bestiary(username, scenario_id or None) if it.get("name") == name), None)
+    existing = next((it for it in list_bestiary(username, scenario_id or None)
+                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
     if existing:
         item = update_bestiary(username, existing["id"], {
+            "system": system,
             "description": description, "stats": stats_data, "image_path": image_path,
             "tags": tags_list, "scenario_id": scenario_id,
         })

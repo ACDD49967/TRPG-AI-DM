@@ -1689,9 +1689,11 @@ async def _exec_add_scenario_bestiary(args: dict, state: GameSessionState) -> st
     username = state.username or "default"
     scenario_id = state.character_info.get("scenario_id", "") or ""
     name = str(args.get("name", "未命名生物"))
-    existing = next((it for it in list_bestiary(username, scenario_id or None) if it.get("name") == name), None)
+    existing = next((it for it in list_bestiary(username, scenario_id or None)
+                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
     if existing:
         item = update_bestiary(username, existing["id"], {
+            "system": _game_system(state),
             "description": args.get("description", "") or "",
             "stats": args.get("stats") or {},
             "tags": args.get("tags") or [],
@@ -1717,7 +1719,8 @@ async def _exec_add_scenario_map(args: dict, state: GameSessionState) -> str:
     username = state.username or "default"
     scenario_id = state.character_info.get("scenario_id", "") or ""
     name = str(args.get("name", "未命名地图"))
-    existing = next((it for it in list_maps(username, scenario_id or None) if it.get("name") == name), None)
+    existing = next((it for it in list_maps(username, scenario_id or None)
+                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
     if existing:
         item = update_map(username, existing["id"], {
             "description": args.get("description", "") or "",
@@ -2043,6 +2046,8 @@ async def _exec_adjust_bestiary(args: dict, state: GameSessionState) -> str:
         from backend.media_manager import list_bestiary, update_bestiary
         scenario_id = state.character_info.get("scenario_id", "") or None
         for item in list_bestiary(state.username or "default", scenario_id):
+            if str(item.get("id", "")).startswith("kb-"):
+                continue
             if item.get("name") == name or item.get("id") == name:
                 current_stats = dict(item.get("stats") or {})
                 target_id = item.get("id", name)
