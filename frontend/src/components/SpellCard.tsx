@@ -9,7 +9,7 @@ export interface SpellData {
   range?: string;
   components?: string;
   duration?: string;
-  classes?: string[];
+  classes?: string[] | string;
   ritual?: boolean;
   prepared?: boolean;
   name_zh?: string;
@@ -23,7 +23,12 @@ function ringLabel(level: string): string {
 }
 
 export default function SpellCard({ spell, paper = false }: { spell: SpellData; paper?: boolean }) {
-  const classes = (spell.classes || []).join('、');
+  const classList = Array.isArray(spell.classes)
+    ? spell.classes
+    : typeof spell.classes === 'string'
+      ? spell.classes.split(/[,，、]/).map(s => s.trim()).filter(Boolean)
+      : [];
+  const classes = classList.join('、');
   const displayName = spell.name_zh || spell.name;
   const displayDesc = spell.description_zh || spell.description || '';
   return (

@@ -778,6 +778,15 @@ def _import_kb_spells(username: str):
 
 
 
+def _norm_spell_classes(value: Any) -> list[str]:
+    """把 classes 规范为字符串数组（兼容逗号/顿号字符串）。"""
+    if isinstance(value, str):
+        return [x.strip() for x in re.split(r"[,，、]", value) if x.strip()]
+    if isinstance(value, list):
+        return [str(x) for x in value if x]
+    return []
+
+
 def add_spell(username: str, name: str, system: str, description: str,
               level: str = "0", school: str = "", ritual: bool = False,
               casting_time: str = "", range_: str = "", components: str = "",
@@ -796,7 +805,7 @@ def add_spell(username: str, name: str, system: str, description: str,
         "range": range_ or "",
         "components": components or "",
         "duration": duration or "",
-        "classes": classes or [],
+        "classes": _norm_spell_classes(classes),
         "scenario_id": scenario_id or "",
         "tags": tags or [],
         "created_at": datetime.now().isoformat(),
@@ -824,6 +833,15 @@ def list_spells(username: str, scenario_id: str | None = None) -> list[dict]:
     _seed_classic_spells(username)
     _import_kb_spells(username)
     items = _load_meta(username, "spells")
+    # 兼容旧数据/外部写入：classes 统一为数组
+    changed = False
+    for item in items:
+        norm = _norm_spell_classes(item.get("classes"))
+        if norm != item.get("classes"):
+            item["classes"] = norm
+            changed = True
+    if changed:
+        _save_meta(username, "spells", items)
     if scenario_id is not None:
         return [i for i in items if not i.get("scenario_id") or i.get("scenario_id") == scenario_id]
     return items

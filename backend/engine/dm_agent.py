@@ -1227,15 +1227,29 @@ def _player_attack_bonus(state: GameSessionState, action: str) -> int:
 
 
 def _find_bestiary_card(state: GameSessionState, name: str) -> dict | None:
+    card = None
     try:
         from backend.media_manager import list_bestiary
         scenario_id = state.character_info.get("scenario_id", "") or None
         for item in list_bestiary(state.username or "default", scenario_id):
             if str(item.get("name", "")) == name or str(item.get("id", "")) == name:
-                return item
+                card = dict(item)
+                break
     except Exception:
         pass
-    return None
+    # 本局临时覆写：优先合并到图鉴卡；若图鉴无此卡，则用覆写构造临时卡
+    override = getattr(state, "bestiary_overrides", {}).get(name)
+    if override:
+        if card is None:
+            card = {"name": name, "stats": {}, "description": "", "tags": [], "image_path": ""}
+        stats = dict(card.get("stats") or {})
+        stats.update(override.get("stats") or {})
+        card["stats"] = stats
+        if override.get("description"):
+            card["description"] = str(override["description"])
+        if override.get("tags"):
+            card["tags"] = override.get("tags")
+    return card
 
 
 def _register_combatant_from_card(state: GameSessionState, name: str,
@@ -1580,8 +1594,9 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
             "traits": changes.get("traits", []),
             "image_path": changes.get("image_path", ""),
         }
-        if action == "update_npc" and ws.get_npc(target):
-            ws.update_npc(target, **npc_data)
+        if ws.get_npc(target):
+            update_data = {k: v for k, v in npc_data.items() if k != "name"}
+            ws.update_npc(target, **update_data)
         else:
             ws.add_npc(NpcEntry(**npc_data))
         ws.save()
@@ -1591,14 +1606,13 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
         ws.set_flag(key=target, status=changes.get("status","进行中"), description=changes.get("description",""), consequence=changes.get("consequence",""))
         return f"✅ 旗标: {target}"
     elif action == "add_location":
-        ws.locations.append(LocationEntry(
+        ws.add_location(LocationEntry(
             name=target,
             description=changes.get("description", ""),
             status=changes.get("status", "可访问"),
             secrets=changes.get("secrets", ""),
             discovered=changes.get("discovered", True),
         ))
-        ws.save()
         await push_event(state, "journal_update", ws.to_player_journal())
         return f"✅ 地点: {target}"
     return f"未知操作: {action}"
@@ -1730,6 +1744,26 @@ async def _exec_search_bestiary(args: dict, state: GameSessionState) -> str:
     top_k = max(1, min(5, int(args.get("top_k", 3) or 3)))
     scenario_id = state.character_info.get("scenario_id", "")
     items = list_bestiary(state.username or "default", scenario_id or None)
+    # 合并本局临时覆写，使 adjust_bestiary 的改动对搜索也可见
+    overrides = getattr(state, "bestiary_overrides", {}) or {}
+    if overrides:
+        merged = []
+        seen_names = set()
+        for it in items:
+            name = str(it.get("name", ""))
+            seen_names.add(name)
+            ov = overrides.get(name)
+            if ov:
+                stats = dict(it.get("stats") or {})
+                stats.update(ov.get("stats") or {})
+                it = {**it, "stats": stats}
+                if ov.get("description"):
+                    it["description"] = str(ov["description"])
+            merged.append(it)
+        for name, ov in overrides.items():
+            if name not in seen_names:
+                merged.append({"name": name, "description": ov.get("description", ""), "tags": ov.get("tags", []), "stats": ov.get("stats", {})})
+        items = merged
     if not query:
         picked = items[:top_k]
     else:

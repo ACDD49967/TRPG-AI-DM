@@ -1515,6 +1515,25 @@ def _generate_character_name(race: str, gender: str) -> str:
     return f"{first}·{last}"
 
 
+def _normalize_known_spells(spells: list[dict] | None) -> list[dict]:
+    """规范化已习得法术，确保 classes 始终是数组，避免前端崩溃。"""
+    out: list[dict] = []
+    for s in spells or []:
+        if isinstance(s, str):
+            s = {"name": s}
+        if not isinstance(s, dict):
+            continue
+        classes = s.get("classes") or []
+        if isinstance(classes, str):
+            classes = [x.strip() for x in re.split(r"[,，、]", classes) if x.strip()]
+        elif isinstance(classes, list):
+            classes = [str(x) for x in classes if x]
+        else:
+            classes = []
+        out.append({**s, "classes": classes})
+    return out
+
+
 @app.post("/api/game/new", response_model=NewGameResponse)
 async def create_new_game(request: NewGameRequest):
     """创建新游戏——生成角色和会话，返回 SSE 连接地址。
@@ -1631,7 +1650,7 @@ async def create_new_game(request: NewGameRequest):
             "custom_classes": request.custom_classes,
             "custom_skills": request.custom_skills,
             "extra_attributes": request.extra_attributes,
-            "known_spells": request.known_spells or [],
+            "known_spells": _normalize_known_spells(request.known_spells),
         }
 
         # 根据规则系统预填衍生数值
