@@ -939,6 +939,9 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "search_npcs": _exec_search_npcs,
         "adjust_npc": _exec_adjust_npc,
         "adjust_bestiary": _exec_adjust_bestiary,
+        "promote_npc": _exec_promote_npc,
+        "get_bestiary_card": _exec_get_bestiary_card,
+        "get_location_card": _exec_get_location_card,
     }
     fn = handlers.get(name)
     return await fn(args, state) if fn else f"未知: {name}"
@@ -1593,6 +1596,7 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
             "skills": changes.get("skills", []),
             "traits": changes.get("traits", []),
             "image_path": changes.get("image_path", ""),
+            "importance": changes.get("importance", "minor"),
         }
         if ws.get_npc(target):
             update_data = {k: v for k, v in npc_data.items() if k != "name"}
@@ -1821,7 +1825,7 @@ async def _exec_search_bestiary(args: dict, state: GameSessionState) -> str:
         scored = []
         for it in items:
             hay = " ".join([
-                it.get("name", ""), it.get("description", ""),
+                it.get("name", ""), it.get("description_zh", "") or "", it.get("description", ""),
                 " ".join(it.get("tags", [])), " ".join(str(v) for v in (it.get("stats") or {}).values()),
             ]).lower()
             scored.append((hay.count(query), it))
@@ -1830,7 +1834,7 @@ async def _exec_search_bestiary(args: dict, state: GameSessionState) -> str:
     if not picked:
         return "图鉴中没有匹配的生物"
     return "\n".join(
-        f"- {it.get('name','')}: {str(it.get('description',''))[:80]}" + (f" | {it.get('stats',{}).get('HP','')}" if it.get('stats',{}).get('HP') else "")
+        f"- {it.get('name','')}: {str(it.get('description_zh','') or it.get('description',''))[:80]}" + (f" | {it.get('stats',{}).get('HP','')}" if it.get('stats',{}).get('HP') else "")
         for it in picked
     )
 
@@ -1847,7 +1851,7 @@ async def _exec_search_locations(args: dict, state: GameSessionState) -> str:
         scored = []
         for it in items:
             hay = " ".join([
-                it.get("name", ""), it.get("description", ""),
+                it.get("name", ""), it.get("description_zh", "") or "", it.get("description", ""),
                 " ".join(str(l.get("name","")) for l in it.get("locations", [])),
             ]).lower()
             scored.append((hay.count(query), it))
@@ -1856,7 +1860,7 @@ async def _exec_search_locations(args: dict, state: GameSessionState) -> str:
     if not picked:
         return "地点图鉴中没有匹配的地点"
     return "\n".join(
-        f"- {it.get('name','')}: {str(it.get('description',''))[:80]}"
+        f"- {it.get('name','')}: {str(it.get('description_zh','') or it.get('description',''))[:80]}"
         for it in picked
     )
 
@@ -2077,6 +2081,94 @@ async def _exec_adjust_bestiary(args: dict, state: GameSessionState) -> str:
         pass
     await push_event(state, "bestiary_updated", {})
     return f"✅ 生物 {name} {field}: {new_value}"
+
+
+async def _exec_promote_npc(args: dict, state: GameSessionState) -> str:
+    ws = getattr(state, "world_state", None)
+    if ws is None:
+        return "无世界状态"
+    name = str(args.get("name", "")).strip()
+    npc = ws.get_npc(name)
+    if npc is None:
+        return f"⚠ NPC 不存在: {name}"
+    npc.importance = "major"
+    for field in ("personality", "motivation", "secret", "relation_to_plot", "appearance"):
+        if args.get(field):
+            setattr(npc, field, str(args[field]))
+    if args.get("traits"):
+        npc.traits = [str(t) for t in args["traits"]]
+    if args.get("attributes"):
+        npc.attributes = dict(args["attributes"])
+    if args.get("skills"):
+        npc.skills = [str(s) for s in args["skills"]]
+    ws.save()
+    await push_event(state, "journal_update", ws.to_player_journal())
+    return f"✅ {name} 已提升为重要NPC，角色卡已补全"
+
+
+def _format_bestiary_card(item: dict) -> str:
+    stats = item.get("stats") or {}
+    details = item.get("details") or {}
+    lines = [
+        f"### {item.get('name','未知生物')}",
+        f"类型: {item.get('system','')} | 标签: {'、'.join(item.get('tags') or []) or '无'}",
+        f"描述: {str(item.get('description',''))[:300]}",
+    ]
+    stat_lines = []
+    for key in ("AC", "HP", "速度", "力量", "敏捷", "体质", "智力", "感知", "魅力", "技能", "感官", "语言", "挑战等级", "豁免", "特性", "动作"):
+        if stats.get(key):
+            stat_lines.append(f"{key}: {stats[key]}")
+    if stat_lines:
+        lines.append("数值: " + " | ".join(stat_lines))
+    detail_lines = []
+    for key, label in (("habits", "习性"), ("habitat", "栖息地"), ("lore", "传说"), ("weakness", "弱点")):
+        if details.get(key):
+            detail_lines.append(f"{label}: {details[key]}")
+    if detail_lines:
+        lines.append("详情: " + "；".join(detail_lines))
+    return "\n".join(lines)
+
+
+async def _exec_get_bestiary_card(args: dict, state: GameSessionState) -> str:
+    name = str(args.get("name", "")).strip()
+    if not name:
+        return "⚠ 需要 name"
+    item = _find_bestiary_card(state, name)
+    if item is None:
+        return f"图鉴中未找到生物: {name}"
+    return _format_bestiary_card(item)
+
+
+def _format_location_card(item: dict) -> str:
+    details = item.get("details") or {}
+    lines = [
+        f"### {item.get('name','未知地点')}",
+        f"描述: {str(item.get('description',''))[:300]}",
+    ]
+    detail_lines = []
+    for key, label in (("type", "类型"), ("status", "状态"), ("culture", "文化/势力"),
+                       ("notable_figures", "知名人物"), ("dangers", "危险"), ("secret", "秘密")):
+        if details.get(key):
+            detail_lines.append(f"{label}: {details[key]}")
+    if details.get("districts"):
+        detail_lines.append(f"区域: {'、'.join(details['districts'])}")
+    if item.get("locations"):
+        detail_lines.append(f"子地点: {'、'.join(str(l.get('name','')) for l in item['locations'])}")
+    if detail_lines:
+        lines.append("详情: " + "；".join(detail_lines))
+    return "\n".join(lines)
+
+
+async def _exec_get_location_card(args: dict, state: GameSessionState) -> str:
+    name = str(args.get("name", "")).strip()
+    if not name:
+        return "⚠ 需要 name"
+    from backend.media_manager import list_maps
+    scenario_id = state.character_info.get("scenario_id", "") or None
+    for item in list_maps(state.username or "default", scenario_id):
+        if item.get("name") == name or item.get("id") == name:
+            return _format_location_card(item)
+    return f"地点图鉴中未找到: {name}"
 
 
 async def _exec_character_note(args: dict, state: GameSessionState) -> str:

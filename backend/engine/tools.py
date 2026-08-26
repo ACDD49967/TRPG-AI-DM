@@ -243,6 +243,29 @@ ADJUST_BESTIARY_TOOL = _tool("adjust_bestiary",
      "reason": {"type": "string"}},
     ["name", "field", "delta"])
 
+PROMOTE_NPC_TOOL = _tool("promote_npc",
+    "将简单NPC提升为重要NPC（完整角色卡），可同时补充性格/动机/秘密/特质/属性等。重要NPC在玩家笔记中显示完整官方卡。",
+    {"name": {"type": "string", "description": "NPC 名称"},
+     "personality": {"type": "string"},
+     "motivation": {"type": "string"},
+     "secret": {"type": "string"},
+     "relation_to_plot": {"type": "string"},
+     "traits": {"type": "array", "items": {"type": "string"}},
+     "attributes": {"type": "object"},
+     "skills": {"type": "array", "items": {"type": "string"}},
+     "appearance": {"type": "string"}},
+    ["name"])
+
+GET_BESTIARY_CARD_TOOL = _tool("get_bestiary_card",
+    "返回指定生物图鉴条目的完整卡面（含六维/豁免/技能/特性/动作/栖息地/传说/弱点），用于需要完整数值时。与 search_bestiary 精简摘要互补。",
+    {"name": {"type": "string", "description": "生物名称或ID"}},
+    ["name"])
+
+GET_LOCATION_CARD_TOOL = _tool("get_location_card",
+    "返回指定地点/地图条目的完整卡面（含类型/状态/文化/区域/人物/危险/秘密/子地点），用于需要完整地点设定时。",
+    {"name": {"type": "string", "description": "地点名称或ID"}},
+    ["name"])
+
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, ADD_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
@@ -253,5 +276,5 @@ DM_TOOLS = [
     SEARCH_BESTIARY_TOOL, SEARCH_LOCATIONS_TOOL, SEARCH_SPELLS_TOOL,
     GET_CHARACTER_STATE_TOOL, ADJUST_RESOURCE_TOOL, CAST_SPELL_TOOL,
     LEARN_SPELL_TOOL, FORGET_SPELL_TOOL, SEARCH_NPC_TOOL, ADJUST_NPC_TOOL,
-    ADJUST_BESTIARY_TOOL,
+    ADJUST_BESTIARY_TOOL, PROMOTE_NPC_TOOL, GET_BESTIARY_CARD_TOOL, GET_LOCATION_CARD_TOOL,
 ]

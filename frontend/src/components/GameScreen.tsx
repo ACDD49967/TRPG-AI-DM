@@ -53,8 +53,8 @@ export default function GameScreen() {
   const [showBeast, setShowBeast] = useState(false);
   const [showRulebook, setShowRulebook] = useState(false);
   const [showCharSheet, setShowCharSheet] = useState(false);
-  const [maps, setMaps] = useState<Array<{id:string;name:string;description:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;system?:string;details?:{type?:string;status?:string;culture?:string;districts?:string[];notable_figures?:string;dangers?:string;secret?:string;related_creatures?:string[];population?:string}}>>([]);
-  const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;stats:Record<string,string>;image_path:string;tags?:string[];details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
+  const [maps, setMaps] = useState<Array<{id:string;name:string;description:string;description_zh?:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;system?:string;details?:{type?:string;status?:string;culture?:string;districts?:string[];notable_figures?:string;dangers?:string;secret?:string;related_creatures?:string[];population?:string}}>>([]);
+  const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;stats:Record<string,string>;image_path:string;tags?:string[];details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
   const [beastQuery, setBeastQuery] = useState('');
   const [mapQuery, setMapQuery] = useState('');
   const [showMapBuilder, setShowMapBuilder] = useState(false);
@@ -64,6 +64,7 @@ export default function GameScreen() {
   const [spellQuery, setSpellQuery] = useState('');
   const [srdTranslating, setSrdTranslating] = useState(false);
   const [srdProgress, setSrdProgress] = useState<{done:number; total:number} | null>(null);
+  const [mediaTranslate, setMediaTranslate] = useState<{kind:'locations'|'bestiary'; done:number; total:number} | null>(null);
   const [showSpellBuilder, setShowSpellBuilder] = useState(false);
   const [showDmTools, setShowDmTools] = useState(false);
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
@@ -95,8 +96,8 @@ export default function GameScreen() {
   };
 
   const q = (s: string) => s.toLowerCase();
-  const filteredMaps = maps.filter(m => !mapQuery || q(`${m.name} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')} ${m.details?.type||''} ${m.details?.status||''} ${m.details?.culture||''} ${m.details?.notable_figures||''} ${m.details?.dangers||''} ${m.details?.secret||''}`).includes(q(mapQuery)));
-  const filteredBestiary = bestiary.filter(b => !beastQuery || q(`${b.name} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''} ${b.details?.lore||''} ${b.details?.weakness||''}`).includes(q(beastQuery)));
+  const filteredMaps = maps.filter(m => !mapQuery || q(`${m.name} ${m.description_zh||''} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')} ${m.details?.type||''} ${m.details?.status||''} ${m.details?.culture||''} ${m.details?.notable_figures||''} ${m.details?.dangers||''} ${m.details?.secret||''}`).includes(q(mapQuery)));
+  const filteredBestiary = bestiary.filter(b => !beastQuery || q(`${b.name} ${b.description_zh||''} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''} ${b.details?.lore||''} ${b.details?.weakness||''}`).includes(q(beastQuery)));
 
   const addDmNpc = async () => {
     if (!sessionId || !dmNpc.name.trim()) return;
@@ -272,6 +273,39 @@ export default function GameScreen() {
     } finally {
       setSrdTranslating(false);
       setSrdProgress(null);
+    }
+  };
+
+  const translateMedia = async (kind: 'locations' | 'bestiary') => {
+    if (!sessionId || mediaTranslate) return;
+    const source = kind === 'locations' ? maps : bestiary;
+    const untranslated = source.filter(s => !s.description_zh);
+    if (untranslated.length === 0) {
+      alert('没有需要翻译的条目');
+      return;
+    }
+    const ids = untranslated.map(s => s.id);
+    const total = ids.length;
+    setMediaTranslate({ kind, done: 0, total });
+    try {
+      const batchSize = 15;
+      for (let i = 0; i < ids.length; i += batchSize) {
+        const r = await fetch(`/api/game/${sessionId}/translate-media`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind, item_ids: ids.slice(i, i + batchSize) }),
+        });
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}));
+          alert(e.detail || '翻译失败');
+          break;
+        }
+        setMediaTranslate({ kind, done: Math.min(i + batchSize, total), total });
+      }
+      useGameStore.getState().bumpMediaVersion();
+    } catch {
+      alert('翻译请求失败');
+    } finally {
+      setMediaTranslate(null);
     }
   };
 
@@ -496,9 +530,18 @@ export default function GameScreen() {
                 <button onClick={()=>setShowMapBuilder(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
                   {showMapBuilder ? '收起自建' : '自建地点'}
                 </button>
+                <button onClick={()=>translateMedia('locations')} disabled={!!mediaTranslate} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
+                  {mediaTranslate?.kind==='locations' ? '机翻中...' : '翻译地点描述'}
+                </button>
                 <button onClick={()=>setShowMap(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
               </div>
             </div>
+            {mediaTranslate?.kind==='locations' && (
+              <div className="mb-3">
+                <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1"><span>机翻地点描述</span><span>{mediaTranslate.done}/{mediaTranslate.total}</span></div>
+                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 transition-all" style={{width:`${mediaTranslate.total?Math.round((mediaTranslate.done/mediaTranslate.total)*100):0}%`}} /></div>
+              </div>
+            )}
             <input value={mapQuery} onChange={e=>setMapQuery(e.target.value)} placeholder="搜索地点/区域/类型/人物/危险..." className="input-field text-xs mb-3" />
             {showMapBuilder && (
               <div className="mb-3 border border-amber-900/20 rounded-lg p-3 bg-amber-50/40 space-y-2">
@@ -533,7 +576,7 @@ export default function GameScreen() {
                   </summary>
                   <div className="px-3 pb-3 border-t border-gray-100">
                     {m.image_path&&<img src={m.image_path} alt={m.name} className="w-full max-h-80 object-contain bg-gray-100 mb-2" />}
-                    <p className="text-[10px] text-gray-500 mb-2">{m.description}</p>
+                    <p className="text-[10px] text-gray-500 mb-2">{m.description_zh || m.description}{m.description_zh && m.description ? <span className="text-gray-400 italic">（原文：{m.description.slice(0,60)}...）</span> : null}</p>
                     {m.locations.length>0&&<div className="flex flex-wrap gap-1 mb-2">{m.locations.map((l,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-100">{l.name}</span>)}</div>}
                     {m.details && (
                       <div className="text-[10px] text-gray-600 space-y-1">
@@ -569,9 +612,18 @@ export default function GameScreen() {
                 <button onClick={()=>setShowBeastBuilder(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
                   {showBeastBuilder ? '收起自建' : '自建生物'}
                 </button>
+                <button onClick={()=>translateMedia('bestiary')} disabled={!!mediaTranslate} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
+                  {mediaTranslate?.kind==='bestiary' ? '机翻中...' : '翻译生物描述'}
+                </button>
                 <button onClick={()=>setShowBeast(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
               </div>
             </div>
+            {mediaTranslate?.kind==='bestiary' && (
+              <div className="mb-3">
+                <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1"><span>机翻生物描述</span><span>{mediaTranslate.done}/{mediaTranslate.total}</span></div>
+                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 transition-all" style={{width:`${mediaTranslate.total?Math.round((mediaTranslate.done/mediaTranslate.total)*100):0}%`}} /></div>
+              </div>
+            )}
             <input value={beastQuery} onChange={e=>setBeastQuery(e.target.value)} placeholder="搜索生物/属性/栖息地/传说/弱点..." className="input-field text-xs mb-3" />
             {showBeastBuilder && (
               <div className="mb-3 border border-amber-900/20 rounded-lg p-3 bg-amber-50/40 space-y-2">
@@ -704,7 +756,7 @@ export default function GameScreen() {
                   )}
 
                   {/* 描述 / 特性 / 动作 */}
-                  {b.description&&<p className="mt-2 text-[10px] text-gray-600 italic leading-relaxed">{translateMonsterDesc(b.description)}</p>}
+                  {(b.description_zh || b.description)&&<p className="mt-2 text-[10px] text-gray-600 italic leading-relaxed">{(b.description_zh || b.description)}{b.description_zh && b.description ? <span className="text-gray-400">（原文：{translateMonsterDesc(b.description).slice(0,60)}...）</span> : null}</p>}
                   {(traits!=='—'||actions!=='—') && (
                     <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-1 text-[10px] text-gray-700">
                       {traits!=='—'&&<p><span className="text-gray-500 font-medium">特性：</span>{traits}</p>}

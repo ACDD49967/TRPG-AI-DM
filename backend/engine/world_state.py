@@ -99,6 +99,7 @@ class NpcEntry:
     skills: list = field(default_factory=list)       # 技能列表
     traits: list = field(default_factory=list)       # 特性/动作/专长等
     image_path: str = ""
+    importance: str = "minor"       # major=重要NPC（完整卡） minor=简单NPC（简要卡）
     visibility: NpcVisibility = field(default_factory=NpcVisibility)
 
     def to_player_view(self) -> dict:
@@ -130,6 +131,7 @@ class NpcEntry:
         result["skills"] = self.skills
         result["traits"] = self.traits
         result["image_path"] = self.image_path
+        result["importance"] = self.importance
 
         # 统计隐藏字段数
         hidden_count = sum(

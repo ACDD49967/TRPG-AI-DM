@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 
 interface CharNote { target:string;comment:string;clue?:string;turn:number; }
-interface NpcView { name:string;race:string;role:string;attitude:string;alive:boolean|null;appearance:string;personality:string;motivation:string;secret:string;relation_to_plot:string;location:string;level?:number;ac?:number;hp?:number;max_hp?:number;attributes?:Record<string,number>;skills?:string[];traits?:string[];image_path?:string;_hidden_fields:number;_fully_revealed:boolean; }
+interface NpcView { name:string;race:string;role:string;attitude:string;alive:boolean|null;appearance:string;personality:string;motivation:string;secret:string;relation_to_plot:string;location:string;level?:number;ac?:number;hp?:number;max_hp?:number;attributes?:Record<string,number>;skills?:string[];traits?:string[];image_path?:string;importance?:'major'|'minor'|string;_hidden_fields:number;_fully_revealed:boolean; }
 interface JournalData {
   scene:{location:string;time:string;weather:string;atmosphere:string;npcs_here:string[]};
   npcs:{allies:NpcView[];enemies:NpcView[];neutrals:NpcView[];total:number};
@@ -26,13 +26,28 @@ function NpcCard({npc,cat}:{npc:NpcView;cat:string}){
           <div className="flex items-center gap-1 min-w-0">
             {npc.image_path ? <img src={npc.image_path} alt={npc.name} className="w-5 h-5 rounded object-cover border border-gray-200" /> : <span className="w-1.5 h-1.5 rounded-full bg-current opacity-40" />}
             <span className="font-bold text-gray-800 truncate">{npc.name}</span>
+            {npc.importance === 'major' && <span className="text-[8px] bg-amber-100 text-amber-700 px-1 rounded shrink-0">重要</span>}
+            {npc.importance !== 'major' && <span className="text-[8px] bg-gray-100 text-gray-500 px-1 rounded shrink-0">简单</span>}
             {npc._hidden_fields>0&&<span className="text-[8px] text-indigo-500 bg-indigo-50 px-1 rounded shrink-0">{npc._hidden_fields}隐藏</span>}
           </div>
           <span className="text-[9px] text-gray-400 shrink-0">HP {npc.hp}/{npc.max_hp} · AC {npc.ac} <span className="group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span></span>
         </div>
       </summary>
 
-      {/* D&D 官方 NPC 卡样式 */}
+      {/* 简单NPC：只保留属性与简要信息 */}
+      {npc.importance !== 'major' ? (
+        <div className="mt-1.5 pt-1.5 border-t border-gray-100 space-y-1 px-1">
+          <Row k="身份" v={npc.role}/>
+          {npc.race && npc.race !== '???' && <Row k="种族" v={npc.race}/>}
+          {npc.location && <Row k="位置" v={npc.location}/>}
+          <div className="grid grid-cols-3 gap-1 pt-0.5">
+            <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">HP</span><span className="ml-1 font-bold">{npc.hp}/{npc.max_hp}</span></div>
+            <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">AC</span><span className="ml-1 font-bold">{npc.ac}</span></div>
+            <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">Lv</span><span className="ml-1 font-bold">{npc.level}</span></div>
+          </div>
+        </div>
+      ) : (
+      /* 重要NPC：D&D 官方 NPC 卡样式 */
       <div className="mt-1.5 pt-1.5 border-t-2 border-amber-900/60 bg-[#fffdf5] rounded px-2 py-1.5">
         <p className="text-center font-bold text-gray-900">{npc.name}</p>
         <p className="text-center text-[8px] text-gray-500 italic">
@@ -71,6 +86,7 @@ function NpcCard({npc,cat}:{npc:NpcView;cat:string}){
         <Row k="秘密" v={npc.secret} c="text-red-500"/>
         <Row k="关联" v={npc.relation_to_plot} c="text-blue-600"/>
       </div>
+      )}
     </details>
   );
 }

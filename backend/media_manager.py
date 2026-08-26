@@ -121,16 +121,73 @@ def update_map(username: str, name_or_id: str, changes: dict) -> dict | None:
     return None
 
 
+def _import_kb_locations(username: str):
+    """从知识库自动抓取地点/城市条目并写入用户地图库（幂等，仅一次）。"""
+    user_dir = _user_media_dir(username)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    marker = user_dir / "kb_locations_imported.json"
+    if marker.exists():
+        return
+    try:
+        from backend.knowledge_base import get_knowledge_base
+        kb = get_knowledge_base()
+        existing = {i.get("name") for i in _load_meta(username, "maps")}
+        imported = 0
+        for doc in kb.documents:
+            tags = [str(t) for t in doc.get("tags", [])]
+            is_location = any(("地点" in t) or ("城市" in t) or ("location" in t.lower()) for t in tags)
+            content = str(doc.get("content", ""))
+            data = None
+            try:
+                data = json.loads(content)
+            except Exception:
+                data = None
+            if isinstance(data, dict) and any(k in data for k in ("locations", "cities", "city")):
+                locs = data.get("locations") or data.get("cities") or []
+                if data.get("city") and isinstance(data["city"], dict):
+                    locs = [data["city"]] if not locs else locs
+                for loc in locs if isinstance(locs, list) else []:
+                    if not isinstance(loc, dict):
+                        continue
+                    name = str(loc.get("name") or "").strip()
+                    if not name or name in existing:
+                        continue
+                    desc = str(loc.get("description") or loc.get("content") or "")[:500]
+                    details = {"source": "知识库"}
+                    if loc.get("type"): details["type"] = str(loc["type"])
+                    if loc.get("status"): details["status"] = str(loc["status"])
+                    if loc.get("culture"): details["culture"] = str(loc["culture"])
+                    add_map(username, name, desc, "", [], doc.get("system", "custom"),
+                            details=details, scenario_id="")
+                    existing.add(name)
+                    imported += 1
+            elif is_location:
+                name = str(doc.get("title", "")).strip()
+                if not name or name in existing:
+                    continue
+                add_map(username, name, content[:500], "", [], doc.get("system", "custom"),
+                        details={"source": "知识库"}, scenario_id="")
+                existing.add(name)
+                imported += 1
+        marker.write_text(json.dumps({"imported": imported}, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"[MediaManager] 知识库地点导入失败: {e}")
+
+
 def list_maps(username: str, scenario_id: str | None = None) -> list[dict]:
     ensure_seeded(username)
+    _import_kb_locations(username)
     items = _load_meta(username, "maps")
-    # 将知识库中标记为地点/城市的文档合并进地图（保留完整内容，仅展示，不写入用户媒体）
+    user_names = {i.get("name") for i in items}
+    # 将知识库中标记为地点/城市的文档合并进地图（已导入的用户条目不再重复合并）
     try:
         from backend.knowledge_base import get_knowledge_base
         kb = get_knowledge_base()
         for d in kb.documents:
             tags = [str(t) for t in d.get("tags", [])]
             if any(("地点" in t) or ("城市" in t) or ("location" in t.lower()) for t in tags):
+                if d.get("title") in user_names:
+                    continue
                 items.append({
                     "id": f"kb-{d['id']}",
                     "name": d.get("title", "未命名地点"),

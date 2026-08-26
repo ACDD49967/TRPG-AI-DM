@@ -1063,6 +1063,85 @@ async def translate_srd_spells_api(session_id: str, payload: dict):
     return {"translated": translated, "remaining": remaining}
 
 
+@app.post("/api/game/{session_id}/translate-media")
+async def translate_media_api(session_id: str, payload: dict):
+    """使用当前会话 LLM 批量机翻地点/生物描述（description_zh）。"""
+    kind = str(payload.get("kind", ""))
+    if kind not in ("locations", "bestiary"):
+        raise HTTPException(status_code=400, detail="kind 仅支持 locations 或 bestiary")
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    try:
+        api_key = ensure_valid_api_key(state.api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    from backend.media_manager import list_bestiary, list_maps, _load_meta, _save_meta
+
+    if kind == "locations":
+        list_maps(state.username or "default", None)
+        items = _load_meta(state.username or "default", "maps")
+    else:
+        list_bestiary(state.username or "default", None)
+        items = _load_meta(state.username or "default", "bestiary")
+    ids = payload.get("item_ids") or []
+    targets = [
+        item for item in items
+        if not item.get("description_zh") and (not ids or item.get("id") in ids)
+    ]
+    if not targets:
+        return {"translated": 0, "remaining": 0, "message": "没有需要翻译的条目"}
+
+    client = AsyncOpenAI(api_key=api_key, base_url=getattr(state, "base_url", None) or settings.LLM_BASE_URL)
+    model = state.model_name or settings.LLM_MODEL_NAME
+    if not model:
+        raise HTTPException(status_code=400, detail="当前会话没有可用模型")
+
+    items_by_id = {i["id"]: i for i in items}
+    translated = 0
+    batch_size = 15
+    for start in range(0, len(targets), batch_size):
+        batch = targets[start:start + batch_size]
+        prompt = (
+            "你是 TRPG 简体中文翻译器。把下面的 JSON 数组中每个条目的 description 翻译成简体中文。"
+            "保留专有名词（可音译），不要改变结构。只输出 JSON 数组：[{\"description\":\"中文\"}]。\n"
+            + json.dumps([{"name": i.get("name", ""), "description": i.get("description", "")} for i in batch], ensure_ascii=False)
+        )
+        try:
+            resp = await client.chat.completions.create(
+                model=model, messages=[{"role": "user", "content": prompt}],
+                temperature=0.2, max_tokens=3000,
+            )
+            text = (resp.choices[0].message.content or "").strip().replace("```json", "").replace("```", "").strip()
+            try:
+                data = json.loads(text)
+            except Exception:
+                from json_repair import repair_json
+                data = json.loads(repair_json(text, return_objects=False))
+            if not isinstance(data, list):
+                continue
+            for i, item in enumerate(batch):
+                if i >= len(data):
+                    break
+                target = items_by_id.get(item["id"])
+                if target is None:
+                    continue
+                target["description_zh"] = str(data[i].get("description") or target.get("description", ""))
+                translated += 1
+        except Exception:
+            continue
+
+    if translated:
+        _save_meta(state.username or "default", "maps" if kind == "locations" else "bestiary", items)
+        try:
+            await push_event(state, "maps_updated" if kind == "locations" else "bestiary_updated", {})
+        except Exception:
+            pass
+
+    remaining = len(targets) - translated
+    return {"translated": translated, "remaining": remaining}
+
+
 @app.get("/api/bestiary")
 async def list_bestiary_api(username: str = "default", scenario_id: str | None = None):
     from backend.media_manager import list_bestiary
@@ -1865,7 +1944,7 @@ async def create_new_game(request: NewGameRequest):
                                          if k in ["name","race","role","location","attitude",
                                                   "alive","personality","motivation","secret",
                                                   "relation_to_plot","notes",
-                                                  "level","ac","hp","max_hp","attributes","skills","traits","image_path"]}))
+                                                  "level","ac","hp","max_hp","attributes","skills","traits","image_path","importance"]}))
                 for p in ws_data.get("plot_flags", []):
                     ws.plot_flags.append(PF(**{k: v for k, v in p.items()
                                                if k in ["key","status","description","consequence"]}))
