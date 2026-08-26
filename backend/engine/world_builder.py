@@ -158,11 +158,11 @@ EXTRACT_STATE_PROMPT = """请从以下TRPG冒险大纲中提取关键的结构�
 ## 要求
 提取以下JSON结构：
 
-1. npcs: 所有具名NPC，每个包含 name, race, role, location, attitude(初始态度), importance("major"=重要NPC/完整角色卡, "minor"=简单NPC/简要卡), personality, motivation, secret(如有), relation_to_plot, level(1-20整数), ac(护甲等级), hp(生命值), max_hp(最大生命值), attributes(属性对象，如 {"str":10,"dex":14,"con":12,"int":11,"wis":13,"cha":9}，COC用 {"str":50,"con":60,"dex":40,"int":70,"pow":55,"cha":45,"siz":60,"edu":65}), skills(技能数组，如 ["侦查","潜行"]), traits(特性/动作数组，如 ["多才多艺","借机攻击"])。重要NPC（剧情核心/反派/盟友/关键线人）必须填全 personality/motivation/secret/relation_to_plot/traits/attributes；简单NPC（酒保/卫兵/路人）只保留 name/race/role/location/attitude/level/ac/hp/max_hp/importance，其他字段留空或最小化。
+1. npcs: 所有具名NPC，每个包含 name, race, role, location, attitude(初始态度), importance("major"=重要NPC/完整角色卡, "minor"=简单NPC/简要卡), personality, motivation, secret(如有), relation_to_plot, level(1-20整数), ac(护甲等级), hp(生命值), max_hp(最大生命值), attributes(属性对象，如 {"str":10,"dex":14,"con":12,"int":11,"wis":13,"cha":9}，COC用 {"str":50,"con":60,"dex":40,"int":70,"pow":55,"cha":45,"siz":60,"edu":65}), skills(技能数组，如 ["侦查","潜行"]), traits(特性/动作数组，如 ["多才多艺","借机攻击"])。重要NPC（剧情核心/反派/盟友/关键线人）必须填全 personality/motivation/secret/relation_to_plot/traits/attributes；简单NPC（酒保/卫兵/路人）也必须包含 attributes/skills/traits（可简略但不可省略），personality/motivation/secret 可留空或最小化。
 2. plot_flags: 关键剧情节点，每个包含 key(旗标名), status(默认"未触发"), description
 3. locations: 关键地点，每个包含 name, description, secrets(如有)
 4. world_rules: 这个世界独特的规则（魔法限制、社会规则等）
-5. creatures: 剧本中出现的关键生物/怪物，每个包含 name, description, stats(对象，可含 HP/AC/速度/六维/技能等), tags(数组)
+5. creatures: 剧本中出现的关键生物/怪物，每个包含 name, description, stats(对象，必须含 HP/AC/速度/六维(力量/敏捷/体质/智力/感知/魅力)/技能/特性/动作), tags(数组)
 6. spells: 剧本中涉及的重要法术/仪式，每个包含 name, level, school, ritual, casting_time, range, components, duration, description, classes(数组)
 
 ## 严格输出格式（必须遵守）

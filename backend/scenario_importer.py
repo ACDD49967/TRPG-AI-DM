@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import math
@@ -280,10 +281,65 @@ def split_text_semantic(
 
 
 def split_text(text: str, mode: str = "naive", chunk_size: int = 900) -> list[str]:
-    """对外切分入口。mode: naive | semantic"""
+    """对外切分入口。mode: naive | semantic | llm（llm 需走异步 llm_split_text）"""
     if mode == "semantic":
         return split_text_semantic(text, max_chunk_size=max(600, chunk_size))
     return split_text_naive(text, chunk_size=chunk_size)
+
+
+LLM_SPLIT_PROMPT = """你是 TRPG 模组编辑。请把以下剧本/知识文本智能切分为若干逻辑完整、语义连贯的片段。
+要求：
+1. 按场景、章节、主题、事件边界切分，不要生硬按字数截断。
+2. 每段 600-1200 字；若原文极长可多分段。
+3. 保留标题、专有名词、规则关键词；不要改写内容。
+4. 只输出 JSON 数组，每个元素是字符串片段，不要解释和代码块。
+
+文本：
+{text}
+"""
+
+
+async def llm_split_text(
+    text: str,
+    api_key: str | None = None,
+    model_name: str | None = None,
+    base_url: str | None = None,
+    thinking_strength: str = "medium",
+    progress_callback=None,
+) -> list[str]:
+    """使用 LLM 智能切分文本；失败时回退 naive 切分。"""
+    from backend.config import ensure_valid_api_key, settings
+    api_key = ensure_valid_api_key(api_key or settings.LLM_API_KEY)
+    base_url = base_url or settings.LLM_BASE_URL
+    model = model_name or settings.LLM_MODEL_NAME
+    if not model:
+        raise ValueError("请提供模型名称")
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    if progress_callback:
+        progress_callback("LLM 智能切分", 5, "正在调用 LLM 划分语义片段...")
+    try:
+        mult = 1.8 if thinking_strength == "high" else (0.6 if thinking_strength == "low" else 1.0)
+        max_tokens = min(8000, int(4000 * mult))
+        resp = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": LLM_SPLIT_PROMPT.format(text=text[:24000])}],
+                max_tokens=max_tokens, temperature=0.3,
+            ),
+            timeout=120,
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        content = content.replace("```json", "").replace("```", "").strip()
+        data = json.loads(content)
+        if isinstance(data, list):
+            chunks = [str(x.get("content") if isinstance(x, dict) else x).strip() for x in data if str(x.get("content") if isinstance(x, dict) else x).strip()]
+            if chunks:
+                return chunks
+    except Exception:
+        pass
+    if progress_callback:
+        progress_callback("LLM 切分失败，回退本地切分", 5, "使用本地切分器继续")
+    return split_text_naive(text, chunk_size=900)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -430,6 +486,15 @@ async def generate_scenario_from_text(
         raise ValueError("请提供模型名称")
     api_key = ensure_valid_api_key(api_key)
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+    # LLM 切分模式：调用 LLM 智能划分语义片段
+    if splitter == "llm" and not chunks:
+        chunks = await llm_split_text(
+            source_text, api_key, model, base_url,
+            thinking_strength=thinking_strength, progress_callback=progress_callback,
+        )
+    if not chunks:
+        raise ValueError("切分后没有生成任何片段")
 
     if not system or system == "auto":
         system = detect_game_system(source_text, title)

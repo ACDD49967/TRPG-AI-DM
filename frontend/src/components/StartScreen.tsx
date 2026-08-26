@@ -194,7 +194,7 @@ export default function StartScreen(){
   const [cocPerInc,setCocPerInc]=useState<Record<string,number>>(()=>Object.fromEntries(COC_SKILLS.map(s=>[s,0])));
   const [cocLuck,setCocLuck]=useState<number>(()=>rollCocLuck());
   const [customAttrs,setCustomAttrs]=useState<Record<string,number>>({str:10,dex:10,con:10,int:10,wis:10,cha:10});
-  const [splitter,setSplitter]=useState<'naive'|'semantic'>('naive');
+  const [splitter,setSplitter]=useState<'naive'|'semantic'|'llm'>('naive');
   const [chunkSize,setChunkSize]=useState(900);
   const [scenarioSummary,setScenarioSummary]=useState('');
   const [sourceChunks,setSourceChunks]=useState<string[]>([]);
@@ -210,6 +210,7 @@ export default function StartScreen(){
   const [kbSystem,setKbSystem]=useState<GameSystem>('custom');
   const [kbTags,setKbTags]=useState('');
   const [kbBusy,setKbBusy]=useState(false);
+  const [kbLlmBusy,setKbLlmBusy]=useState(false);
   const [kbErr,setKbErr]=useState('');
   const [kbUploadFile,setKbUploadFile]=useState<File|null>(null);
 
@@ -641,6 +642,21 @@ export default function StartScreen(){
       await loadKb();
     }catch{}
     finally{setKbBusy(false);}
+  };
+
+  const llmProcessKb=async()=>{
+    if(!apiKey.trim()){setKbErr('请先在 API 连接中填写 Key');return;}
+    setKbLlmBusy(true);setKbErr('');
+    try{
+      const r=await fetch('/api/knowledge/llm-process',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        username:username||'default', api_key:apiKey, model_name:modelName, base_url:baseUrl,
+      })});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'LLM 处理失败');}
+      const d=await r.json();
+      setKbErr(`LLM 智能注入完成：地点 ${d.locations||0}、生物 ${d.creatures||0}、法术 ${d.spells||0}`);
+      await loadKb();
+    }catch(e:unknown){setKbErr(e instanceof Error?e.message:'LLM 处理失败');}
+    finally{setKbLlmBusy(false);}
   };
 
   const loadExts=async()=>{
@@ -1605,9 +1621,10 @@ export default function StartScreen(){
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">切分方式</label>
-                    <select value={splitter} onChange={e=>setSplitter(e.target.value as 'naive'|'semantic')} className="input-field">
+                    <select value={splitter} onChange={e=>setSplitter(e.target.value as 'naive'|'semantic'|'llm')} className="input-field">
                       <option value="naive">切分器（快速）</option>
                       <option value="semantic">语义切分（更连贯）</option>
+                      <option value="llm">LLM 智能切分（更准确）</option>
                     </select>
                   </div>
                   <div>
@@ -1681,7 +1698,7 @@ export default function StartScreen(){
                     </details>
                   )}
                   {sourceChunks.length>0&&(
-                    <p className="text-[10px] text-gray-400">已切分为 {sourceChunks.length} 个片段 · 切分方式: {splitter==='semantic'?'语义切分':'切分器'}</p>
+                    <p className="text-[10px] text-gray-400">已切分为 {sourceChunks.length} 个片段 · 切分方式: {splitter==='llm'?'LLM 智能切分':splitter==='semantic'?'语义切分':'切分器'}</p>
                   )}
                   {scenarioId&&<p className="text-[10px] text-gray-400">已保存 · 可在下次游戏时直接加载</p>}
                 </div>
@@ -1767,7 +1784,12 @@ export default function StartScreen(){
             <div className="space-y-5">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-bold text-gray-900">知识库 / RAG 设定库</h2>
-                <button onClick={seedKb} disabled={kbBusy} className="text-[10px] px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100">🔄 重置内置规则备注</button>
+                <div className="flex items-center gap-2">
+                  <button onClick={llmProcessKb} disabled={kbLlmBusy || kbBusy} className="text-[10px] px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
+                    {kbLlmBusy ? 'LLM 处理中...' : '✨ LLM 智能切分与图鉴注入'}
+                  </button>
+                  <button onClick={seedKb} disabled={kbBusy} className="text-[10px] px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100">🔄 重置内置规则备注</button>
+                </div>
               </div>
 
               <div className="bg-indigo-50/40 rounded-lg p-3 border border-indigo-100">

@@ -45,6 +45,18 @@ function NpcCard({npc,cat}:{npc:NpcView;cat:string}){
             <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">AC</span><span className="ml-1 font-bold">{npc.ac}</span></div>
             <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">Lv</span><span className="ml-1 font-bold">{npc.level}</span></div>
           </div>
+          {npc.attributes && Object.keys(npc.attributes).length>0 && (
+            <div className="grid grid-cols-3 gap-x-1 gap-y-0.5 pt-1 border-t border-gray-100">
+              {Object.entries(npc.attributes).map(([k,v])=>(
+                <div key={k} className="text-center leading-tight">
+                  <p className="text-[7px] uppercase tracking-wide text-gray-400">{attrNames[k]||k}</p>
+                  <p className="text-[10px] font-bold">{v}<span className="ml-0.5 text-[8px] text-gray-500">({mod(Number(v))})</span></p>
+                </div>
+              ))}
+            </div>
+          )}
+          {npc.skills && npc.skills.length>0 && <p className="text-[9px] pt-1 border-t border-gray-100"><span className="font-bold text-gray-500">技能 </span>{npc.skills.join('、')}</p>}
+          {npc.traits && npc.traits.length>0 && <div className="pt-1 border-t border-gray-100"><p className="text-[8px] font-bold text-gray-500">特性 / 动作</p>{npc.traits.map((t,i)=><p key={i} className="text-[9px] text-gray-700">· {t}</p>)}</div>}
         </div>
       ) : (
       /* 重要NPC：D&D 官方 NPC 卡样式 */

@@ -379,8 +379,8 @@ async def import_scenario(
     )
     from backend.engine.game_systems import SYSTEM_TYPES
 
-    if splitter not in ("naive", "semantic"):
-        raise HTTPException(status_code=400, detail="splitter 仅支持 naive 或 semantic")
+    if splitter not in ("naive", "semantic", "llm"):
+        raise HTTPException(status_code=400, detail="splitter 仅支持 naive、semantic 或 llm")
     if chunk_size < 200 or chunk_size > 4000:
         raise HTTPException(status_code=400, detail="chunk_size 需在 200-4000 之间")
 
@@ -396,9 +396,12 @@ async def import_scenario(
     if not text.strip():
         raise HTTPException(status_code=400, detail="文件中没有可用的剧本文本")
 
-    chunks = split_text(text, mode=splitter, chunk_size=chunk_size)
-    if not chunks:
-        raise HTTPException(status_code=400, detail="切分后没有生成任何片段")
+    # LLM 切分在 generate_scenario_from_text 内部异步执行；naive/semantic 在这里预切分
+    chunks: list[str] = []
+    if splitter != "llm":
+        chunks = split_text(text, mode=splitter, chunk_size=chunk_size)
+        if not chunks:
+            raise HTTPException(status_code=400, detail="切分后没有生成任何片段")
 
     if not system or system == "auto":
         system = detect_game_system(text, title)
@@ -671,6 +674,93 @@ async def retrieve_knowledge(payload: dict):
         raise HTTPException(status_code=400, detail="查询不能为空")
     results = get_knowledge_base().retrieve(query, system=system, top_k=top_k, username=username)
     return {"results": results}
+
+
+@app.post("/api/knowledge/llm-process")
+async def knowledge_llm_process(payload: dict):
+    """使用 LLM 对知识库文档做智能切分与图鉴注入（地点/生物/法术）。"""
+    from backend.knowledge_base import get_knowledge_base
+    from backend.media_manager import add_bestiary, add_map, add_spell
+
+    username = str(payload.get("username") or "default")
+    doc_id = str(payload.get("doc_id") or "")
+    api_key = str(payload.get("api_key") or "")
+    model_name = str(payload.get("model_name") or "")
+    base_url = str(payload.get("base_url") or "")
+    try:
+        api_key = ensure_valid_api_key(api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    model = model_name or settings.LLM_MODEL_NAME
+    base_url = base_url or settings.LLM_BASE_URL
+    if not model:
+        raise HTTPException(status_code=400, detail="请提供模型名称")
+
+    kb = get_knowledge_base()
+    docs = kb.list_documents(username)
+    if doc_id:
+        docs = [d for d in docs if d["id"] == doc_id]
+    if not docs:
+        return {"locations": 0, "creatures": 0, "spells": 0, "message": "没有可处理的知识库文档"}
+
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    counts = {"locations": 0, "creatures": 0, "spells": 0}
+
+    for doc in docs:
+        full = kb.get_document(doc["id"], username)
+        content = (full or {}).get("content", "") or ""
+        if len(content) < 200:
+            continue
+        prompt = (
+            "你是 TRPG 图鉴注入器。从以下知识文档中提取可作为图鉴条目的结构化数据。"
+            "只输出 JSON 对象：{\"locations\":[{\"name\":\"\",\"description\":\"\",\"type\":\"\",\"status\":\"\"}],"
+            "\"creatures\":[{\"name\":\"\",\"description\":\"\",\"stats\":{\"HP\":\"\",\"AC\":\"\",\"速度\":\"\",\"力量\":\"\",\"敏捷\":\"\",\"体质\":\"\",\"智力\":\"\",\"感知\":\"\",\"魅力\":\"\",\"技能\":\"\",\"特性\":\"\",\"动作\":\"\"},\"tags\":[]}],"
+            "\"spells\":[{\"name\":\"\",\"level\":\"\",\"school\":\"\",\"description\":\"\",\"casting_time\":\"\",\"range\":\"\",\"components\":\"\",\"duration\":\"\",\"classes\":[]}]}。"
+            "没有的数组输出空数组，不要解释。\n\n文档：\n" + content[:12000]
+        )
+        try:
+            resp = await client.chat.completions.create(
+                model=model, messages=[{"role": "user", "content": prompt}],
+                temperature=0.2, max_tokens=4000,
+            )
+            text = (resp.choices[0].message.content or "").strip().replace("```json", "").replace("```", "").strip()
+            try:
+                data = json.loads(text)
+            except Exception:
+                from json_repair import repair_json
+                data = json.loads(repair_json(text, return_objects=False))
+            if not isinstance(data, dict):
+                continue
+            for loc in data.get("locations") or []:
+                if not isinstance(loc, dict) or not str(loc.get("name", "")).strip():
+                    continue
+                add_map(username, str(loc["name"]).strip(), str(loc.get("description", "") or "")[:500], "",
+                        [], doc.get("system", "custom"),
+                        details={"type": loc.get("type", ""), "status": loc.get("status", ""), "source": "知识库·LLM"},
+                        scenario_id="")
+                counts["locations"] += 1
+            for cr in data.get("creatures") or []:
+                if not isinstance(cr, dict) or not str(cr.get("name", "")).strip():
+                    continue
+                add_bestiary(username, str(cr["name"]).strip(), doc.get("system", "custom"),
+                             str(cr.get("description", "") or ""), cr.get("stats") or {},
+                             tags=(cr.get("tags") or []) + ["知识库", "LLM"],
+                             details={"source": "知识库·LLM"}, scenario_id="")
+                counts["creatures"] += 1
+            for sp in data.get("spells") or []:
+                if not isinstance(sp, dict) or not str(sp.get("name", "")).strip():
+                    continue
+                add_spell(username, str(sp["name"]).strip(), doc.get("system", "custom"),
+                          str(sp.get("description", "") or ""), level=str(sp.get("level", "0")),
+                          school=str(sp.get("school", "") or ""), casting_time=str(sp.get("casting_time", "") or ""),
+                          range_=str(sp.get("range", "") or ""), components=str(sp.get("components", "") or ""),
+                          duration=str(sp.get("duration", "") or ""), classes=sp.get("classes") or [],
+                          scenario_id="", tags=["知识库", "LLM", "法术"])
+                counts["spells"] += 1
+        except Exception:
+            continue
+
+    return {"locations": counts["locations"], "creatures": counts["creatures"], "spells": counts["spells"]}
 
 
 @app.post("/api/knowledge/seed")
