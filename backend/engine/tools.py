@@ -51,11 +51,29 @@ REST_TOOL = _tool("take_rest",
     {"rest_type": {"type":"string","enum":["short","long"]}},
     ["rest_type"])
 
+EQUIP_ITEM_TOOL = _tool("equip_item",
+    "装备或卸下背包中的一件物品，并实时影响角色数值（如护甲AC）。玩家或DM均可使用。",
+    {"name": {"type": "string", "description": "物品名称"},
+     "equipped": {"type": "boolean", "description": "true=装备, false=卸下"}},
+    ["name", "equipped"])
+
 ADD_MEMORY_TOOL = _tool("add_memory",
     "记录重要剧情事实到长期记忆。获得重要物品/杀死关键NPC/解锁区域/重大转折时调用。",
     {"memory_text": {"type":"string","description":"事实陈述"},
      "importance": {"type":"number","minimum":0.0,"maximum":1.0}},
     ["memory_text"])
+
+RECORD_PLOT_MEMORY_TOOL = _tool("record_plot_memory",
+    "记录剧情暗线/大事件/重要人物影响的长期记忆。用于幕后剧情、伏笔、NPC影响等；暗线默认对玩家隐藏。",
+    {"kind": {"type":"string","enum":["major_event","hidden_thread","character_impact"],"description":"类型：大事件/暗线/人物影响"},
+     "title": {"type":"string","description":"大事件标题或暗线key或人物名"},
+     "description": {"type":"string","description":"事件/暗线描述"},
+     "impact": {"type":"string","description":"对世界或人物的影响"},
+     "status": {"type":"string","enum":["未触发","进行中","已完成","已失败"],"description":"暗线状态，默认未触发"},
+     "related_npcs": {"type":"array","items":{"type":"string"}},
+     "related_locations": {"type":"array","items":{"type":"string"}},
+     "visible_to_players": {"type":"boolean","description":"暗线是否对玩家可见，默认 false"}},
+    ["kind","title"])
 
 SUGGEST_CHOICES_TOOL = _tool("suggest_choices",
     "玩家不知所措时给2-4个有趣的具体建议。",
@@ -272,7 +290,7 @@ GET_LOCATION_CARD_TOOL = _tool("get_location_card",
 
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL,
-    DEATH_SAVE_TOOL, REST_TOOL, ADD_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
+    DEATH_SAVE_TOOL, REST_TOOL, EQUIP_ITEM_TOOL, ADD_MEMORY_TOOL, RECORD_PLOT_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
     UPDATE_WORLD_STATE_TOOL, REVEAL_INFO_TOOL, UPDATE_SCENE_TOOL,
     ADD_CHARACTER_NOTE_TOOL, UPDATE_BESTIARY_TOOL, UPDATE_CITY_TOOL,
     ADD_SCENARIO_BESTIARY_TOOL, ADD_SCENARIO_MAP_TOOL, ADD_SCENARIO_SPELL_TOOL,

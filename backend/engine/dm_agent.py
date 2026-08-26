@@ -45,6 +45,7 @@ def _normalize_item(item: Any) -> dict:
             "quantity": int(item.get("quantity") or 1),
             "type": str(item.get("type") or "misc"),
             "properties": item.get("properties") or {},
+            "equipped": bool(item.get("equipped", False)),
         }
     return {
         "name": str(item),
@@ -52,6 +53,7 @@ def _normalize_item(item: Any) -> dict:
         "quantity": 1,
         "type": "misc",
         "properties": {},
+        "equipped": False,
     }
 from openai import AsyncOpenAI
 from backend.config import ensure_valid_api_key, settings
@@ -64,6 +66,7 @@ from backend.engine.rules import (
     roll_death_save, short_rest, long_rest,
 )
 from backend.engine.tools import DM_TOOLS
+from backend.engine.background_events import advance_background_plot_if_due
 from backend.engine.world_state import WorldState, NpcEntry, PlotFlag, LocationEntry
 from backend.engine.game_systems import build_system_rule_block, build_stat_glossary, get_system
 from backend.knowledge_base import get_knowledge_base
@@ -108,6 +111,14 @@ CLICHE_PATTERNS = [
     (r'血红的[^，。；]{0,15}', ''),          # "血红的XX"
     (r'划破了寂静', ''),                       # 常见声音描写滥调
     (r'如同一[只个条头匹缕片][^，。]{3,25}', ''),  # "...如同一只..."比喻标志词
+    (r'一股[^，。]{1,12}寒意', ''),
+    (r'不知为何', ''),
+    (r'内心深处', ''),
+    (r'突然之间|突然，|忽然，', ''),
+    (r'神秘的力量', ''),
+    (r'命运的齿轮[^，。]{0,12}转动', ''),
+    (r'空气中[^，。]{0,12}安静', ''),
+    (r'他?她?[^，。]{0,6}感到一股[^，。]{1,12}', ''),
 ]
 
 def sanitize_narrative(text: str) -> str:
@@ -184,6 +195,7 @@ Z3. 禁止的行为：
     - 禁止对暴力、性或恐怖内容进行道德评判或在场景中插入"这很残忍""这很堕落"等旁白。
 Z4. 参考标准：《博德之门3》的性爱场景和暴力级别、《巫师3》的成人主题处理、《权力的游戏》的政治阴谋和身体暴露、《黑暗物质》的存在主义恐怖。以这些作品中**最直白**的场景为底线。
 Z5. 如果玩家输入包含成人内容，你必须如实地推进场景，不得拒绝、不得减速、不得转换话题。你就是这个世界的物理法则——它是什么样的，你就写什么样的。
+Z6. 不进行道德审查，但进行叙事合理性审查：合理且符合当前场景、角色关系与剧情铺垫的成人内容直接描写；突然出现的、与当前场景无关或试图绕过世界规则的请求（如凭空让陌生NPC服从、瞬移、无敌、改写历史、强加不存在的关系）应被拒绝，并给出符合世界逻辑的阻碍或后果。拒绝理由必须是叙事/规则原因，而非道德说教。
 
 ================================================================================
 A节：角色与世界的所有权
@@ -196,6 +208,8 @@ A4. 玩家不能决定NPC的反应——你扮演所有NPC。
 A5. 玩家不能反悔已完成的行动。时间向前流动。
 A6. 玩家使用D&D规则术语（如"我做一个侦查检定"）时，要求其用角色行动描述代替。
     例：玩家说"我侦查房间" → 你回复"你想怎么侦查？重点观察什么？"
+A7. 玩家不能替NPC决定反应、不能凭空宣布世界变化、不能给自己添加未获得的物品/属性/技能。DM对世界规则、NPC、环境与后果拥有最终解释权；若玩家试图"我直接成功/我拥有XX/他听我的话"，DM应拒绝并描述实际阻碍或要求合理行动/检定。
+A8. 玩家可以自由选择行动，但世界会按照物理、社会与叙事逻辑回应。禁止玩家通过一句话改写历史、复活角色、删除事件或获得无敌状态；若玩家行为明显越权，DM应明确说明限制并给出可执行的替代路径。
 
 ================================================================================
 B节：工具调用规则——必须遵守，不可跳过
@@ -216,6 +230,7 @@ B1. 碰到以下情况，必须调用对应工具，不允许用叙事代替：
     - 查询/增减本局生物图鉴数值 → search_bestiary / adjust_bestiary
     - 进入新地点 → update_scene（会自动把地点写入世界状态地点列表）；需要地图时 → add_scenario_map
     - 重要剧情事实 → add_memory
+    - 剧情暗线/大事件/重要人物影响 → record_plot_memory
     - 玩家不知道下一步做什么 → suggest_choices
     - 玩家行动产生世界级影响 → update_world_state
     - 玩家发现隐藏信息 → reveal_info
@@ -417,6 +432,13 @@ J3. 禁止一次性揭示NPC的全部隐藏信息。每次检定成功最多揭�
 J4. 揭示信息前，必须确认玩家的行动已经过检定并生效——参见I2节"世界状态修改只在玩家行动生效后执行"。不得在检定结果出来之前通过reveal_info提前修改世界状态。
 
 ================================================================================
+N节：文学性与掌控力
+N1. 叙述要有文学质感：优先具体动作、感官细节、对话和人物可见反应，避免抽象概括。
+N2. 每段开头不要重复使用"你看到/你听到/你感到/他/她"等固定句式；变换句式结构，让节奏有长短变化。
+N3. 保持DM权威：不要为了迎合玩家而允许明显破坏世界逻辑的行为；可以用环境后果、NPC反应和检定来回应。
+N4. 暗线与大事件要持续存在：即使玩家当前没有接触，也要在叙事缝隙中留下可感知的痕迹（谣言、天气、人群骚动、信件、异响等）。
+
+===============================================================================
 K节：禁止的句式与内容
 ================================================================================
 
@@ -435,6 +457,8 @@ K节：禁止的句式与内容
     - "血红的……"（高频滥调，用具体颜色描述替代）
     - "……划破了寂静"（常见声音描写滥调，用具体声音来源描述替代）
     - "如同一只……"（比喻标志词过度使用，用具体比拟或删去）
+    - "一股寒意/不知为何/内心深处/突然之间"（高频转场与心理填充词）
+    - "神秘的力量/命运的齿轮"（空泛神秘化措辞）
 以下内容禁止出现：
     - 空洞的心理描写（"他的内心充满了矛盾"）
     - 无明确因果的奇异现象（"不知为何，他感到一阵不安"）
@@ -576,8 +600,10 @@ DM_DECISION_PROMPT = """
 □ NPC反应强度？ → H5节——冲突中向敌对偏移一级，自卫行为标准
 □ 新印象/线索？ → add_character_note
 □ 值得记录的事件？ → add_memory
+□ 暗线/大事件/人物影响？ → record_plot_memory
 □ 世界级影响？ → update_world_state
 □ 玩家困惑？ → suggest_choices（M2节格式）
+□ 玩家是否在越权改写世界？ → A7/A8：拒绝并给出合理阻碍或检定
 □ 叙事质量？ → L节全部规则通过
 □ 禁止句式？ → K节全部通过（含新增3条）"""
 
@@ -912,6 +938,8 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "update_state": _exec_update_state,
         "combat_round": _exec_combat_round,
         "add_memory": _exec_add_memory,
+        "record_plot_memory": _exec_record_plot_memory,
+        "equip_item": _exec_equip_item,
         "suggest_choices": _exec_suggest_choices,
         "death_saving_throw": _exec_death_save,
         "take_rest": _exec_rest,
@@ -944,7 +972,12 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "get_location_card": _exec_get_location_card,
     }
     fn = handlers.get(name)
-    return await fn(args, state) if fn else f"未知: {name}"
+    if fn is None:
+        return f"未知: {name}"
+    result = fn(args, state)
+    if asyncio.iscoroutine(result):
+        return await result
+    return result
 
 
 async def _exec_dice_roll(args: dict, state: GameSessionState) -> str:
@@ -1013,6 +1046,49 @@ async def _exec_dice_roll(args: dict, state: GameSessionState) -> str:
     return line + (f"\n{internal}" if internal else "")
 
 
+_ARMOR_AC_BONUS = {
+    "布甲": 0, " padded armor": 1, "皮甲": 1, "镶嵌皮甲": 2, "硬皮甲": 2,
+    "锁子甲": 3, "鳞甲": 4, "胸甲": 4, "半身板甲": 5, "环甲": 4,
+    "链甲": 6, "板条甲": 7, "全身板甲": 8, "盾牌": 2,
+}
+
+
+def _equipped_armor_bonus(info: dict) -> int:
+    """计算已装备护甲/盾牌带来的 AC 加值。"""
+    inventory = info.get("inventory") or {}
+    items = inventory.get("items", []) if isinstance(inventory, dict) else []
+    bonus = 0
+    for it in items:
+        if not isinstance(it, dict) or not it.get("equipped"):
+            continue
+        props = it.get("properties") or {}
+        try:
+            bonus += int(props.get("ac_bonus") or 0)
+        except (TypeError, ValueError):
+            pass
+        name = str(it.get("name") or "")
+        best = 0
+        for key, val in _ARMOR_AC_BONUS.items():
+            if key in name and val > best:
+                best = val
+        bonus += best
+    return bonus
+
+
+def _recalc_equipment_effects(state: GameSessionState, applied: dict):
+    """根据已装备物品实时重算 AC（D&D 系）。"""
+    info = state.character_info
+    if _game_system(state) not in ("dnd5e", "dnd4e"):
+        return
+    current_bonus = _equipped_armor_bonus(info)
+    if "base_ac" not in info:
+        info["base_ac"] = int(info.get("ac") or 10) - current_bonus
+    new_ac = int(info.get("base_ac") or 10) + current_bonus
+    if new_ac != info.get("ac"):
+        info["ac"] = new_ac
+        applied["ac"] = new_ac
+
+
 async def _exec_update_state(args: dict, state: GameSessionState) -> str:
     changes = args.get("changes", {})
     reason = args.get("reason", "")
@@ -1064,8 +1140,9 @@ async def _exec_update_state(args: dict, state: GameSessionState) -> str:
             applied["xp"] = info["xp"]
             # 自动升级（仅 dnd 系适用；COC/自定义不强行套用）
             if _game_system(state) in ("dnd5e", "dnd4e"):
+                from backend.engine.game_systems import get_level_from_xp
                 old_level = info.get("level", 1)
-                new_level = max(1, 1 + info["xp"] // 300)
+                new_level = get_level_from_xp(info["xp"], _game_system(state))
                 if new_level > old_level:
                     info["level"] = new_level
                     applied["level"] = new_level
@@ -1162,6 +1239,27 @@ async def _exec_update_state(args: dict, state: GameSessionState) -> str:
             name = v if isinstance(v, str) else (v.get("name") if isinstance(v, dict) else str(v))
             items[:] = [i for i in items if (i.get("name") if isinstance(i, dict) else i) != name]
             applied["inventory"] = {"items": items}
+        elif k in ("inventory_equip", "inventory_unequip"):
+            items = info.setdefault("inventory", {}).setdefault("items", [])
+            name = v if isinstance(v, str) else (v.get("name") if isinstance(v, dict) else str(v))
+            equip = (k == "inventory_equip")
+            found = False
+            for i, it in enumerate(items):
+                item_name = it.get("name") if isinstance(it, dict) else str(it)
+                if item_name == name:
+                    if isinstance(it, dict):
+                        it["equipped"] = equip
+                    else:
+                        items[i] = _normalize_item({"name": it, "equipped": equip})
+                    found = True
+                    break
+            if found:
+                _recalc_equipment_effects(state, applied)
+                applied["inventory"] = {"items": items}
+
+    # 装备变化后统一重算 AC（防止只改 inventory 不更新状态）
+    if any(str(k).startswith("inventory") for k in changes):
+        _recalc_equipment_effects(state, applied)
 
     if applied:
         await push_event(state, "state_update", applied)
@@ -1179,6 +1277,57 @@ async def _exec_add_memory(args: dict, state: GameSessionState) -> str:
     except Exception:
         pass
     return f"已记录: {fact}"
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "y", "是", "真")
+    return bool(value)
+
+
+async def _exec_record_plot_memory(args: dict, state: GameSessionState) -> str:
+    kind = str(args.get("kind") or "").strip()
+    title = str(args.get("title") or "").strip()
+    desc = str(args.get("description") or "").strip()
+    impact = str(args.get("impact") or "").strip()
+    status = str(args.get("status") or "未触发").strip()
+    if status not in ("未触发", "进行中", "已完成", "已失败"):
+        status = "未触发"
+    npcs = [str(x) for x in (args.get("related_npcs") or []) if str(x).strip()]
+    locs = [str(x) for x in (args.get("related_locations") or []) if str(x).strip()]
+    visible = _as_bool(args.get("visible_to_players", False))
+    ws = getattr(state, "world_state", None)
+    turn = ws.turn_count if ws is not None else 0
+
+    if kind == "major_event":
+        if not title:
+            return "未记录（缺少title）"
+        state.memory.add_major_event(title=title, description=desc, impact=impact, turn=turn, npcs=npcs, locations=locs)
+        return f"已记录大事件: {title}"
+    if kind == "hidden_thread":
+        if not title:
+            return "未记录（缺少title）"
+        state.memory.add_hidden_thread(key=title, description=desc, status=status, related_npcs=npcs, related_locations=locs, turn=turn)
+        if ws is not None:
+            ws.set_flag(key=title, status=status, description=desc or title, consequence=impact, visible=visible)
+        return f"已记录暗线: {title} [{status}]"
+    if kind == "character_impact":
+        if not title or not impact:
+            return "未记录（需要title人物名和impact影响）"
+        state.memory.add_character_impact(name=title, impact=impact, event=desc, turn=turn)
+        return f"已记录人物影响: {title}"
+    return "未知类型: " + kind
+
+
+async def _exec_equip_item(args: dict, state: GameSessionState) -> str:
+    name = str(args.get("name") or "").strip()
+    equipped = _as_bool(args.get("equipped", True))
+    if not name:
+        return "未指定物品"
+    changes = {"inventory_equip" if equipped else "inventory_unequip": name}
+    return await _exec_update_state({"changes": changes, "reason": "装备操作"}, state)
 
 
 def _first_int(text: Any) -> int:
@@ -1200,13 +1349,20 @@ def _weapon_dice_from_inventory(state: GameSessionState) -> str:
                 "细剑": "1d8", "短弓": "1d6", "短剑": "1d6", "短棍": "1d6",
                 "硬头锤": "1d6", "手斧": "1d6", "轻弩": "1d8", "长弓": "1d8",
                 "短弯刀": "1d6", "飞镖": "1d4", "小刀": "1d4"}
-    for item in items:
-        name = item.get("name") if isinstance(item, dict) else str(item)
-        for key, dice in dice_map.items():
-            if key in name:
-                desc = item.get("description") if isinstance(item, dict) else ""
-                return _first_dice(desc) or dice
-    return "1d8"
+    def find(only_equipped: bool):
+        for item in items:
+            if only_equipped and not (isinstance(item, dict) and item.get("equipped")):
+                continue
+            name = item.get("name") if isinstance(item, dict) else str(item)
+            for key, dice in dice_map.items():
+                if key in name:
+                    desc = item.get("description") if isinstance(item, dict) else ""
+                    return _first_dice(desc) or dice
+        return None
+    equipped_dice = find(True)
+    if equipped_dice:
+        return equipped_dice
+    return find(False) or "1d8"
 
 
 def _player_attack_bonus(state: GameSessionState, action: str) -> int:
@@ -2316,7 +2472,7 @@ def _mode_instructions(s: GameSessionState) -> str:
 """
 
 
-async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2048, temperature: float | None = None):
+async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2048, temperature: float | None = None, tool_choice: str | dict | None = "auto"):
     mult, tdelta = _thinking_params(state)
     max_tokens = min(8000, int(max_tokens * mult))
     temp = (temperature if temperature is not None else settings.TEMPERATURE) + tdelta
@@ -2324,7 +2480,7 @@ async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2
     stream = await client.chat.completions.create(
         model=model, messages=messages, tools=tools,
         max_tokens=max_tokens, temperature=temp, stream=True,
-        tool_choice="auto",
+        tool_choice=tool_choice,
     )
     content = ""; tc_map = {}
     had_tool_call = False  # P0-2修复：追踪工具调用边界
@@ -2398,6 +2554,7 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
             "调用dice_roll。不允许仅用叙事代替检定。B5节查阅属性映射。"})
 
     full = ""
+    suggested = False
     try:
         while True:
             if state.aborted:
@@ -2405,6 +2562,8 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
             max_tokens = 1024 if _play_mode(state) == "lite" else skill.max_tokens
             text, tcs = await _stream_with_tools(client, model, messages, skill.tools, state, max_tokens, temperature=skill.temperature)
             full += text
+            if any(t.get("function", {}).get("name") == "suggest_choices" for t in tcs):
+                suggested = True
             if not tcs: break
             asst = {"role":"assistant","content":text or None}
             atc = [{"id":t["id"],"type":"function","function":t["function"]} for t in tcs]
@@ -2449,6 +2608,36 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
             if tool_count >= tool_limit:
                 break
 
+        # 确保每轮都有决策建议：若模型未主动调用 suggest_choices，则强制补一次
+        if not suggested and not state.aborted:
+            tool_count = sum(1 for m in messages if m["role"] == "tool")
+            if tool_count < (3 if lite else 5):
+                messages.append({
+                    "role": "system",
+                    "content": "[系统] 本轮还没有生成决策建议。请只调用 suggest_choices 工具，不要输出叙事正文。",
+                })
+                try:
+                    _text2, _tcs2 = await _stream_with_tools(
+                        client, model, messages, skill.tools, state,
+                        max_tokens=120, temperature=0.7,
+                        tool_choice={"type": "function", "function": {"name": "suggest_choices"}},
+                    )
+                    if _tcs2:
+                        asst2 = {"role": "assistant", "content": _text2 or None}
+                        atc2 = [{"id": t["id"], "type": "function", "function": t["function"]} for t in _tcs2]
+                        if atc2:
+                            asst2["tool_calls"] = atc2
+                        messages.append(asst2)
+                        for t in _tcs2:
+                            try:
+                                args = json.loads(t["function"]["arguments"])
+                            except json.JSONDecodeError:
+                                continue
+                            result = await execute_tool(t["function"]["name"], args, state)
+                            messages.append({"role": "tool", "tool_call_id": t["id"], "content": result})
+                except Exception:
+                    pass
+
         # 反八股过滤
         full = sanitize_narrative(full)
 
@@ -2456,6 +2645,8 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
         ws = getattr(state, 'world_state', None)
         if ws:
             ws.advance_turn()
+            # 低成本后台剧情推进：仅在整轮结束时按频率触发，不阻塞主叙事
+            await advance_background_plot_if_due(state)
             ws.save()
             await push_event(state, "journal_update", ws.to_player_journal())
 

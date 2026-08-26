@@ -12,7 +12,7 @@ export interface CharacterStatus {
   gold: number;
   level: number;
   ac: number;
-  inventory: Array<string | { name: string; description?: string; quantity?: number; type?: string; properties?: Record<string, unknown> }>;
+  inventory: Array<string | { name: string; description?: string; quantity?: number; type?: string; properties?: Record<string, unknown>; equipped?: boolean }>;
   attributes: Record<string, number>;
   character_name?: string;
   race?: string;

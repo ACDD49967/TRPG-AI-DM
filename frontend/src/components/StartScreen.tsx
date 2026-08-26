@@ -178,6 +178,7 @@ export default function StartScreen(){
   const [worldGenErr,setWorldGenErr]=useState('');
   const [worldGenStage,setWorldGenStage]=useState(-1);
   const [worldGenDetail,setWorldGenDetail]=useState('');
+  const [worldGenLive,setWorldGenLive]=useState('');
   const [savedScenarios,setSavedScenarios]=useState<Array<{id:string;title:string;description:string;summary?:string;system?:string;tone:string;score:number;total_sessions:number;character_name?:string;race?:string;char_class?:string}>>([]);
   const [classicScenarios,setClassicScenarios]=useState<Array<{name:string;system:string;tone:string;summary:string;source:string;outline:string[]}>>([]);
   const [selectedScenario,setSelectedScenario]=useState('');
@@ -200,6 +201,7 @@ export default function StartScreen(){
   const [sourceChunks,setSourceChunks]=useState<string[]>([]);
   const [importBusy,setImportBusy]=useState(false);
   const [importProgress,setImportProgress]=useState(0);
+  const [importLive,setImportLive]=useState('');
   const [importErr,setImportErr]=useState('');
   const [importFileName,setImportFileName]=useState('');
 
@@ -429,7 +431,7 @@ export default function StartScreen(){
   };
 
   const genWorld=async()=>{
-    setWorldGenBusy(true);setWorldGenErr('');setWorldGenStage(0);
+    setWorldGenBusy(true);setWorldGenErr('');setWorldGenStage(0);setWorldGenLive('');
     try{
       const r=await fetch('/api/generate/world/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         description:worldDesc||'一个'+worldTone+'的冒险',username:username||'default',
@@ -455,7 +457,8 @@ export default function StartScreen(){
             const line=evt.split('\n').find(l=>l.startsWith('data: '));
             if(!line)continue;
             const data=JSON.parse(line.slice(6));
-            if(data.type==='progress'){
+            if(data.type==='gen_token'){ setWorldGenLive(prev=>prev+data.token); }
+            else if(data.type==='progress'){
               const idx=Math.min(WORLD_STAGES.length-1, Math.floor((data.percent/100)*WORLD_STAGES.length));
               setWorldGenStage(idx);
               setWorldGenDetail(data.detail||data.label||'');
@@ -525,7 +528,7 @@ export default function StartScreen(){
   };
 
   const importScenario=async(file:File)=>{
-    setImportBusy(true);setImportErr('');setImportFileName(file.name);
+    setImportBusy(true);setImportErr('');setImportFileName(file.name);setImportLive('');
     setImportProgress(2);
     try{
       const fd=new FormData();
@@ -559,7 +562,8 @@ export default function StartScreen(){
             const line=evt.split('\n').find(l=>l.startsWith('data: '));
             if(!line)continue;
             const data=JSON.parse(line.slice(6));
-            if(data.type==='progress'){
+            if(data.type==='gen_token'){ setImportLive(prev=>prev+data.token); }
+            else if(data.type==='progress'){
               setImportProgress(Math.min(99, data.percent||0));
             }else if(data.type==='complete'){
               setWorldOutline(data.content);setWorldScore(data.score);
@@ -1640,6 +1644,7 @@ export default function StartScreen(){
                       <div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{width:`${importProgress}%`}} />
                     </div>
                     <p className="text-[9px] text-gray-400 mt-0.5">{importProgress}%</p>
+                    {importLive && <pre className="text-[9px] text-gray-500 bg-white rounded p-2 mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap">{importLive}</pre>}
                   </div>
                 )}
                 {importErr&&<p className="text-red-500 text-xs">{importErr}</p>}
@@ -1658,6 +1663,7 @@ export default function StartScreen(){
                   <div className="flex items-center gap-2 text-sm font-medium text-gray-700"><span className="animate-pulse">●</span>铸造世界中</div>
                   <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-1000" style={{width:`${((worldGenStage+1)/WORLD_STAGES.length)*100}%`}}/></div>
                   {worldGenDetail&&<p className="text-xs text-indigo-600 animate-pulse">{worldGenDetail}</p>}
+                  {worldGenLive && <pre className="text-[9px] text-gray-500 bg-white rounded p-2 mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap">{worldGenLive}</pre>}
                   <div className="space-y-0.5">
                     {WORLD_STAGES.map((st,i)=>(<div key={st.key} className={`flex items-center gap-2 text-xs ${i<worldGenStage?'text-emerald-600':i===worldGenStage?'text-indigo-600 font-medium':'text-gray-400'}`}><span>{i<worldGenStage?'✓':i===worldGenStage?'◉':'○'}</span><span>{st.label}</span>{i===worldGenStage&&<span className="text-gray-400 font-normal">— {st.desc}</span>}</div>))}
                   </div>

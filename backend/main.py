@@ -45,6 +45,12 @@ async def lifespan(app: FastAPI):
     """应用启动/关闭时的生命周期管理。"""
     # 启动时：创建数据库表
     await init_db()
+    # 自动清理无用的运行期 world_state 文件（存档内含快照，可安全清理）
+    try:
+        from backend.engine.world_state import cleanup_world_states
+        cleanup_world_states(active_session_ids=list(session_manager._sessions.keys()))
+    except Exception:
+        pass
     print(f"[AI-DM] Server started at http://{settings.HOST}:{settings.PORT}")
     print(f"[AI-DM] Database: {settings.DATABASE_URL}")
     print(f"[AI-DM] Model: {settings.MODEL_NAME}")
@@ -148,7 +154,7 @@ async def generate_world(request: WorldGenRequest):
         base_url=request.base_url or settings.LLM_BASE_URL,
     )
     summary_model = request.model_name or settings.LLM_MODEL_NAME
-    summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
+    summary = await generate_summary(summary_client, summary_model, outline_text, request.description, token_callback=stream_token)
     saved = create_scenario(
         world_outline=outline_text, world_state_json=ws_json,
         reference_script=request.description, custom_rules=request.custom_rules or "",
@@ -219,6 +225,9 @@ async def generate_world_stream(request: WorldGenRequest):
         def progress(label: str, percent: int, detail: str = ""):
             queue.put_nowait({"type": "progress", "label": label, "percent": percent, "detail": detail})
 
+        def stream_token(token: str):
+            queue.put_nowait({"type": "gen_token", "token": token})
+
         async def run():
             try:
                 outline_text, score, history, world_state = await build_world(
@@ -237,6 +246,7 @@ async def generate_world_stream(request: WorldGenRequest):
                     progress_callback=progress,
                     thinking_strength=request.thinking_strength,
                     username=request.username,
+                    token_callback=stream_token,
                 )
                 queue.put_nowait({"type": "__complete__", "data": (outline_text, score, history, world_state)})
             except Exception as e:
@@ -246,6 +256,9 @@ async def generate_world_stream(request: WorldGenRequest):
         while True:
             item = await queue.get()
             if item["type"] == "progress":
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                continue
+            if item["type"] == "gen_token":
                 yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
                 continue
             if item["type"] == "__error__":
@@ -421,6 +434,9 @@ async def import_scenario(
     def progress(label: str, percent: int, detail: str = ""):
         queue.put_nowait({"type": "progress", "label": label, "percent": percent, "detail": detail})
 
+    def stream_token(token: str):
+        queue.put_nowait({"type": "gen_token", "token": token})
+
     async def run():
         try:
             result = await generate_scenario_from_text(
@@ -447,6 +463,7 @@ async def import_scenario(
                 max_revisions=1,
                 thinking_strength=thinking_strength,
                 progress_callback=progress,
+                token_callback=stream_token,
             )
             queue.put_nowait({"type": "__complete__", "data": result})
         except Exception as e:
@@ -457,6 +474,9 @@ async def import_scenario(
         while True:
             item = await queue.get()
             if item["type"] == "progress":
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                continue
+            if item["type"] == "gen_token":
                 yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
                 continue
             if item["type"] == "__error__":
@@ -2084,7 +2104,7 @@ async def create_new_game(request: NewGameRequest):
                                                   "level","ac","hp","max_hp","attributes","skills","traits","equipment","related_locations","related_npcs","related_creatures","image_path","importance"]}))
                 for p in ws_data.get("plot_flags", []):
                     ws.plot_flags.append(PF(**{k: v for k, v in p.items()
-                                               if k in ["key","status","description","consequence"]}))
+                                               if k in ["key","status","description","consequence","visible"]}))
                 for l in ws_data.get("locations", []):
                     ws.locations.append(LE(**{k: v for k, v in l.items()
                                               if k in ["name","description","status","type","culture","notable_figures","dangers","secrets","secret_revealed","related_locations","related_npcs","related_creatures","discovered"]}))
@@ -2198,6 +2218,17 @@ async def get_player_journal(session_id: str):
                 "plot_flags": [], "locations": []}
 
     return ws.to_player_journal()
+
+
+@app.post("/api/game/{session_id}/equip")
+async def equip_item_api(session_id: str, payload: dict):
+    """玩家/前端手动装备或卸下物品，实时推送状态更新。"""
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+    from backend.engine.dm_agent import _exec_equip_item
+    result = await _exec_equip_item(payload, state)
+    return {"result": result}
 
 
 @app.post("/api/game/{session_id}/abort")

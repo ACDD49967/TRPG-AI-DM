@@ -9,6 +9,63 @@ import random
 import re
 
 
+# D&D 5e 官方升级经验阈值（累计 XP：达到该值即进入对应等级）
+DND5_XP_THRESHOLDS = [
+    0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000,
+    85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000,
+    305000, 355000,
+]
+
+# D&D 4e 升级经验阈值（累计 XP）
+DND4_XP_THRESHOLDS = [
+    0, 1000, 2250, 3750, 5500, 7500, 10000, 13000, 16500, 20500,
+    26000, 32000, 39000, 47000, 57000, 69000, 83000, 99000, 119000,
+    143000, 175000, 210000, 255000, 310000, 375000, 450000, 550000,
+    675000, 825000, 1000000,
+]
+
+
+def get_xp_table(system: str) -> list[int]:
+    """返回对应规则系统的官方升级经验表；未知系统返回空表。"""
+    if system == "dnd5e":
+        return DND5_XP_THRESHOLDS
+    if system == "dnd4e":
+        return DND4_XP_THRESHOLDS
+    return []
+
+
+def get_level_from_xp(xp: int, system: str = "dnd5e") -> int:
+    """根据累计 XP 计算当前等级（1 起始，20/30 封顶）。"""
+    table = get_xp_table(system)
+    if not table:
+        return max(1, int(xp or 0) // 1000 + 1)
+    level = 1
+    for i, threshold in enumerate(table, start=1):
+        if xp >= threshold:
+            level = i
+        else:
+            break
+    return level
+
+
+def get_xp_progress(xp: int, system: str = "dnd5e", level: int | None = None) -> dict | None:
+    """返回经验进度信息：当前等级、下一级所需累计 XP、还差多少。"""
+    table = get_xp_table(system)
+    if not table:
+        return None
+    if level is None:
+        level = get_level_from_xp(xp, system)
+    if level >= len(table):
+        return {"level": level, "current_xp": int(xp or 0), "next_xp": None, "needed": 0}
+    next_xp = table[level]
+    return {
+        "level": level,
+        "current_xp": int(xp or 0),
+        "next_xp": next_xp,
+        "needed": max(0, next_xp - int(xp or 0)),
+    }
+
+
 SYSTEM_TYPES = {
     "dnd5e": {
         "id": "dnd5e",

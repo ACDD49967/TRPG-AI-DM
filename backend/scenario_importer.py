@@ -408,6 +408,7 @@ async def generate_summary(
     outline: str,
     source_text: str,
     max_chars: int = 450,
+    token_callback=None,
 ) -> str:
     """调用 LLM 生成剧本总结；失败时使用结构化降级摘要，而不是简单截断。"""
     import asyncio
@@ -415,27 +416,54 @@ async def generate_summary(
     for attempt in range(1, 3):
         current_max_tokens = 2000 if attempt == 1 else 4000
         try:
-            resp = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": "你是一位严谨的TRPG模组编辑，擅长写出高信息密度的中文剧本总结。"},
-                        {"role": "user", "content": SUMMARY_PROMPT.format(
-                            outline=outline[:8000],
-                            source=source_text[:4000],
-                        )},
-                    ],
-                    max_tokens=current_max_tokens,
-                    temperature=0.4,
-                ),
-                timeout=60,
-            )
-            summary = (resp.choices[0].message.content or "").strip()
+            if token_callback is not None:
+                stream = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": "你是一位严谨的TRPG模组编辑，擅长写出高信息密度的中文剧本总结。"},
+                            {"role": "user", "content": SUMMARY_PROMPT.format(
+                                outline=outline[:8000],
+                                source=source_text[:4000],
+                            )},
+                        ],
+                        max_tokens=current_max_tokens,
+                        temperature=0.4,
+                        stream=True,
+                    ),
+                    timeout=60,
+                )
+                summary = ""
+                async for chunk in stream:
+                    d = chunk.choices[0].delta if chunk.choices else None
+                    if d and d.content:
+                        summary += d.content
+                        token_callback(d.content)
+                summary = summary.strip()
+            else:
+                resp = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": "你是一位严谨的TRPG模组编辑，擅长写出高信息密度的中文剧本总结。"},
+                            {"role": "user", "content": SUMMARY_PROMPT.format(
+                                outline=outline[:8000],
+                                source=source_text[:4000],
+                            )},
+                        ],
+                        max_tokens=current_max_tokens,
+                        temperature=0.4,
+                    ),
+                    timeout=60,
+                )
+                summary = (resp.choices[0].message.content or "").strip()
             if len(summary) > max_chars * 1.4:
                 summary = summary[:max_chars]
             if summary:
                 return summary
-            reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
+            reasoning = ""
+            if token_callback is None:
+                reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
             print(f"[ScenarioImporter] 总结生成第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
             raise RuntimeError("空响应")
         except Exception as e:
@@ -474,6 +502,7 @@ async def generate_scenario_from_text(
     extra_attributes: dict | None = None,
     thinking_strength: str = "medium",
     progress_callback=None,
+    token_callback=None,
 ) -> dict[str, Any]:
     """读取文本→切分→多Agent生成新剧本→生成总结→保存到 scenarios/。"""
     from backend.engine.world_builder import build_world
@@ -531,11 +560,12 @@ async def generate_scenario_from_text(
         max_revisions=max_revisions,
         thinking_strength=thinking_strength,
         progress_callback=progress_callback,
+        token_callback=token_callback,
     )
 
     if progress_callback:
         progress_callback("生成剧本总结", 88, "正在生成约400字剧本总结...")
-    summary = await generate_summary(client, model, outline_text, source_text)
+    summary = await generate_summary(client, model, outline_text, source_text, token_callback=token_callback)
     if progress_callback:
         progress_callback("保存剧本与知识库", 94, "正在保存剧本并写入知识库...")
 
@@ -553,7 +583,7 @@ async def generate_scenario_from_text(
             for n in world_state.npcs
         ],
         "plot_flags": [
-            {"key": f.key, "status": f.status, "description": f.description}
+            {"key": f.key, "status": f.status, "description": f.description, "consequence": f.consequence, "visible": f.visible}
             for f in world_state.plot_flags
         ],
         "locations": [

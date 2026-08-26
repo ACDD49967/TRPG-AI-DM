@@ -14,6 +14,7 @@ import RulebookModal from './RulebookModal';
 import SpellCard from './SpellCard';
 import DndCharacterSheet from './DndCharacterSheet';
 import CocInvestigatorSheet from './CocInvestigatorSheet';
+import { getXpDisplay } from '../gameSystems';
 
 function invName(it: string | { name: string }): string {
   return typeof it === 'string' ? it : it.name || '未知物品';
@@ -401,7 +402,7 @@ export default function GameScreen() {
               <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">HP</p><p className="text-sm font-bold">{status.hp}/{status.maxHp}</p></div>
               <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">AC</p><p className="text-sm font-bold">{status.ac}</p></div>
               <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">等级</p><p className="text-sm font-bold">{status.level}</p></div>
-              <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">经验</p><p className="text-sm font-bold">{status.xp}</p></div>
+              <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">经验</p><p className="text-sm font-bold">{getXpDisplay(status.game_system as string, status.xp, status.level)}</p></div>
               {status.game_system==='coc' && (
                 <>
                   <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">MP</p><p className="text-sm font-bold">{status.mp}/{status.maxMp}</p></div>
@@ -420,7 +421,6 @@ export default function GameScreen() {
               )}
               {status.game_system==='dnd5e' && (
                 <>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">MP</p><p className="text-sm font-bold">{status.mp}/{status.maxMp}</p></div>
                   <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">熟练加值</p><p className="text-sm font-bold">{status.proficiency_bonus||2}</p></div>
                   <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">金币</p><p className="text-sm font-bold">{status.gold}</p></div>
                   <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">法术位</p><p className="text-sm font-bold">{(() => {

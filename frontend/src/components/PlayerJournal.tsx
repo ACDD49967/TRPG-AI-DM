@@ -9,6 +9,7 @@ interface JournalData {
   scene:{location:string;time:string;weather:string;atmosphere:string;npcs_here:string[]};
   npcs:{allies:NpcView[];enemies:NpcView[];neutrals:NpcView[];total:number};
   plot_flags:{key:string;status:string;description:string}[];
+  world_events?:{turn?:number;text:string}[];
   locations:{name:string;description:string;status:string;secret?:string;type?:string;culture?:string;notable_figures?:string;dangers?:string;related_locations?:string[];related_npcs?:string[];related_creatures?:string[]}[];
   character_notes:{npc_notes:CharNote[];event_notes:CharNote[];quest_clues:CharNote[];location_notes:CharNote[]};
   turn_count:number;
@@ -181,7 +182,15 @@ export default function PlayerJournal(){
           {npcs.allies.length>0&&<div><p className="text-[9px] text-emerald-500 font-medium mb-1 mt-2">盟友</p>{npcs.allies.map(n=><NpcCard key={n.name} npc={n} cat="ally"/>)}</div>}
           {npcs.neutrals.length>0&&<div><p className="text-[9px] text-gray-400 font-medium mb-1 mt-2">其他</p>{npcs.neutrals.map(n=><NpcCard key={n.name} npc={n} cat="neutral"/>)}</div>}
         </>)}
-        {tab==='plot'&&<div className="space-y-1">{j.plot_flags.map(f=><div key={f.key} className="bg-white rounded-lg p-1.5 border border-gray-100 text-[10px]"><div className="flex items-center gap-1"><span className={f.status==='已完成'?'text-emerald-500':f.status==='进行中'?'text-blue-500':'text-gray-400'}>●</span><span className="text-gray-700 font-medium">{f.key}</span></div>{f.description&&<p className="text-gray-400 mt-0.5 ml-3">{f.description}</p>}</div>)}</div>}
+        {tab==='plot'&&<div className="space-y-1">
+          {j.world_events && j.world_events.length>0 && (
+            <div className="bg-amber-50 border border-amber-100 rounded-lg p-1.5 text-[10px]">
+              <p className="text-[9px] text-amber-600 font-medium mb-1">世界动态 / 传闻</p>
+              {j.world_events.map((w,i)=><p key={i} className="text-gray-600 mt-0.5">· {w.text}</p>)}
+            </div>
+          )}
+          {j.plot_flags.map(f=><div key={f.key} className="bg-white rounded-lg p-1.5 border border-gray-100 text-[10px]"><div className="flex items-center gap-1"><span className={f.status==='已完成'?'text-emerald-500':f.status==='进行中'?'text-blue-500':'text-gray-400'}>●</span><span className="text-gray-700 font-medium">{f.key}</span></div>{f.description&&<p className="text-gray-400 mt-0.5 ml-3">{f.description}</p>}</div>)}
+        </div>}
         {tab==='places'&&<div className="space-y-1">
           {j.locations.map(l=>{
             const detail = mapsDetail.find(m=>m.name===l.name);

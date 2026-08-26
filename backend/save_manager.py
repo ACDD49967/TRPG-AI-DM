@@ -41,6 +41,9 @@ def _serialize_memory(state: GameSessionState) -> dict:
         ],
         "summary": mem.summary,
         "world_facts": mem.world_facts,
+        "major_events": mem.major_events,
+        "hidden_threads": mem.hidden_threads,
+        "character_impacts": mem.character_impacts,
         "max_active_turns": mem.max_active_turns,
         "summary_trigger": mem.summary_trigger,
     }
@@ -191,6 +194,9 @@ def restore_state_from_save(save_data: dict) -> tuple[GameSessionState, dict]:
     mem.turns = [DialogueTurn(**t) for t in mem_data.get("turns", [])]
     mem.summary = mem_data.get("summary", "")
     mem.world_facts = list(mem_data.get("world_facts", []))
+    mem.major_events = list(mem_data.get("major_events", []))
+    mem.hidden_threads = list(mem_data.get("hidden_threads", []))
+    mem.character_impacts = list(mem_data.get("character_impacts", []))
     mem.max_active_turns = mem_data.get("max_active_turns", 10)
     mem.summary_trigger = mem_data.get("summary_trigger", mem.max_active_turns + 1)
     state.memory = mem

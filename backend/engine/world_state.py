@@ -250,6 +250,9 @@ class WorldState:
     character_notes: list[CharacterNote] = field(default_factory=list)
     turn_count: int = 0  # 当前轮数
 
+    # 幕后剧情事件：玩家不在场时世界仍在推进
+    background_events: list[dict] = field(default_factory=list)
+
     change_log: list[dict] = field(default_factory=list)
     _storage_dir: str = field(default="world_states", repr=False)
 
@@ -301,6 +304,7 @@ class WorldState:
                 for cn in data.get("character_notes", [])
             ]
             ws.turn_count = data.get("turn_count", 0)
+            ws.background_events = data.get("background_events", [])
             return ws
         return cls(session_id=session_id, _storage_dir=storage_dir)
 
@@ -319,6 +323,7 @@ class WorldState:
             "scene": asdict(self.scene),
             "character_notes": [asdict(cn) for cn in self.character_notes],
             "turn_count": self.turn_count,
+            "background_events": self.background_events,
             "change_log": self.change_log,
         }
         with open(path, "w", encoding="utf-8") as f:
@@ -362,18 +367,20 @@ class WorldState:
         self._log_change(f"新增地点: {entry.name}")
         self.save()
 
-    def set_flag(self, key: str, status: str, description: str = "", consequence: str = ""):
+    def set_flag(self, key: str, status: str, description: str = "", consequence: str = "", visible: bool | None = None):
         for f in self.plot_flags:
             if f.key == key:
                 old = f.status
                 f.status = status
                 if description: f.description = description
                 if consequence: f.consequence = consequence
+                if visible is not None: f.visible = visible
                 self._log_change(f"Flag[{key}]: {old} -> {status}")
                 self.save()
                 return
         self.plot_flags.append(PlotFlag(key=key, status=status,
-                                         description=description, consequence=consequence))
+                                         description=description, consequence=consequence,
+                                         visible=visible if visible is not None else True))
         self._log_change(f"新增Flag: {key} = {status}")
         self.save()
 
@@ -425,6 +432,16 @@ class WorldState:
                 character_comment=comment, clue=clue,
                 turn_added=self.turn_count,
             ))
+        self.save()
+
+    def add_background_event(self, event: dict):
+        """记录一条幕后剧情事件，并自动落盘。"""
+        event = dict(event or {})
+        event.setdefault("turn", self.turn_count)
+        self.background_events.append(event)
+        # 只保留最近 100 条，避免存档无限膨胀
+        if len(self.background_events) > 100:
+            self.background_events = self.background_events[-100:]
         self.save()
 
     def advance_turn(self):
@@ -485,6 +502,10 @@ class WorldState:
                                     "turn": n.turn_added}
                                    for n in self.character_notes if n.target_type == "location" and n.visible],
             },
+            "world_events": [
+                {"turn": e.get("turn"), "text": e.get("public_hint") or e.get("event")}
+                for e in self.background_events[-10:] if e.get("public_hint") or e.get("visible")
+            ],
             "turn_count": self.turn_count,
         }
 
@@ -520,10 +541,26 @@ class WorldState:
                     lines.append(f"  剧情关联: {n.relation_to_plot}")
 
         if self.plot_flags:
-            lines.append("\n## 剧情进度")
+            lines.append("\n## 剧情进度（含暗线；暗线对玩家隐藏，但你必须持续推进）")
             for f in self.plot_flags:
                 icon = {"未触发":"⚪","进行中":"🔵","已完成":"✅","已失败":"❌"}.get(f.status,"⚪")
-                lines.append(f"- {icon} {f.key}: {f.status}")
+                tag = " [暗线]" if not f.visible else ""
+                line = f"- {icon} {f.key}: {f.status}{tag}"
+                if f.description:
+                    line += f" — {f.description}"
+                if f.consequence:
+                    line += f"（后果：{f.consequence}）"
+                lines.append(line)
+
+        if self.background_events:
+            lines.append("\n## 幕后事件（玩家不在场时发生的进展）")
+            for e in self.background_events[-5:]:
+                line = f"- [第{e.get('turn', 0)}轮] {e.get('event', '')}"
+                if e.get('impact'):
+                    line += f"（影响：{e['impact']}）"
+                if e.get('public_hint'):
+                    line += f" [可被玩家听闻：{e['public_hint']}]"
+                lines.append(line)
 
         return "\n".join(lines)
 
@@ -549,7 +586,43 @@ class WorldState:
             active = [f for f in self.plot_flags if f.status in ("进行中", "未触发")]
             if active:
                 lines.append("### 关键旗标")
-                for f in active[:5]:
-                    lines.append(f"- {f.key}: {f.status}")
+                for f in active[:6]:
+                    tag = " [暗线]" if not f.visible else ""
+                    lines.append(f"- {f.key}: {f.status}{tag}")
+
+        if self.background_events:
+            latest = self.background_events[-1]
+            lines.append(f"### 幕后进展（共{len(self.background_events)}条）")
+            lines.append(f"- {latest.get('event', '')[:60]}")
 
         return "\n".join(lines)
+
+
+def cleanup_world_states(storage_dir: str = "world_states", active_session_ids: list[str] | None = None,
+                         max_age_days: int = 7) -> int:
+    """清理不再活跃且超过保留期的 world_state JSON 文件。
+
+    存档本身包含 world_state 快照，因此这里的运行期文件可以安全清理。
+    """
+    import os
+    import time
+
+    if not os.path.isdir(storage_dir):
+        return 0
+    active = set(active_session_ids or [])
+    now = time.time()
+    removed = 0
+    for fn in os.listdir(storage_dir):
+        if not fn.endswith(".json"):
+            continue
+        sid = fn[:-5]
+        if sid in active:
+            continue
+        path = os.path.join(storage_dir, fn)
+        try:
+            if now - os.path.getmtime(path) > max_age_days * 86400:
+                os.remove(path)
+                removed += 1
+        except OSError:
+            continue
+    return removed

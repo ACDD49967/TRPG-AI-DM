@@ -270,8 +270,11 @@ class KnowledgeBase:
         bm25 = BM25Okapi(corpus_tokens)
         bm25_scores = bm25.get_scores(q_terms)
 
-        def _norm(vals: list[float]) -> list[float]:
-            m = max(vals) if vals else 1.0
+        def _norm(vals) -> list[float]:
+            vals = list(vals)
+            if not vals:
+                return []
+            m = max(vals)
             return [v / m if m > 0 else 0.0 for v in vals]
 
         tfidf_norm = _norm(tfidf_scores)

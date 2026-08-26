@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
+import { getXpDisplay } from '../gameSystems';
 
-type InvItem = string | { name: string; description?: string; quantity?: number; type?: string; properties?: Record<string, unknown> };
+type InvItem = string | { name: string; description?: string; quantity?: number; type?: string; properties?: Record<string, unknown>; equipped?: boolean };
 function itemName(it: InvItem): string { return typeof it === 'string' ? it : it.name || '未知物品'; }
 function itemLabel(it: InvItem): string {
   const q = typeof it === 'object' && it.quantity && it.quantity > 1 ? ` ×${it.quantity}` : '';
@@ -18,15 +19,32 @@ function itemDesc(it: InvItem): string {
   if (/药水|药剂|瓶|毒|油|圣水/.test(name)) return '消耗品：使用后产生效果，具体由主持人判定。';
   return '杂物：可能用于任务、交易或环境互动，具体用途由主持人判定。';
 }
+function isEquipped(it: InvItem): boolean {
+  return typeof it === 'object' && it.equipped === true;
+}
 
 
 export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void }) {
-  const { status, combat } = useGameStore();
+  const { status, combat, sessionId } = useGameStore();
   const system = status.game_system || 'dnd5e';
   const [selectedItem, setSelectedItem] = useState<InvItem | null>(null);
 
+  const toggleEquip = async (it: InvItem) => {
+    if (!sessionId) return;
+    const name = itemName(it);
+    const equipped = !isEquipped(it);
+    try {
+      await fetch(`/api/game/${sessionId}/equip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, equipped }),
+      });
+    } catch {
+      // SSE 会推送最新状态；失败时忽略，避免打断操作
+    }
+  };
+
   const hpPct = Math.max(0, status.maxHp > 0 ? (status.hp / status.maxHp) * 100 : 0);
-  const mpPct = Math.max(0, status.maxMp > 0 ? (status.mp / status.maxMp) * 100 : 0);
   const sanPct = Math.max(0, status.maxSan && status.maxSan > 0 ? ((status.san || 0) / status.maxSan) * 100 : 0);
 
   // 将背包物品分类
@@ -109,27 +127,12 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
             </div>
             <p className="text-[8px] text-gray-400">每次恢复 {status.surge_value || 0} HP</p>
           </div>
-        ) : (
-          <div>
-            <div className="flex justify-between text-[9px] mb-0.5">
-              <span className="text-gray-500">魔力</span>
-              <span className="font-mono text-gray-600">{status.mp}/{status.maxMp}</span>
-            </div>
-            <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-              <motion.div
-                className="h-full rounded-full"
-                style={{ background: 'linear-gradient(90deg, #6366f1, #818cf8)', width: `${mpPct}%` }}
-                animate={{ width: `${mpPct}%` }}
-                transition={{ duration: 0.4 }}
-              />
-            </div>
-          </div>
-        )}
+        ) : null}
       </div>
 
       {/* XP + 金币 */}
       <div className="flex justify-between text-[9px] px-0.5">
-        <span className="text-gray-500">经验 <span className="text-gray-700 font-mono">{status.xp}</span></span>
+        <span className="text-gray-500">经验 <span className="text-gray-700 font-mono">{getXpDisplay(system, status.xp, status.level)}</span></span>
         <span className="text-amber-600 font-medium">金币 {status.gold}</span>
       </div>
 
@@ -190,7 +193,7 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">武器</p>
             {weapons.map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}{isEquipped(item) ? ' ✅已装备' : ''}</button>
             ))}
           </div>
         )}
@@ -199,7 +202,7 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">防具</p>
             {armor.map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}{isEquipped(item) ? ' ✅已装备' : ''}</button>
             ))}
           </div>
         )}
@@ -208,7 +211,7 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">药水</p>
             {potions.map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}{isEquipped(item) ? ' ✅已装备' : ''}</button>
             ))}
           </div>
         )}
@@ -217,7 +220,7 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
           <div className="mb-1">
             <p className="text-[8px] text-gray-400 font-medium mb-0.5">杂物</p>
             {misc.slice(0, 6).map((item, i) => (
-              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}</button>
+              <button key={i} onClick={()=>setSelectedItem(item)} className="text-[9px] text-gray-700 bg-white rounded px-1.5 py-0.5 border border-gray-100 mb-0.5 truncate text-left w-full cursor-pointer hover:bg-indigo-50 hover:border-indigo-200" title="点击查看详情">{itemLabel(item)}{isEquipped(item) ? ' ✅已装备' : ''}</button>
             ))}
             {misc.length > 6 && <p className="text-[8px] text-gray-400">...还有{misc.length - 6}件</p>}
           </div>
@@ -244,6 +247,15 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-bold text-gray-900">{itemName(selectedItem)}</h3>
               <button onClick={()=>setSelectedItem(null)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+            </div>
+            <div className="flex gap-2 mb-2">
+              <button
+                onClick={()=>selectedItem && toggleEquip(selectedItem)}
+                className="flex-1 text-[11px] font-medium rounded-lg py-1.5 border transition-colors"
+                style={isEquipped(selectedItem) ? { background:'#eef2ff', borderColor:'#c7d2fe', color:'#4f46e5' } : { background:'#f5f5f4', borderColor:'#e7e5e4', color:'#57534e' }}
+              >
+                {selectedItem && isEquipped(selectedItem) ? '卸下装备' : '装备此物品'}
+              </button>
             </div>
             {typeof selectedItem === 'object' && selectedItem.quantity ? <p className="text-[10px] text-gray-400 mb-1">数量：{selectedItem.quantity}</p> : null}
             {typeof selectedItem === 'object' && selectedItem.type ? <p className="text-[10px] text-gray-400 mb-1">类型：{selectedItem.type}</p> : null}
