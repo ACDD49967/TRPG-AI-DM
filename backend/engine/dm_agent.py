@@ -1697,6 +1697,7 @@ async def _exec_add_scenario_bestiary(args: dict, state: GameSessionState) -> st
             "description": args.get("description", "") or "",
             "stats": args.get("stats") or {},
             "tags": args.get("tags") or [],
+            "details": args.get("details") or {},
         })
         action = "更新"
     else:
@@ -1707,6 +1708,7 @@ async def _exec_add_scenario_bestiary(args: dict, state: GameSessionState) -> st
             description=args.get("description", "") or "",
             stats=args.get("stats") or {},
             tags=args.get("tags") or [],
+            details=args.get("details") or {},
             scenario_id=scenario_id,
         )
         action = "新增"
@@ -1726,6 +1728,7 @@ async def _exec_add_scenario_map(args: dict, state: GameSessionState) -> str:
             "description": args.get("description", "") or "",
             "locations": args.get("locations") or [],
             "system": _game_system(state),
+            "details": args.get("details") or {},
             "scenario_id": scenario_id,
         })
         action = "更新"
@@ -1737,6 +1740,7 @@ async def _exec_add_scenario_map(args: dict, state: GameSessionState) -> str:
             image_path="",
             locations=args.get("locations") or [],
             system=_game_system(state),
+            details=args.get("details") or {},
             scenario_id=scenario_id,
         )
         action = "新增"

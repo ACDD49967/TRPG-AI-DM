@@ -53,10 +53,12 @@ export default function GameScreen() {
   const [showBeast, setShowBeast] = useState(false);
   const [showRulebook, setShowRulebook] = useState(false);
   const [showCharSheet, setShowCharSheet] = useState(false);
-  const [maps, setMaps] = useState<Array<{id:string;name:string;description:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;details?:{culture?:string;districts?:string[];notable_figures?:string;dangers?:string}}>>([]);
+  const [maps, setMaps] = useState<Array<{id:string;name:string;description:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;system?:string;details?:{type?:string;status?:string;culture?:string;districts?:string[];notable_figures?:string;dangers?:string;secret?:string;related_creatures?:string[];population?:string}}>>([]);
   const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;stats:Record<string,string>;image_path:string;tags?:string[];details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
   const [beastQuery, setBeastQuery] = useState('');
   const [mapQuery, setMapQuery] = useState('');
+  const [showMapBuilder, setShowMapBuilder] = useState(false);
+  const [showBeastBuilder, setShowBeastBuilder] = useState(false);
   const [showSpells, setShowSpells] = useState(false);
   const [spells, setSpells] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;name_zh?:string;level:string;school:string;ritual:boolean;casting_time:string;range:string;components:string;duration:string;classes:string[];tags?:string[]}>>([]);
   const [spellQuery, setSpellQuery] = useState('');
@@ -65,8 +67,8 @@ export default function GameScreen() {
   const [showSpellBuilder, setShowSpellBuilder] = useState(false);
   const [showDmTools, setShowDmTools] = useState(false);
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
-  const [dmMap, setDmMap] = useState({ name: '', description: '' });
-  const [dmBeast, setDmBeast] = useState({ name: '', description: '', stats: '' });
+  const [dmMap, setDmMap] = useState({ name: '', description: '', type: '', status: '', culture: '', districts: '', notable_figures: '', dangers: '', secret: '', locationsText: '' });
+  const [dmBeast, setDmBeast] = useState({ name: '', description: '', ac: '', hp: '', speed: '', str: '', dex: '', con: '', int: '', wis: '', cha: '', skills: '', traits: '', actions: '', habits: '', habitat: '', lore: '', weakness: '', tags: '' });
   const [dmSpell, setDmSpell] = useState({ name: '', description: '', level: '0', school: '', ritual: false, casting_time: '', range: '', components: '', duration: '', classes: '' });
   const [dmNpcImage, setDmNpcImage] = useState<File | null>(null);
   const [dmMapImage, setDmMapImage] = useState<File | null>(null);
@@ -93,8 +95,8 @@ export default function GameScreen() {
   };
 
   const q = (s: string) => s.toLowerCase();
-  const filteredMaps = maps.filter(m => !mapQuery || q(`${m.name} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')}`).includes(q(mapQuery)));
-  const filteredBestiary = bestiary.filter(b => !beastQuery || q(`${b.name} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''}`).includes(q(beastQuery)));
+  const filteredMaps = maps.filter(m => !mapQuery || q(`${m.name} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')} ${m.details?.type||''} ${m.details?.status||''} ${m.details?.culture||''} ${m.details?.notable_figures||''} ${m.details?.dangers||''} ${m.details?.secret||''}`).includes(q(mapQuery)));
+  const filteredBestiary = bestiary.filter(b => !beastQuery || q(`${b.name} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''} ${b.details?.lore||''} ${b.details?.weakness||''}`).includes(q(beastQuery)));
 
   const addDmNpc = async () => {
     if (!sessionId || !dmNpc.name.trim()) return;
@@ -120,6 +122,20 @@ export default function GameScreen() {
       const u = status.username || 'default';
       const sid = status.scenario_id || '';
       const sys = status.game_system || 'custom';
+      const locations = dmMap.locationsText.split(/[,，\n]/).map(s=>s.trim()).filter(Boolean).map(name=>({ name, x: 0, y: 0 }));
+      const details = {
+        type: dmMap.type.trim() || undefined,
+        status: dmMap.status.trim() || undefined,
+        culture: dmMap.culture.trim() || undefined,
+        districts: dmMap.districts.split(/[,，]/).map(s=>s.trim()).filter(Boolean),
+        notable_figures: dmMap.notable_figures.trim() || undefined,
+        dangers: dmMap.dangers.trim() || undefined,
+        secret: dmMap.secret.trim() || undefined,
+      };
+      const payload = {
+        username: u, name: dmMap.name.trim(), description: dmMap.description,
+        system: sys, scenario_id: sid, locations, details,
+      };
       if (dmMapImage) {
         const fd = new FormData();
         fd.append('file', dmMapImage);
@@ -129,13 +145,18 @@ export default function GameScreen() {
         fd.append('system', sys);
         fd.append('scenario_id', sid);
         await fetch('/api/maps/upload', { method: 'POST', body: fd });
+        // 上传后再用 JSON 补充结构化详情（保留已上传图片）
+        await fetch('/api/maps', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
       } else {
         await fetch('/api/maps', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: u, name: dmMap.name, description: dmMap.description, system: sys, scenario_id: sid }),
+          body: JSON.stringify(payload),
         });
       }
-      setDmMap({ name: '', description: '' });
+      setDmMap({ name: '', description: '', type: '', status: '', culture: '', districts: '', notable_figures: '', dangers: '', secret: '', locationsText: '' });
       setDmMapImage(null);
       useGameStore.getState().bumpMediaVersion();
     } catch {}
@@ -146,8 +167,31 @@ export default function GameScreen() {
       const u = status.username || 'default';
       const sid = status.scenario_id || '';
       const sys = status.game_system || 'custom';
-      let stats: Record<string,string> = {};
-      try { stats = dmBeast.stats ? JSON.parse(dmBeast.stats) : {}; } catch {}
+      const stats: Record<string,string> = {};
+      const num = (v: string) => v.trim();
+      if (dmBeast.ac) stats['AC'] = num(dmBeast.ac);
+      if (dmBeast.hp) stats['HP'] = num(dmBeast.hp);
+      if (dmBeast.speed) stats['速度'] = num(dmBeast.speed);
+      if (dmBeast.str) stats['力量'] = num(dmBeast.str);
+      if (dmBeast.dex) stats['敏捷'] = num(dmBeast.dex);
+      if (dmBeast.con) stats['体质'] = num(dmBeast.con);
+      if (dmBeast.int) stats['智力'] = num(dmBeast.int);
+      if (dmBeast.wis) stats['感知'] = num(dmBeast.wis);
+      if (dmBeast.cha) stats['魅力'] = num(dmBeast.cha);
+      if (dmBeast.skills) stats['技能'] = dmBeast.skills.trim();
+      if (dmBeast.traits) stats['特性'] = dmBeast.traits.trim();
+      if (dmBeast.actions) stats['动作'] = dmBeast.actions.trim();
+      const details = {
+        habits: dmBeast.habits.trim() || undefined,
+        habitat: dmBeast.habitat.trim() || undefined,
+        lore: dmBeast.lore.trim() || undefined,
+        weakness: dmBeast.weakness.trim() || undefined,
+      };
+      const tags = dmBeast.tags.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+      const payload = {
+        username: u, name: dmBeast.name.trim(), description: dmBeast.description,
+        system: sys, stats, tags, details, scenario_id: sid,
+      };
       if (dmBeastImage) {
         const fd = new FormData();
         fd.append('file', dmBeastImage);
@@ -156,15 +200,21 @@ export default function GameScreen() {
         fd.append('description', dmBeast.description);
         fd.append('system', sys);
         fd.append('stats', JSON.stringify(stats));
+        fd.append('tags', tags.join(','));
         fd.append('scenario_id', sid);
         await fetch('/api/bestiary/upload', { method: 'POST', body: fd });
+        // 上传后再用 JSON 补充结构化详情（保留已上传图片）
+        await fetch('/api/bestiary', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
       } else {
         await fetch('/api/bestiary', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: u, name: dmBeast.name, description: dmBeast.description, system: sys, stats, scenario_id: sid }),
+          body: JSON.stringify(payload),
         });
       }
-      setDmBeast({ name: '', description: '', stats: '' });
+      setDmBeast({ name: '', description: '', ac: '', hp: '', speed: '', str: '', dex: '', con: '', int: '', wis: '', cha: '', skills: '', traits: '', actions: '', habits: '', habitat: '', lore: '', weakness: '', tags: '' });
       setDmBeastImage(null);
       useGameStore.getState().bumpMediaVersion();
     } catch {}
@@ -441,26 +491,59 @@ export default function GameScreen() {
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowMap(false)}>
           <div className="bg-white rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-gray-900">地区地图</h3>
-              <button onClick={()=>setShowMap(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+              <h3 className="text-sm font-bold text-gray-900">地点 / 地图图鉴</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={()=>setShowMapBuilder(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
+                  {showMapBuilder ? '收起自建' : '自建地点'}
+                </button>
+                <button onClick={()=>setShowMap(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+              </div>
             </div>
-            <input value={mapQuery} onChange={e=>setMapQuery(e.target.value)} placeholder="搜索地点/区域..." className="input-field text-xs mb-3" />
+            <input value={mapQuery} onChange={e=>setMapQuery(e.target.value)} placeholder="搜索地点/区域/类型/人物/危险..." className="input-field text-xs mb-3" />
+            {showMapBuilder && (
+              <div className="mb-3 border border-amber-900/20 rounded-lg p-3 bg-amber-50/40 space-y-2">
+                <p className="text-xs font-bold text-gray-700">自建地点 / 地图</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={dmMap.name} onChange={e=>setDmMap({...dmMap,name:e.target.value})} placeholder="地点名称 *" className="input-field text-xs" />
+                  <input value={dmMap.type} onChange={e=>setDmMap({...dmMap,type:e.target.value})} placeholder="类型（城镇/地城/森林...）" className="input-field text-xs" />
+                  <input value={dmMap.status} onChange={e=>setDmMap({...dmMap,status:e.target.value})} placeholder="状态（可访问/危险/封闭）" className="input-field text-xs" />
+                  <input value={dmMap.culture} onChange={e=>setDmMap({...dmMap,culture:e.target.value})} placeholder="文化/势力" className="input-field text-xs" />
+                  <input value={dmMap.districts} onChange={e=>setDmMap({...dmMap,districts:e.target.value})} placeholder="区域（逗号分隔）" className="input-field text-xs" />
+                  <input value={dmMap.notable_figures} onChange={e=>setDmMap({...dmMap,notable_figures:e.target.value})} placeholder="知名人物" className="input-field text-xs" />
+                  <input value={dmMap.dangers} onChange={e=>setDmMap({...dmMap,dangers:e.target.value})} placeholder="危险/威胁" className="input-field text-xs" />
+                  <input value={dmMap.secret} onChange={e=>setDmMap({...dmMap,secret:e.target.value})} placeholder="秘密/隐藏信息" className="input-field text-xs" />
+                </div>
+                <input value={dmMap.locationsText} onChange={e=>setDmMap({...dmMap,locationsText:e.target.value})} placeholder="子地点（逗号分隔）" className="input-field text-xs w-full" />
+                <textarea value={dmMap.description} onChange={e=>setDmMap({...dmMap,description:e.target.value})} placeholder="地点描述" rows={2} className="input-field text-xs resize-none w-full" />
+                <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmMapImage(e.target.files?.[0]||null)} className="block w-full text-[10px] text-gray-500" />
+                <button onClick={()=>{addDmMap(); setShowMapBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本地点库</button>
+              </div>
+            )}
             {filteredMaps.length===0&&<p className="text-xs text-gray-400">暂无匹配地图。</p>}
             {filteredMaps.map(m=>{
               const relatedCreatures = bestiary.filter(b => q(`${b.description} ${b.details?.habitat||''} ${b.details?.lore||''}`).includes(q(m.name)));
               return (
-                <div key={m.id} className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
-                  {m.image_path&&<img src={m.image_path} alt={m.name} className="w-full max-h-80 object-contain bg-gray-100" />}
-                  <div className="p-3">
-                    <p className="text-sm font-bold">{m.name}</p>
+                <details key={m.id} className="group mb-3 border border-gray-200 rounded-lg overflow-hidden">
+                  <summary className="cursor-pointer select-none list-none p-3 flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold">{m.name}</span>
+                    <span className="text-[9px] text-gray-400 shrink-0">
+                      {m.details?.type || '地点'} · {m.details?.status || '未知'} · {m.locations.length} 子地点
+                      <span className="ml-1 group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span>
+                    </span>
+                  </summary>
+                  <div className="px-3 pb-3 border-t border-gray-100">
+                    {m.image_path&&<img src={m.image_path} alt={m.name} className="w-full max-h-80 object-contain bg-gray-100 mb-2" />}
                     <p className="text-[10px] text-gray-500 mb-2">{m.description}</p>
-                    {m.locations.length>0&&<div className="flex flex-wrap gap-1">{m.locations.map((l,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-100">{l.name}</span>)}</div>}
+                    {m.locations.length>0&&<div className="flex flex-wrap gap-1 mb-2">{m.locations.map((l,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-100">{l.name}</span>)}</div>}
                     {m.details && (
-                      <div className="mt-2 text-[10px] text-gray-600 space-y-1">
-                        {m.details.culture&&<p>文化：{m.details.culture}</p>}
+                      <div className="text-[10px] text-gray-600 space-y-1">
+                        {m.details.type&&<p>类型：{m.details.type}</p>}
+                        {m.details.status&&<p>状态：{m.details.status}</p>}
+                        {m.details.culture&&<p>文化/势力：{m.details.culture}</p>}
                         {m.details.districts && m.details.districts.length>0&&<p>区域：{m.details.districts.join('、')}</p>}
                         {m.details.notable_figures&&<p>知名人物：{m.details.notable_figures}</p>}
                         {m.details.dangers&&<p>危险：{m.details.dangers}</p>}
+                        {m.details.secret&&<p className="text-red-500">秘密：{m.details.secret}</p>}
                       </div>
                     )}
                     {relatedCreatures.length>0 && (
@@ -470,7 +553,7 @@ export default function GameScreen() {
                       </div>
                     )}
                   </div>
-                </div>
+                </details>
               );
             })}
           </div>
@@ -482,9 +565,44 @@ export default function GameScreen() {
           <div className="paper-card rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900">生物图鉴</h3>
-              <button onClick={()=>setShowBeast(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+              <div className="flex items-center gap-2">
+                <button onClick={()=>setShowBeastBuilder(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
+                  {showBeastBuilder ? '收起自建' : '自建生物'}
+                </button>
+                <button onClick={()=>setShowBeast(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+              </div>
             </div>
-            <input value={beastQuery} onChange={e=>setBeastQuery(e.target.value)} placeholder="搜索生物/属性/栖息地..." className="input-field text-xs mb-3" />
+            <input value={beastQuery} onChange={e=>setBeastQuery(e.target.value)} placeholder="搜索生物/属性/栖息地/传说/弱点..." className="input-field text-xs mb-3" />
+            {showBeastBuilder && (
+              <div className="mb-3 border border-amber-900/20 rounded-lg p-3 bg-amber-50/40 space-y-2">
+                <p className="text-xs font-bold text-gray-700">自建生物</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={dmBeast.name} onChange={e=>setDmBeast({...dmBeast,name:e.target.value})} placeholder="生物名称 *" className="input-field text-xs" />
+                  <input value={dmBeast.tags} onChange={e=>setDmBeast({...dmBeast,tags:e.target.value})} placeholder="标签（人形生物/神话...）" className="input-field text-xs" />
+                  <input value={dmBeast.ac} onChange={e=>setDmBeast({...dmBeast,ac:e.target.value})} placeholder="AC" className="input-field text-xs" />
+                  <input value={dmBeast.hp} onChange={e=>setDmBeast({...dmBeast,hp:e.target.value})} placeholder="HP" className="input-field text-xs" />
+                  <input value={dmBeast.speed} onChange={e=>setDmBeast({...dmBeast,speed:e.target.value})} placeholder="速度（30尺）" className="input-field text-xs" />
+                  <input value={dmBeast.str} onChange={e=>setDmBeast({...dmBeast,str:e.target.value})} placeholder="力量" className="input-field text-xs" />
+                  <input value={dmBeast.dex} onChange={e=>setDmBeast({...dmBeast,dex:e.target.value})} placeholder="敏捷" className="input-field text-xs" />
+                  <input value={dmBeast.con} onChange={e=>setDmBeast({...dmBeast,con:e.target.value})} placeholder="体质" className="input-field text-xs" />
+                  <input value={dmBeast.int} onChange={e=>setDmBeast({...dmBeast,int:e.target.value})} placeholder="智力" className="input-field text-xs" />
+                  <input value={dmBeast.wis} onChange={e=>setDmBeast({...dmBeast,wis:e.target.value})} placeholder="感知" className="input-field text-xs" />
+                  <input value={dmBeast.cha} onChange={e=>setDmBeast({...dmBeast,cha:e.target.value})} placeholder="魅力" className="input-field text-xs" />
+                  <input value={dmBeast.skills} onChange={e=>setDmBeast({...dmBeast,skills:e.target.value})} placeholder="技能（察觉+4，隐匿+5）" className="input-field text-xs" />
+                </div>
+                <textarea value={dmBeast.description} onChange={e=>setDmBeast({...dmBeast,description:e.target.value})} placeholder="生物描述" rows={2} className="input-field text-xs resize-none w-full" />
+                <textarea value={dmBeast.traits} onChange={e=>setDmBeast({...dmBeast,traits:e.target.value})} placeholder="特性（多行，如：黑暗视觉：...）" rows={2} className="input-field text-xs resize-none w-full" />
+                <textarea value={dmBeast.actions} onChange={e=>setDmBeast({...dmBeast,actions:e.target.value})} placeholder="动作（多行，如：啃咬：+5 1d8+3）" rows={2} className="input-field text-xs resize-none w-full" />
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={dmBeast.habits} onChange={e=>setDmBeast({...dmBeast,habits:e.target.value})} placeholder="习性" className="input-field text-xs" />
+                  <input value={dmBeast.habitat} onChange={e=>setDmBeast({...dmBeast,habitat:e.target.value})} placeholder="栖息地" className="input-field text-xs" />
+                  <input value={dmBeast.lore} onChange={e=>setDmBeast({...dmBeast,lore:e.target.value})} placeholder="传说/背景" className="input-field text-xs" />
+                  <input value={dmBeast.weakness} onChange={e=>setDmBeast({...dmBeast,weakness:e.target.value})} placeholder="弱点" className="input-field text-xs" />
+                </div>
+                <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmBeastImage(e.target.files?.[0]||null)} className="block w-full text-[10px] text-gray-500" />
+                <button onClick={()=>{addDmBeast(); setShowBeastBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本生物库</button>
+              </div>
+            )}
             {filteredBestiary.length===0&&<p className="text-xs text-gray-400">暂无匹配生物。</p>}
             {filteredBestiary.map(b=>{
               const relatedMaps = maps.filter(m => q(`${b.details?.habitat||''} ${b.description} ${b.details?.lore||''}`).includes(q(m.name)) || q(m.description).includes(q(b.name)));
@@ -732,12 +850,14 @@ export default function GameScreen() {
 
             {/* 新增生物 */}
             <div>
-              <p className="text-xs font-bold text-gray-700 mb-2">新增生物</p>
-              <div className="grid grid-cols-1 gap-2">
+              <p className="text-xs font-bold text-gray-700 mb-2">新增生物（完整字段请在生物图鉴弹窗内填写）</p>
+              <div className="grid grid-cols-2 gap-2">
                 <input value={dmBeast.name} onChange={e=>setDmBeast({...dmBeast,name:e.target.value})} placeholder="生物名称 *" className="input-field text-xs" />
-                <textarea value={dmBeast.description} onChange={e=>setDmBeast({...dmBeast,description:e.target.value})} placeholder="描述" rows={2} className="input-field text-xs resize-none" />
-                <textarea value={dmBeast.stats} onChange={e=>setDmBeast({...dmBeast,stats:e.target.value})} placeholder='数值 JSON，如 {"HP":"30","AC":"15","力量":"16"}' rows={2} className="input-field text-xs resize-none font-mono" />
+                <input value={dmBeast.tags} onChange={e=>setDmBeast({...dmBeast,tags:e.target.value})} placeholder="标签" className="input-field text-xs" />
+                <input value={dmBeast.ac} onChange={e=>setDmBeast({...dmBeast,ac:e.target.value})} placeholder="AC" className="input-field text-xs" />
+                <input value={dmBeast.hp} onChange={e=>setDmBeast({...dmBeast,hp:e.target.value})} placeholder="HP" className="input-field text-xs" />
               </div>
+              <textarea value={dmBeast.description} onChange={e=>setDmBeast({...dmBeast,description:e.target.value})} placeholder="描述" rows={2} className="input-field text-xs resize-none mt-2 w-full" />
               <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmBeastImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-gray-500" />
               <button onClick={addDmBeast} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增生物</button>
             </div>

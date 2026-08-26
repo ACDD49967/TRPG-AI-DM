@@ -869,6 +869,7 @@ async def add_map_api(payload: dict):
             "image_path": str(payload.get("image_path") or ""),
             "locations": payload.get("locations") or [],
             "system": str(payload.get("system") or "custom"),
+            "details": payload.get("details") or {},
             "scenario_id": scenario_id,
         })
     else:
@@ -879,6 +880,7 @@ async def add_map_api(payload: dict):
             image_path=str(payload.get("image_path") or ""),
             locations=payload.get("locations") or [],
             system=str(payload.get("system") or "custom"),
+            details=payload.get("details") or {},
             scenario_id=scenario_id,
         )
     return {"map": item}
@@ -1082,6 +1084,7 @@ async def add_bestiary_api(payload: dict):
             "stats": payload.get("stats") or {},
             "image_path": str(payload.get("image_path") or ""),
             "tags": payload.get("tags") or [],
+            "details": payload.get("details") or {},
             "scenario_id": scenario_id,
         })
     else:
@@ -1093,6 +1096,7 @@ async def add_bestiary_api(payload: dict):
             stats=payload.get("stats") or {},
             image_path=str(payload.get("image_path") or ""),
             tags=payload.get("tags") or [],
+            details=payload.get("details") or {},
             scenario_id=scenario_id,
         )
     return {"bestiary": item}
