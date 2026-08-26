@@ -649,7 +649,7 @@ export default function StartScreen(){
     setKbLlmBusy(true);setKbErr('');
     try{
       const r=await fetch('/api/knowledge/llm-process',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-        username:username||'default', api_key:apiKey, model_name:modelName, base_url:baseUrl,
+        username:username||'default', scenario_id:scenarioId, api_key:apiKey, model_name:modelName, base_url:baseUrl,
       })});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'LLM 处理失败');}
       const d=await r.json();
@@ -1466,7 +1466,7 @@ export default function StartScreen(){
               {scenarioMode==='existing'&&savedScenarios.length>0&&(
                 <div className="card p-3 bg-indigo-50/50 border-indigo-200">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-medium text-indigo-700">📁 已有剧本可直接使用（跳过世界生成）</span>
+                    <span className="text-xs font-medium text-indigo-700">已有剧本可直接使用（跳过世界生成）</span>
                     <button onClick={()=>setShowScenarioList(!showScenarioList)} className="text-[10px] text-indigo-500 hover:text-indigo-700">{showScenarioList?'收起':'展开'}({savedScenarios.length}个)</button>
                   </div>
                   {!showScenarioList&&selectedScenario&&(
@@ -1493,7 +1493,7 @@ export default function StartScreen(){
                     </div>
                   )}
                   {selectedScenario&&(
-                    <p className="mt-2 text-[10px] text-indigo-600 font-medium">✅ 已选择已有剧本——点击"继续"即可跳过世界生成</p>
+                    <p className="mt-2 text-[10px] text-indigo-600 font-medium">已选择已有剧本——点击“继续”即可跳过世界生成</p>
                   )}
                 </div>
               )}
@@ -1676,7 +1676,7 @@ export default function StartScreen(){
                   )}
                   {scenarioSummary&&(
                     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-                      <p className="text-[10px] text-emerald-700 font-medium mb-1">📝 剧本总结（约400字）</p>
+                      <p className="text-[10px] text-emerald-700 font-medium mb-1">剧本总结（约400字）</p>
                       <p className="text-xs text-gray-700 leading-relaxed">{scenarioSummary}</p>
                     </div>
                   )}
@@ -1786,9 +1786,9 @@ export default function StartScreen(){
                 <h2 className="text-lg font-bold text-gray-900">知识库 / RAG 设定库</h2>
                 <div className="flex items-center gap-2">
                   <button onClick={llmProcessKb} disabled={kbLlmBusy || kbBusy} className="text-[10px] px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
-                    {kbLlmBusy ? 'LLM 处理中...' : '✨ LLM 智能切分与图鉴注入'}
+                    {kbLlmBusy ? 'LLM 处理中...' : 'LLM 智能切分与图鉴注入'}
                   </button>
-                  <button onClick={seedKb} disabled={kbBusy} className="text-[10px] px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100">🔄 重置内置规则备注</button>
+                  <button onClick={seedKb} disabled={kbBusy} className="text-[10px] px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100">重置内置规则备注</button>
                 </div>
               </div>
 

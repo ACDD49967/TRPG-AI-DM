@@ -1595,6 +1595,10 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
             "attributes": changes.get("attributes", {}),
             "skills": changes.get("skills", []),
             "traits": changes.get("traits", []),
+            "equipment": changes.get("equipment", []),
+            "related_locations": changes.get("related_locations", []),
+            "related_npcs": changes.get("related_npcs", []),
+            "related_creatures": changes.get("related_creatures", []),
             "image_path": changes.get("image_path", ""),
             "importance": changes.get("importance", "minor"),
         }
@@ -1640,7 +1644,16 @@ async def _exec_reveal_info(args: dict, state: GameSessionState) -> str:
             return f"✅ {target_name}全部揭示"
     elif target_type == "location":
         for l in ws.locations:
-            if l.name == target_name: l.discovered = True; ws.save(); return f"✅ {target_name}发现"
+            if l.name != target_name:
+                continue
+            if field == "secret" and l.secrets:
+                l.secret_revealed = True
+                ws.save()
+                await push_event(state, "journal_update", ws.to_player_journal())
+                return f"✅ {target_name}秘密揭示"
+            l.discovered = True
+            ws.save()
+            return f"✅ {target_name}发现"
     elif target_type == "secret":
         if ws.reveal_npc_field(target_name, "secret", "visible"): return f"✅ {target_name}秘密揭示"
     return f"未知揭示类型: {target_type}"
@@ -2101,6 +2114,11 @@ async def _exec_promote_npc(args: dict, state: GameSessionState) -> str:
         npc.attributes = dict(args["attributes"])
     if args.get("skills"):
         npc.skills = [str(s) for s in args["skills"]]
+    if args.get("equipment"):
+        npc.equipment = [str(e) for e in args["equipment"]]
+    for f in ("related_locations", "related_npcs", "related_creatures"):
+        if args.get(f):
+            setattr(npc, f, [str(x) for x in args[f]])
     ws.save()
     await push_event(state, "journal_update", ws.to_player_journal())
     return f"✅ {name} 已提升为重要NPC，角色卡已补全"

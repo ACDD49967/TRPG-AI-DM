@@ -98,6 +98,10 @@ class NpcEntry:
     attributes: dict = field(default_factory=dict)   # 六维/COC属性等
     skills: list = field(default_factory=list)       # 技能列表
     traits: list = field(default_factory=list)       # 特性/动作/专长等
+    equipment: list = field(default_factory=list)    # 可见装备（武器/护甲/随身物品）
+    related_locations: list = field(default_factory=list)  # 关联地点名
+    related_npcs: list = field(default_factory=list)       # 关联NPC名
+    related_creatures: list = field(default_factory=list)  # 关联生物/怪物名
     image_path: str = ""
     importance: str = "minor"       # major=重要NPC（完整卡） minor=简单NPC（简要卡）
     visibility: NpcVisibility = field(default_factory=NpcVisibility)
@@ -127,20 +131,33 @@ class NpcEntry:
         result["ac"] = self.ac
         result["hp"] = self.hp
         result["max_hp"] = self.max_hp
-        result["attributes"] = self.attributes
-        result["skills"] = self.skills
-        result["traits"] = self.traits
         result["image_path"] = self.image_path
-        result["importance"] = self.importance
 
-        # 统计隐藏字段数
+        # 统计隐藏字段数（仅用于后端判定，不下发给玩家）
         hidden_count = sum(
             1 for f in [v.race, v.role, v.appearance, v.personality,
                         v.motivation, v.secret, v.relation_to_plot]
             if f == "hidden"
         )
-        result["_hidden_fields"] = hidden_count
-        result["_fully_revealed"] = hidden_count == 0
+        fully_revealed = hidden_count == 0
+        # 属性/技能/特性属于 DM 侧数值，只有完全揭示后才对玩家可见
+        if fully_revealed:
+            result["attributes"] = self.attributes
+            result["skills"] = self.skills
+            result["traits"] = self.traits
+        else:
+            result["attributes"] = {}
+            result["skills"] = []
+            result["traits"] = []
+        # 外貌可见时，随身装备也可被玩家观察到
+        if v.appearance == "visible" or fully_revealed:
+            result["equipment"] = self.equipment
+        else:
+            result["equipment"] = []
+        result["related_locations"] = self.related_locations
+        result["related_npcs"] = self.related_npcs
+        result["related_creatures"] = self.related_creatures
+        result["_fully_revealed"] = fully_revealed
 
         return result
 
@@ -164,13 +181,31 @@ class LocationEntry:
     name: str
     description: str = ""
     status: str = "可访问"
+    type: str = ""
+    culture: str = ""
+    notable_figures: str = ""
+    dangers: str = ""
     secrets: str = ""
+    secret_revealed: bool = False
+    related_locations: list = field(default_factory=list)
+    related_npcs: list = field(default_factory=list)
+    related_creatures: list = field(default_factory=list)
     discovered: bool = True  # 玩家是否已发现
 
     def to_player_view(self) -> dict:
         if not self.discovered:
             return {"name": "???", "description": "尚未发现", "status": "未知"}
-        return {"name": self.name, "description": self.description, "status": self.status}
+        result = {
+            "name": self.name, "description": self.description, "status": self.status,
+            "type": self.type, "culture": self.culture, "notable_figures": self.notable_figures,
+            "dangers": self.dangers,
+            "related_locations": self.related_locations,
+            "related_npcs": self.related_npcs,
+            "related_creatures": self.related_creatures,
+        }
+        if self.secret_revealed and self.secrets:
+            result["secret"] = self.secrets
+        return result
 
 
 @dataclass
@@ -236,7 +271,7 @@ class WorldState:
                                   if k in ["name","race","role","location","attitude",
                                            "alive","appearance","personality","motivation",
                                            "secret","relation_to_plot","notes",
-                                           "level","ac","hp","max_hp","attributes","skills","traits","image_path"]})
+                                           "level","ac","hp","max_hp","attributes","skills","traits","equipment","related_locations","related_npcs","related_creatures","image_path","importance"]})
                 npc.visibility = NpcVisibility.from_dict(vis_data)
                 ws.npcs.append(npc)
 
@@ -244,7 +279,7 @@ class WorldState:
                                          if k in ["key","status","description","consequence","visible"]})
                              for p in data.get("plot_flags", [])]
             ws.locations = [LocationEntry(**{k: v for k, v in l.items()
-                                             if k in ["name","description","status","secrets","discovered"]})
+                                             if k in ["name","description","status","type","culture","notable_figures","dangers","secrets","secret_revealed","related_locations","related_npcs","related_creatures","discovered"]})
                             for l in data.get("locations", [])]
             ws.creatures = data.get("creatures", [])
             ws.spells = data.get("spells", [])

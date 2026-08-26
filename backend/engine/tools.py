@@ -253,6 +253,10 @@ PROMOTE_NPC_TOOL = _tool("promote_npc",
      "traits": {"type": "array", "items": {"type": "string"}},
      "attributes": {"type": "object"},
      "skills": {"type": "array", "items": {"type": "string"}},
+     "equipment": {"type": "array", "items": {"type": "string"}},
+     "related_locations": {"type": "array", "items": {"type": "string"}},
+     "related_npcs": {"type": "array", "items": {"type": "string"}},
+     "related_creatures": {"type": "array", "items": {"type": "string"}},
      "appearance": {"type": "string"}},
     ["name"])
 

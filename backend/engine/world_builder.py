@@ -158,11 +158,11 @@ EXTRACT_STATE_PROMPT = """请从以下TRPG冒险大纲中提取关键的结构�
 ## 要求
 提取以下JSON结构：
 
-1. npcs: 所有具名NPC，每个包含 name, race, role, location, attitude(初始态度), importance("major"=重要NPC/完整角色卡, "minor"=简单NPC/简要卡), personality, motivation, secret(如有), relation_to_plot, level(1-20整数), ac(护甲等级), hp(生命值), max_hp(最大生命值), attributes(属性对象，如 {"str":10,"dex":14,"con":12,"int":11,"wis":13,"cha":9}，COC用 {"str":50,"con":60,"dex":40,"int":70,"pow":55,"cha":45,"siz":60,"edu":65}), skills(技能数组，如 ["侦查","潜行"]), traits(特性/动作数组，如 ["多才多艺","借机攻击"])。重要NPC（剧情核心/反派/盟友/关键线人）必须填全 personality/motivation/secret/relation_to_plot/traits/attributes；简单NPC（酒保/卫兵/路人）也必须包含 attributes/skills/traits（可简略但不可省略），personality/motivation/secret 可留空或最小化。
+1. npcs: 所有具名NPC，每个包含 name, race, role, location, attitude(初始态度), importance("major"=重要NPC/完整角色卡, "minor"=简单NPC/简要卡), personality, motivation, secret(如有), relation_to_plot, level(1-20整数), ac(护甲等级), hp(生命值), max_hp(最大生命值), attributes(属性对象，如 {"str":10,"dex":14,"con":12,"int":11,"wis":13,"cha":9}，COC用 {"str":50,"con":60,"dex":40,"int":70,"pow":55,"cha":45,"siz":60,"edu":65}), skills(技能数组，如 ["侦查","潜行"]), traits(特性/动作数组，如 ["多才多艺","借机攻击"]), equipment(随身可见装备数组，如 ["皮甲","长剑","钱袋"]), appearance(外貌描述), related_locations(常去/所属地点名数组), related_npcs(认识/敌对/盟友NPC名数组), related_creatures(随从/宠物/宿敌生物名数组)。重要NPC必须填全 personality/motivation/secret/relation_to_plot/traits/attributes/equipment/appearance/related_*；简单NPC也必须包含 attributes/skills/traits/equipment/appearance/related_*（可简略但不可省略），personality/motivation/secret 可留空或最小化。
 2. plot_flags: 关键剧情节点，每个包含 key(旗标名), status(默认"未触发"), description
-3. locations: 关键地点，每个包含 name, description, secrets(如有)
+3. locations: 关键地点，每个包含 name, description, status, type(城市/地城/森林等), culture(文化/势力), notable_figures(知名人物), dangers(危险), secrets(如有), related_locations(相邻/关联地点名数组), related_npcs(常驻/关联NPC名数组), related_creatures(出没生物名数组)。重要地点必须填全以上字段；普通地点至少填 description/status/type。
 4. world_rules: 这个世界独特的规则（魔法限制、社会规则等）
-5. creatures: 剧本中出现的关键生物/怪物，每个包含 name, description, stats(对象，必须含 HP/AC/速度/六维(力量/敏捷/体质/智力/感知/魅力)/技能/特性/动作), tags(数组)
+5. creatures: 剧本中出现的关键生物/怪物，每个包含 name, description, stats(对象，必须含 HP/AC/速度/六维(力量/敏捷/体质/智力/感知/魅力)/技能/特性/动作), tags(数组), related_locations(出没地点名数组), related_npcs(相关NPC名数组)
 6. spells: 剧本中涉及的重要法术/仪式，每个包含 name, level, school, ritual, casting_time, range, components, duration, description, classes(数组)
 
 ## 严格输出格式（必须遵守）
@@ -482,7 +482,10 @@ async def build_world(
                 level=int(n.get("level", 1) or 1), ac=int(n.get("ac", 10) or 10),
                 hp=int(n.get("hp", 10) or 10), max_hp=int(n.get("max_hp", 10) or 10),
                 attributes=n.get("attributes") or {}, skills=n.get("skills") or [],
-                traits=n.get("traits") or [],
+                traits=n.get("traits") or [], equipment=n.get("equipment") or [],
+                related_locations=n.get("related_locations", []),
+                related_npcs=n.get("related_npcs", []),
+                related_creatures=n.get("related_creatures", []),
                 importance=n.get("importance", "minor"),
             ))
         for p in state_data.get("plot_flags", []):
@@ -493,7 +496,12 @@ async def build_world(
         for l in state_data.get("locations", []):
             ws.locations.append(LocationEntry(
                 name=l.get("name",""), description=l.get("description",""),
-                secrets=l.get("secrets",""),
+                status=l.get("status","可访问"), type=l.get("type",""),
+                culture=l.get("culture",""), notable_figures=l.get("notable_figures",""),
+                dangers=l.get("dangers",""), secrets=l.get("secrets",""),
+                related_locations=l.get("related_locations", []),
+                related_npcs=l.get("related_npcs", []),
+                related_creatures=l.get("related_creatures", []),
             ))
         ws.creatures = state_data.get("creatures", [])
         ws.spells = state_data.get("spells", [])

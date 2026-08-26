@@ -53,14 +53,15 @@ export default function GameScreen() {
   const [showBeast, setShowBeast] = useState(false);
   const [showRulebook, setShowRulebook] = useState(false);
   const [showCharSheet, setShowCharSheet] = useState(false);
-  const [maps, setMaps] = useState<Array<{id:string;name:string;description:string;description_zh?:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;system?:string;details?:{type?:string;status?:string;culture?:string;districts?:string[];notable_figures?:string;dangers?:string;secret?:string;related_creatures?:string[];population?:string}}>>([]);
-  const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;stats:Record<string,string>;image_path:string;tags?:string[];details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
+  const [maps, setMaps] = useState<Array<{id:string;name:string;description:string;description_zh?:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;system?:string;scenario_id?:string;details?:{type?:string;status?:string;culture?:string;districts?:string[];notable_figures?:string;dangers?:string;secret?:string;related_creatures?:string[];population?:string}}>>([]);
+  const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;stats:Record<string,string>;image_path:string;tags?:string[];scenario_id?:string;details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
   const [beastQuery, setBeastQuery] = useState('');
   const [mapQuery, setMapQuery] = useState('');
+  const [showGlobalRef, setShowGlobalRef] = useState(false);
   const [showMapBuilder, setShowMapBuilder] = useState(false);
   const [showBeastBuilder, setShowBeastBuilder] = useState(false);
   const [showSpells, setShowSpells] = useState(false);
-  const [spells, setSpells] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;name_zh?:string;level:string;school:string;ritual:boolean;casting_time:string;range:string;components:string;duration:string;classes:string[];tags?:string[]}>>([]);
+  const [spells, setSpells] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;name_zh?:string;level:string;school:string;ritual:boolean;casting_time:string;range:string;components:string;duration:string;classes:string[];tags?:string[];scenario_id?:string}>>([]);
   const [spellQuery, setSpellQuery] = useState('');
   const [srdTranslating, setSrdTranslating] = useState(false);
   const [srdProgress, setSrdProgress] = useState<{done:number; total:number} | null>(null);
@@ -96,8 +97,12 @@ export default function GameScreen() {
   };
 
   const q = (s: string) => s.toLowerCase();
-  const filteredMaps = maps.filter(m => !mapQuery || q(`${m.name} ${m.description_zh||''} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')} ${m.details?.type||''} ${m.details?.status||''} ${m.details?.culture||''} ${m.details?.notable_figures||''} ${m.details?.dangers||''} ${m.details?.secret||''}`).includes(q(mapQuery)));
-  const filteredBestiary = bestiary.filter(b => !beastQuery || q(`${b.name} ${b.description_zh||''} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''} ${b.details?.lore||''} ${b.details?.weakness||''}`).includes(q(beastQuery)));
+  const currentSid = status.scenario_id || '';
+  const scopedMaps = showGlobalRef || !currentSid ? maps : maps.filter(m => m.scenario_id === currentSid);
+  const scopedBestiary = showGlobalRef || !currentSid ? bestiary : bestiary.filter(b => b.scenario_id === currentSid);
+  const scopedSpells = showGlobalRef || !currentSid ? spells : spells.filter(s => s.scenario_id === currentSid);
+  const filteredMaps = scopedMaps.filter(m => !mapQuery || q(`${m.name} ${m.description_zh||''} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')} ${m.details?.type||''} ${m.details?.status||''} ${m.details?.culture||''} ${m.details?.notable_figures||''} ${m.details?.dangers||''}`).includes(q(mapQuery)));
+  const filteredBestiary = scopedBestiary.filter(b => !beastQuery || q(`${b.name} ${b.description_zh||''} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''} ${b.details?.lore||''}`).includes(q(beastQuery)));
 
   const addDmNpc = async () => {
     if (!sessionId || !dmNpc.name.trim()) return;
@@ -533,6 +538,9 @@ export default function GameScreen() {
                 <button onClick={()=>translateMedia('locations')} disabled={!!mediaTranslate} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
                   {mediaTranslate?.kind==='locations' ? '机翻中...' : '翻译地点描述'}
                 </button>
+                <button onClick={()=>setShowGlobalRef(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
+                  {showGlobalRef ? '仅当前剧本' : '显示通用参考'}
+                </button>
                 <button onClick={()=>setShowMap(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
               </div>
             </div>
@@ -564,7 +572,7 @@ export default function GameScreen() {
             )}
             {filteredMaps.length===0&&<p className="text-xs text-gray-400">暂无匹配地图。</p>}
             {filteredMaps.map(m=>{
-              const relatedCreatures = bestiary.filter(b => q(`${b.description} ${b.details?.habitat||''} ${b.details?.lore||''}`).includes(q(m.name)));
+              const relatedCreatures = scopedBestiary.filter(b => q(`${b.description} ${b.details?.habitat||''} ${b.details?.lore||''}`).includes(q(m.name)));
               return (
                 <details key={m.id} className="group mb-3 border border-gray-200 rounded-lg overflow-hidden">
                   <summary className="cursor-pointer select-none list-none p-3 flex items-center justify-between gap-2">
@@ -586,7 +594,6 @@ export default function GameScreen() {
                         {m.details.districts && m.details.districts.length>0&&<p>区域：{m.details.districts.join('、')}</p>}
                         {m.details.notable_figures&&<p>知名人物：{m.details.notable_figures}</p>}
                         {m.details.dangers&&<p>危险：{m.details.dangers}</p>}
-                        {m.details.secret&&<p className="text-red-500">秘密：{m.details.secret}</p>}
                       </div>
                     )}
                     {relatedCreatures.length>0 && (
@@ -614,6 +621,9 @@ export default function GameScreen() {
                 </button>
                 <button onClick={()=>translateMedia('bestiary')} disabled={!!mediaTranslate} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
                   {mediaTranslate?.kind==='bestiary' ? '机翻中...' : '翻译生物描述'}
+                </button>
+                <button onClick={()=>setShowGlobalRef(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
+                  {showGlobalRef ? '仅当前剧本' : '显示通用参考'}
                 </button>
                 <button onClick={()=>setShowBeast(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
               </div>
@@ -657,7 +667,7 @@ export default function GameScreen() {
             )}
             {filteredBestiary.length===0&&<p className="text-xs text-gray-400">暂无匹配生物。</p>}
             {filteredBestiary.map(b=>{
-              const relatedMaps = maps.filter(m => q(`${b.details?.habitat||''} ${b.description} ${b.details?.lore||''}`).includes(q(m.name)) || q(m.description).includes(q(b.name)));
+              const relatedMaps = scopedMaps.filter(m => q(`${b.details?.habitat||''} ${b.description} ${b.details?.lore||''}`).includes(q(m.name)) || q(m.description).includes(q(b.name)));
               const s = b.stats || {};
               const get = (...keys: string[]) => keys.map(k=>s[k]).find(v=>v!==undefined && v!=='') ?? '—';
               const abilities: Array<[string,string]> = [
@@ -768,7 +778,6 @@ export default function GameScreen() {
                       {b.details.habits&&<p>习性：{b.details.habits}</p>}
                       {b.details.habitat&&<p>栖息地：{b.details.habitat}</p>}
                       {b.details.lore&&<p>传说：{b.details.lore}</p>}
-                      {b.details.weakness&&<p>弱点：{b.details.weakness}</p>}
                     </div>
                   )}
                   {relatedMaps.length>0 && (
@@ -797,6 +806,9 @@ export default function GameScreen() {
                 </button>
                 <button onClick={translateSrd} disabled={srdTranslating} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
                   {srdTranslating ? '机翻中...' : '翻译 SRD 法术'}
+                </button>
+                <button onClick={()=>setShowGlobalRef(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
+                  {showGlobalRef ? '仅当前剧本' : '显示通用参考'}
                 </button>
                 <button onClick={()=>setShowSpells(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
               </div>
@@ -833,8 +845,8 @@ export default function GameScreen() {
                 <button onClick={()=>{addDmSpell(); setShowSpellBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本法术库</button>
               </div>
             )}
-            {spells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <p className="text-xs text-gray-400">暂无匹配法术。</p>}
-            {spells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).map(s=>(
+            {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <p className="text-xs text-gray-400">暂无匹配法术。</p>}
+            {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).map(s=>(
               <details key={s.id} className="group mb-2 border-2 border-amber-900/30 rounded-lg p-2.5 bg-[#fffdf5]">
                 <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
                   <span className="paper-title text-sm font-bold">{s.name_zh||s.name}：{Number(s.level)===0?'戏法':`${s.level}环`} {s.school}{s.name_zh&&s.name_zh!==s.name?<span className="text-gray-400 font-normal">（{s.name}）</span>:null}</span>

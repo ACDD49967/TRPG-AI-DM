@@ -13,6 +13,9 @@ from typing import Any
 from backend.default_content import CLASSIC_BESTIARY, COMMON_CITIES
 from backend.srd_spell_classes import SRD_SPELL_CLASSES
 
+_DEFAULT_BESTIARY_NAMES = {b["name"] for b in CLASSIC_BESTIARY}
+_DEFAULT_CITY_NAMES = {c["name"] for c in COMMON_CITIES}
+
 MEDIA_ROOT = Path("media")
 
 
@@ -47,35 +50,161 @@ def _save_meta(username: str, kind: str, items: list[dict]):
     p.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _deleted_builtin_kind_path(username: str, kind: str) -> Path:
+    return _user_media_dir(username) / f"deleted_builtin_{kind}.json"
+
+
+def _load_deleted_builtin(username: str, kind: str) -> set[str]:
+    p = _deleted_builtin_kind_path(username, kind)
+    try:
+        return set(json.loads(p.read_text(encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def _mark_deleted_builtin(username: str, kind: str, name: str):
+    names = _load_deleted_builtin(username, kind)
+    names.add(name)
+    _deleted_builtin_kind_path(username, kind).write_text(
+        json.dumps(sorted(names), ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _localize_default_name(name: str) -> str:
+    """把默认图鉴名称中的英文括号去除，只保留中文名（如 地精（Goblin）→ 地精）。"""
+    import re as _re
+    m = _re.match(r"^(.*?)（[^）]*）$", name.strip())
+    return m.group(1).strip() if m else name.strip()
+
+
+def _normalize_default_bestiary(item: dict) -> dict:
+    """返回默认生物的完整 stats（已含官方/已有数据，缺失字段补为空串而非猜测）。"""
+    stats = dict(item.get("stats") or {})
+    for k in ("HP", "AC", "速度", "力量", "敏捷", "体质", "智力", "感知", "魅力", "技能", "特性", "动作", "挑战等级"):
+        stats.setdefault(k, "")
+    return stats
+
+
+def _default_bestiary_details(item: dict, localized_name: str) -> dict:
+    """返回默认生物的完整 details。"""
+    details = dict(item.get("details") or {})
+    details.setdefault("habits", "")
+    details.setdefault("habitat", "")
+    details.setdefault("lore", "")
+    details.setdefault("weakness", "")
+    details.setdefault("related_locations", [])
+    details.setdefault("related_npcs", [])
+    details.setdefault("related_creatures", [])
+    details.setdefault("name_en", item.get("name", localized_name))
+    details.setdefault("source", "内置经典内容")
+    return details
+
+
+def _normalize_default_city(item: dict) -> dict:
+    """返回默认地点的完整 details。"""
+    details = dict(item.get("details") or {})
+    for k in ("type", "status", "culture", "districts", "notable_figures", "dangers", "secret",
+              "related_locations", "related_npcs", "related_creatures"):
+        if k == "districts":
+            details.setdefault(k, [])
+        elif k.startswith("related_"):
+            details.setdefault(k, [])
+        else:
+            details.setdefault(k, "")
+    return details
+
+
+def _default_city_details(item: dict, localized_name: str) -> dict:
+    """返回默认地点的完整 details（含 name_en/source）。"""
+    details = _normalize_default_city(item)
+    details.setdefault("name_en", item.get("name", localized_name))
+    details.setdefault("source", "内置经典内容")
+    return details
+
+
+def _match_default_item(items: list[dict], default_name: str, default_name_en: str, system: str):
+    """按本地化中文名 / name_en / 系统匹配已有条目。"""
+    localized = _localize_default_name(default_name)
+    for it in items:
+        if it.get("system") != system:
+            continue
+        it_name = it.get("name", "")
+        it_en = (it.get("details") or {}).get("name_en", "")
+        if it_name == localized or it_name == default_name or _localize_default_name(it_name) == localized or it_en == default_name_en:
+            return it
+    return None
+
+
 def ensure_seeded(username: str):
-    """为指定用户写入一次内置经典生物与城市背景（幂等）。"""
+    """写入/升级内置经典生物与城市背景：新条目补充，已有旧默认条目升级缺失字段。"""
     user_dir = _user_media_dir(username)
     user_dir.mkdir(parents=True, exist_ok=True)
-    marker = user_dir / "seeded.json"
-    if marker.exists():
-        return
+    beasts = _load_meta(username, "bestiary")
+    cities = _load_meta(username, "maps")
+    deleted_beasts = _load_deleted_builtin(username, "bestiary")
+    deleted_cities = _load_deleted_builtin(username, "maps")
+
     for beast in CLASSIC_BESTIARY:
-        add_bestiary(
-            username=username,
-            name=beast["name"],
-            system=beast["system"],
-            description=beast["description"],
-            stats=beast.get("stats", {}),
-            image_path="",
-            tags=beast.get("tags", []),
-            details=beast.get("details", {}),
-        )
+        if beast["name"] in deleted_beasts:
+            continue
+        localized_name = _localize_default_name(beast["name"])
+        name_en = (beast.get("details") or {}).get("name_en", beast["name"])
+        existing = _match_default_item(beasts, localized_name, name_en, beast["system"])
+        full_stats = _normalize_default_bestiary(beast)
+        full_details = _default_bestiary_details(beast, localized_name)
+        if existing:
+            # 升级旧默认条目：只补缺失字段，不覆盖已有非空值
+            old_stats = dict(existing.get("stats") or {})
+            merged_stats = {**full_stats, **{k: v for k, v in old_stats.items() if v not in ("", None)}}
+            old_details = dict(existing.get("details") or {})
+            merged_details = {**full_details, **{k: v for k, v in old_details.items() if v not in ("", None, [])}}
+            update_bestiary(username, existing["id"], {
+                "name": localized_name,
+                "stats": merged_stats,
+                "details": merged_details,
+                "tags": existing.get("tags") or beast.get("tags", []),
+                "scenario_id": existing.get("scenario_id", ""),
+            })
+        else:
+            add_bestiary(
+                username=username,
+                name=localized_name,
+                system=beast["system"],
+                description=beast["description"],
+                stats=full_stats,
+                image_path="",
+                tags=beast.get("tags", []),
+                details=full_details,
+            )
     for city in COMMON_CITIES:
-        add_map(
-            username=username,
-            name=city["name"],
-            description=city["description"],
-            image_path="",
-            locations=city.get("locations", []),
-            system=city.get("system", "custom"),
-            details=city.get("details", {}),
-        )
-    marker.write_text("1", encoding="utf-8")
+        if city["name"] in deleted_cities:
+            continue
+        localized_name = _localize_default_name(city["name"])
+        name_en = (city.get("details") or {}).get("name_en", city["name"])
+        existing = _match_default_item(cities, localized_name, name_en, city.get("system", "custom"))
+        full_details = _default_city_details(city, localized_name)
+        if existing:
+            old_details = dict(existing.get("details") or {})
+            merged_details = {**full_details, **{k: v for k, v in old_details.items() if v not in ("", None, [])}}
+            update_map(username, existing["id"], {
+                "name": localized_name,
+                "description": city["description"],
+                "locations": existing.get("locations") or city.get("locations", []),
+                "system": city.get("system", "custom"),
+                "details": merged_details,
+                "scenario_id": existing.get("scenario_id", ""),
+            })
+        else:
+            add_map(
+                username=username,
+                name=localized_name,
+                description=city["description"],
+                image_path="",
+                locations=city.get("locations", []),
+                system=city.get("system", "custom"),
+                details=full_details,
+            )
+    (user_dir / "seeded.json").write_text("1", encoding="utf-8")
 
 
 def save_image(username: str, data: bytes, filename: str) -> str:
@@ -251,9 +380,12 @@ def sync_scenario_bestiary(username: str, scenario_id: str, creatures: list[dict
 
 def delete_map(username: str, map_id: str) -> bool:
     items = _load_meta(username, "maps")
+    removed = next((i for i in items if i["id"] == map_id), None)
     new = [i for i in items if i["id"] != map_id]
     if len(new) == len(items):
         return False
+    if removed and str(removed.get("name", "")) in _DEFAULT_CITY_NAMES:
+        _mark_deleted_builtin(username, "maps", str(removed["name"]))
     _save_meta(username, "maps", new)
     return True
 
@@ -491,9 +623,12 @@ def list_bestiary(username: str, scenario_id: str | None = None) -> list[dict]:
 
 def delete_bestiary(username: str, beast_id: str) -> bool:
     items = _load_meta(username, "bestiary")
+    removed = next((i for i in items if i["id"] == beast_id), None)
     new = [i for i in items if i["id"] != beast_id]
     if len(new) == len(items):
         return False
+    if removed and str(removed.get("name", "")) in _DEFAULT_BESTIARY_NAMES:
+        _mark_deleted_builtin(username, "bestiary", str(removed["name"]))
     _save_meta(username, "bestiary", new)
     return True
 
@@ -635,6 +770,98 @@ CLASSIC_SPELLS = [
      "casting_time": "1 动作", "range": "自身（60 尺锥形）", "components": "V、S、M（一小块水晶或玻璃锥体）", "duration": "立即",
      "classes": ["术士", "法师"],
      "description": "60 尺锥形寒流爆发，范围内生物体质豁免失败受到 8d8 寒冷伤害，成功减半。豁免失败的生物若 HP 因此归零会被冻成冰雕。升环：每高一环 +1d8。"},
+]
+
+# ── 追加更多内置经典法术 ──
+CLASSIC_SPELLS += [
+    {"name": "光亮术", "level": "0", "school": "塑能", "ritual": False,
+     "casting_time": "1 动作", "range": "触及", "components": "V、M（一只萤火虫或磷光苔藓）", "duration": "1 小时",
+     "classes": ["吟游诗人", "牧师", "法师"],
+     "description": "触及的物体发出 20 尺半径明亮光芒和额外 20 尺微光。可指定颜色；反黑暗术可以压过它。"},
+    {"name": "舞光术", "level": "0", "school": "塑能", "ritual": False,
+     "casting_time": "1 动作", "range": "120 尺", "components": "V、S、M（一点磷火或发磷光的真菌）", "duration": "专注，至多 1 分钟",
+     "classes": ["吟游诗人", "术士", "法师"],
+     "description": "在范围内创造至多四团火光，可合并或拆散，并可按你指定方向缓慢移动。"},
+    {"name": "毒液喷溅", "level": "0", "school": "咒法", "ritual": False,
+     "casting_time": "1 动作", "range": "60 尺", "components": "V、S", "duration": "立即",
+     "classes": ["德鲁伊", "术士", "邪术师", "法师"],
+     "description": "向目标喷出毒液。目标必须通过体质豁免，失败受到 1d12 毒素伤害，成功则不受伤害。升环：5 级时 2d12，11 级 3d12，17 级 4d12。"},
+    {"name": "油腻术", "level": "1", "school": "咒法", "ritual": False,
+     "casting_time": "1 动作", "range": "60 尺", "components": "V、S、M（一块猪油或黄油）", "duration": "1 分钟",
+     "classes": ["术士", "法师"],
+     "description": "以一点为中心 10 尺见方区域覆盖油脂，变为困难地形。区域内生物倒地时进行敏捷豁免，失败则倒地。"},
+    {"name": "魔法武器", "level": "1", "school": "变化", "ritual": False,
+     "casting_time": "1 附赠动作", "range": "触及", "components": "V、S", "duration": "专注，至多 1 小时",
+     "classes": ["牧师", "圣武士"],
+     "description": "触及的一件非魔法武器变为魔法武器，攻击与伤害检定获得 +1 加值。升环：4 环 +2，6 环 +3。"},
+    {"name": "侦测善恶", "level": "1", "school": "预言", "ritual": False,
+     "casting_time": "1 动作", "range": "自身", "components": "V、S", "duration": "专注，至多 10 分钟",
+     "classes": ["牧师", "圣武士"],
+     "description": "感知 30 尺内是否存在天界生物、邪魔、不死生物或强烈邪恶/善良灵光。"},
+    {"name": "脚底抹油", "level": "1", "school": "变化", "ritual": False,
+     "casting_time": "1 动作", "range": "触及", "components": "V、S、M（一滴油）", "duration": "1 小时",
+     "classes": ["吟游诗人", "术士", "法师"],
+     "description": "触及生物速度增加 30 尺。升环：每高一环可多影响一个生物。"},
+    {"name": "云雾术", "level": "1", "school": "咒法", "ritual": False,
+     "casting_time": "1 动作", "range": "120 尺", "components": "V、S", "duration": "专注，至多 1 小时",
+     "classes": ["德鲁伊", "游侠", "术士", "法师"],
+     "description": "以一点为中心 20 尺半径形成浓雾，区域重度遮蔽。强风可提前驱散。"},
+    {"name": "灼热金属", "level": "2", "school": "变化", "ritual": False,
+     "casting_time": "1 动作", "range": "60 尺", "components": "V、S、M（一块铁片）", "duration": "专注，至多 1 分钟",
+     "classes": ["德鲁伊"],
+     "description": "区域内一件金属物体变得灼热。持握者受到 2d8 火焰伤害，每回合可用动作再造成伤害。"},
+    {"name": "黑暗术", "level": "2", "school": "塑能", "ritual": False,
+     "casting_time": "1 动作", "range": "60 尺", "components": "V、M（蝙蝠粪与一滴焦油）", "duration": "专注，至多 10 分钟",
+     "classes": ["邪术师", "法师"],
+     "description": "以一点为中心 15 尺半径魔法黑暗，黑暗视觉无法看穿。光亮术无法照亮。"},
+    {"name": "蛛网术", "level": "2", "school": "咒法", "ritual": False,
+     "casting_time": "1 动作", "range": "60 尺", "components": "V、S、M（一点蛛网）", "duration": "专注，至多 1 小时",
+     "classes": ["术士", "法师"],
+     "description": "以一点为中心 20 尺立方区域布满粘稠蛛网，区域为困难地形。被困生物可用力量检定挣脱。"},
+    {"name": "次级复原术", "level": "2", "school": "防护", "ritual": False,
+     "casting_time": "1 动作", "range": "触及", "components": "V、S", "duration": "立即",
+     "classes": ["吟游诗人", "牧师", "德鲁伊"],
+     "description": "治愈疾病、中毒、麻痹、耳聋或目盲等一种状态。升环：每高一环可多治愈一个生物。"},
+    {"name": "恐惧术", "level": "3", "school": "幻术", "ritual": False,
+     "casting_time": "1 动作", "range": "自身（30 尺锥形）", "components": "V、S、M（一根白羽毛）", "duration": "专注，至多 1 分钟",
+     "classes": ["吟游诗人", "术士", "邪术师", "法师"],
+     "description": "30 尺锥形范围内生物感知豁免失败则陷入恐慌，每回合尝试逃离并投弃武器。"},
+    {"name": "加速术", "level": "3", "school": "变化", "ritual": False,
+     "casting_time": "1 动作", "range": "30 尺", "components": "V、S、M（一根甘草根）", "duration": "专注，至多 1 分钟",
+     "classes": ["术士", "法师"],
+     "description": "目标速度翻倍，AC +2，敏捷豁免优势，每回合可多进行一次动作（攻击/疾走/躲藏等）。"},
+    {"name": "解除魔法", "level": "3", "school": "防护", "ritual": False,
+     "casting_time": "1 动作", "range": "120 尺", "components": "V、S", "duration": "立即",
+     "classes": ["吟游诗人", "牧师", "德鲁伊", "圣武士", "术士", "邪术师", "法师"],
+     "description": "终止目标范围内一个生物或物体上的法术效果。对法术效果需要进行施法属性检定。"},
+    {"name": "火墙术", "level": "4", "school": "塑能", "ritual": False,
+     "casting_time": "1 动作", "range": "120 尺", "components": "V、S、M（一小块硫磺）", "duration": "专注，至多 1 分钟",
+     "classes": ["德鲁伊", "术士", "法师"],
+     "description": "创造一道 60 尺长、20 尺高的火焰之墙，穿过或位于其中者受到 5d8 火焰伤害，成功豁免减半。"},
+    {"name": "变形术", "level": "4", "school": "变化", "ritual": False,
+     "casting_time": "1 动作", "range": "60 尺", "components": "V、S、M（一根毛虫茧）", "duration": "专注，至多 1 小时",
+     "classes": ["吟游诗人", "德鲁伊", "术士", "法师"],
+     "description": "将自愿生物变为挑战等级不超过其等级/命中骰的野兽形态，获得其游戏数据。"},
+    {"name": "闪电链", "level": "5", "school": "塑能", "ritual": False,
+     "casting_time": "1 动作", "range": "150 尺", "components": "V、S、M（一根银线）", "duration": "立即",
+     "classes": ["术士", "法师"],
+     "description": "闪电击中一个目标，随后跳跃至附近至多三个目标。每次命中造成 10d8 闪电伤害。升环：每高一环 +1d8。"},
+    {"name": "传送术", "level": "7", "school": "咒法", "ritual": False,
+     "casting_time": "1 动作", "range": "10 尺", "components": "V", "duration": "立即",
+     "classes": ["吟游诗人", "术士", "法师"],
+     "description": "将自身与同伴瞬间传送到已知地点。到达陌生地点时可能偏移或发生事故。"},
+    {"name": "虹光喷射", "level": "7", "school": "塑能", "ritual": False,
+     "casting_time": "1 动作", "range": "自身（60 尺锥形）", "components": "V、S", "duration": "立即",
+     "classes": ["术士", "法师"],
+     "description": "七色光芒从手中射出，每道颜色对应不同效果（火焰、强酸、闪电、毒素、寒冷、石化、昏迷）。"},
+    {"name": "时间停止", "level": "9", "school": "变化", "ritual": False,
+     "casting_time": "1 动作", "range": "自身", "components": "V", "duration": "立即",
+     "classes": ["术士", "法师"],
+     "description": "时间为你停止，你获得 1d4+1 轮额外回合，可进行移动与动作但不能影响其他生物。"},
+    {"name": "祈愿术", "level": "9", "school": "咒法", "ritual": False,
+     "casting_time": "1 动作", "range": "自身", "components": "V", "duration": "立即",
+     "classes": ["术士", "法师"],
+     "description": "描述一个愿望，DM 可尽量满足。非标准愿望可能产生意外代价，并施法者承受压力。"},
 ]
 
 _CLASSIC_SPELL_NAMES = {s["name"] for s in CLASSIC_SPELLS}
