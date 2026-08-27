@@ -1881,8 +1881,18 @@ async def create_new_game(request: NewGameRequest):
         if not char_name or char_name.strip() in ("", "冒险者"):
             char_name = _generate_character_name(request.race, request.gender)
 
-        from backend.engine.game_systems import get_starting_gold
-        starting_gold = request.gold if request.gold is not None else get_starting_gold(request.game_system, request.char_class)
+        starting_gold = request.gold
+        if starting_gold is None:
+            from backend.engine.starting_gold import generate_starting_gold
+            starting_gold = await generate_starting_gold(
+                api_key=request.api_key,
+                model_name=request.model_name,
+                base_url=request.base_url,
+                game_system=request.game_system,
+                char_class=request.char_class,
+                outline=request.world_outline or request.world_context or "",
+                backstory=request.backstory or "",
+            )
         character = Character(
             user_id=user.id,
             name=char_name,

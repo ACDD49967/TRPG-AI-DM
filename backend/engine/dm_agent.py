@@ -2590,21 +2590,29 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
             atc = [{"id":t["id"],"type":"function","function":t["function"]} for t in tcs]
             if atc: asst["tool_calls"] = atc
             messages.append(asst)
-            invalid_tool = False
             for t in tcs:
+                tool_name = t.get("function", {}).get("name", "")
                 try:
                     args = json.loads(t["function"]["arguments"])
-                except json.JSONDecodeError:
-                    await push_event(state, "error", {
-                        "code": "TOOL_ARGS_INVALID",
-                        "msg": f"工具 {t['function'].get('name','')} 参数解析失败，已中断本轮",
+                except json.JSONDecodeError as e:
+                    # ReAct：把参数错误回传给 DM，让它修正后重试，而不是直接中断
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": t.get("id", ""),
+                        "content": f"[工具参数错误] {tool_name} 参数不是合法JSON: {e}。请修正参数后重新调用。",
                     })
-                    invalid_tool = True
-                    break
-                result = await execute_tool(t["function"]["name"], args, state)
+                    continue
+                try:
+                    result = await execute_tool(tool_name, args, state)
+                except Exception as e:
+                    # ReAct：工具执行失败也回传给 DM，让其接受报错并修改方案
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": t.get("id", ""),
+                        "content": f"[工具执行失败] {tool_name} 返回错误: {e}。请根据错误调整参数或改用其他工具。",
+                    })
+                    continue
                 messages.append({"role":"tool","tool_call_id":t["id"],"content":result})
-            if invalid_tool:
-                break
 
             # P0-1: 每次工具调用后强制场景校验——防止场景漂移
             ws = getattr(state, 'world_state', None)

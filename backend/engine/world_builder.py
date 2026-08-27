@@ -16,6 +16,7 @@ from backend.config import settings
 from backend.engine.world_state import NpcEntry, PlotFlag, LocationEntry, WorldState
 from backend.engine.game_systems import build_system_rule_block, get_system
 from backend.engine.llm_utils import strip_refusal as _strip_refusal
+from backend.engine.agent_graph import run_extraction_agent
 from backend.knowledge_base import get_knowledge_base
 
 
@@ -212,6 +213,46 @@ EXTRACT_STATE_FALLBACK_PROMPT = """你是专门从TRPG冒险大纲中抽取“�
 # ═══════════════════════════════════════════════════════════════
 # 核心函数
 # ═══════════════════════════════════════════════════════════════
+
+def _validate_extracted_state(data: dict) -> list[str]:
+    """严格校验专业AGENT提取出的结构化字段，返回错误列表。"""
+    errors: list[str] = []
+    if not isinstance(data, dict):
+        return ["提取结果不是JSON对象"]
+    for key in ("npcs", "locations", "plot_flags"):
+        val = data.get(key)
+        if val is None:
+            continue
+        if not isinstance(val, list):
+            errors.append(f"{key} 必须是数组")
+            continue
+        for i, item in enumerate(val):
+            if not isinstance(item, dict):
+                errors.append(f"{key}[{i}] 必须是对象")
+                continue
+            if key == "npcs":
+                if not str(item.get("name", "")).strip():
+                    errors.append(f"npcs[{i}] 缺少 name")
+                if item.get("level") is not None and not isinstance(item.get("level"), int):
+                    errors.append(f"npcs[{i}].level 必须是整数")
+                if item.get("ac") is not None and not isinstance(item.get("ac"), int):
+                    errors.append(f"npcs[{i}].ac 必须是整数")
+                if item.get("hp") is not None and not isinstance(item.get("hp"), int):
+                    errors.append(f"npcs[{i}].hp 必须是整数")
+                attrs = item.get("attributes")
+                if attrs is not None and not isinstance(attrs, dict):
+                    errors.append(f"npcs[{i}].attributes 必须是对象")
+            elif key == "locations":
+                if not str(item.get("name", "")).strip():
+                    errors.append(f"locations[{i}] 缺少 name")
+            elif key == "plot_flags":
+                if not str(item.get("key", "")).strip():
+                    errors.append(f"plot_flags[{i}] 缺少 key")
+                status = item.get("status")
+                if status not in (None, "未触发", "进行中", "已完成", "已失败"):
+                    errors.append(f"plot_flags[{i}].status 非法: {status}")
+    return errors
+
 
 async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
                max_tokens: int = 4000, temp: float = 0.85, timeout: float = 90.0,
@@ -541,30 +582,47 @@ async def build_world(
     print("[WorldBuilder] Step 6/6: 提取结构化世界状态...")
     if progress_callback: progress_callback("提取世界状态与NPC", 85, "正在提取NPC、旗标、地点与世界规则...")
     ws = WorldState(world_outline=outline)
-    state_data: dict = {}
+    # 使用 LangGraph 编排专业AGENT：提取 -> 严格校验 -> 错误回传修正
+    async def extract_fn():
+        result = await _llm(client, model,
+            "你是一位专门抽取TRPG角色、地点与剧情旗标的专家。只返回JSON。",
+            EXTRACT_STATE_FALLBACK_PROMPT.format(outline=outline[:20000]),
+            max_tokens=2500, temp=0.2, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
+        return _extract_json(result)
+
+    async def fix_fn(data: dict, errors: list[str]) -> dict:
+        fix_prompt = (
+            EXTRACT_STATE_FALLBACK_PROMPT.format(outline=outline[:20000])
+            + "\n\n## 上次输出\n"
+            + json.dumps(data, ensure_ascii=False)[:4000]
+            + "\n\n## 校验错误\n"
+            + "\n".join(f"- {e}" for e in errors)
+            + "\n\n请输出修正后的完整JSON。"
+        )
+        result = await _llm(client, model,
+            "你是专业TRPG字段校验员。根据错误修正JSON。只输出修正后的完整JSON。",
+            fix_prompt,
+            max_tokens=2500, temp=0.1, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
+        fixed = _extract_json(result)
+        return fixed if fixed else data
+
     try:
-        extract_result = await _llm(client, model,
-            "你是一位数据分析师。从文本中提取结构化信息。只返回JSON。",
-            EXTRACT_STATE_PROMPT.format(outline=outline[:24000]),
-            max_tokens=4000, temp=0.3, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
-        state_data = _extract_json(extract_result)
+        graph_result = await run_extraction_agent(
+            extract_fn=extract_fn,
+            validate_fn=_validate_extracted_state,
+            fix_fn=fix_fn,
+            max_retries=2,
+        )
+        state_data = graph_result.get("state_data", {})
+        errors = graph_result.get("errors", [])
+        if errors:
+            print(f"[WorldBuilder] 专业AGENT最终仍有校验错误: {errors}")
     except Exception as e:
-        print(f"[WorldBuilder] 首次结构化提取失败，已降级继续: {e}")
+        print(f"[WorldBuilder] 专业AGENT流程异常: {e}")
         state_data = {}
 
-    if not state_data or not (state_data.get("npcs") or state_data.get("locations") or state_data.get("plot_flags")):
-        print("[WorldBuilder] 首次结构化提取为空/失败，启动二次专业化提取...")
-        try:
-            fallback_result = await _llm(client, model,
-                "你是一位专门抽取TRPG角色、地点与剧情旗标的专家。只返回JSON。",
-                EXTRACT_STATE_FALLBACK_PROMPT.format(outline=outline[:20000]),
-                max_tokens=2500, temp=0.2, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
-            fallback_data = _extract_json(fallback_result)
-            if fallback_data:
-                state_data = fallback_data
-                print(f"[WorldBuilder] 二次专业化提取成功: NPC={len(fallback_data.get('npcs', []))}, 地点={len(fallback_data.get('locations', []))}, 旗标={len(fallback_data.get('plot_flags', []))}")
-        except Exception as e2:
-            print(f"[WorldBuilder] 二次专业化提取失败: {e2}")
+    if state_data:
+        print(f"[WorldBuilder] 专业AGENT提取完成: NPC={len(state_data.get('npcs', []))}, 地点={len(state_data.get('locations', []))}, 旗标={len(state_data.get('plot_flags', []))}")
 
     # 应用提取结果
     if state_data:
