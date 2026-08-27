@@ -26,6 +26,7 @@ from openai import AsyncOpenAI
 
 from backend.config import ensure_valid_api_key, settings
 from backend.engine.game_systems import detect_game_system
+from backend.engine.llm_utils import strip_refusal as _strip_refusal
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -439,7 +440,7 @@ async def generate_summary(
                     if d and d.content:
                         summary += d.content
                         token_callback(d.content)
-                summary = summary.strip()
+                summary = _strip_refusal(summary)
             else:
                 resp = await asyncio.wait_for(
                     client.chat.completions.create(

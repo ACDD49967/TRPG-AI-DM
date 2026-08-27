@@ -154,7 +154,7 @@ async def generate_world(request: WorldGenRequest):
         base_url=request.base_url or settings.LLM_BASE_URL,
     )
     summary_model = request.model_name or settings.LLM_MODEL_NAME
-    summary = await generate_summary(summary_client, summary_model, outline_text, request.description, token_callback=stream_token)
+    summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
     saved = create_scenario(
         world_outline=outline_text, world_state_json=ws_json,
         reference_script=request.description, custom_rules=request.custom_rules or "",
@@ -284,7 +284,7 @@ async def generate_world_stream(request: WorldGenRequest):
                 from backend.scenario_store import create_scenario
                 summary_client = AsyncOpenAI(api_key=api_key, base_url=request.base_url or settings.LLM_BASE_URL)
                 summary_model = request.model_name or settings.LLM_MODEL_NAME
-                summary = await generate_summary(summary_client, summary_model, outline_text, request.description)
+                summary = await generate_summary(summary_client, summary_model, outline_text, request.description, token_callback=stream_token)
                 saved = create_scenario(
                     world_outline=outline_text, world_state_json=ws_json,
                     reference_script=request.description, custom_rules=request.custom_rules or "",

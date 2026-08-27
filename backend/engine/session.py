@@ -158,6 +158,8 @@ async def sse_event_generator(
             for t in state.memory.turns
         ]
         await push_event(state, "history", {"turns": turns})
+        # consumed once: later system prompts should not keep claiming resumed
+        state.resumed = False
     else:
         try:
             await asyncio.wait_for(generate_opening_scene(state), timeout=60)

@@ -269,7 +269,7 @@ class WorldState:
 
             ws.npcs = []
             for n in data.get("npcs", []):
-                vis_data = n.pop("visibility", {})
+                vis_data = n.get("visibility") or {}
                 npc = NpcEntry(**{k: v for k, v in n.items()
                                   if k in ["name","race","role","location","attitude",
                                            "alive","appearance","personality","motivation",

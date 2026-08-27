@@ -16,6 +16,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from backend.config import ensure_valid_api_key, settings
+from backend.engine.llm_utils import strip_refusal
 from backend.engine.world_state import WorldState
 
 # 每多少轮触发一次幕后推进（deep 更频繁，lite 更省 token）
@@ -168,7 +169,7 @@ def _apply_background_beat(state: Any, ws: WorldState, beat: dict) -> dict | Non
     if status not in ALLOWED_FLAG_STATUS:
         status = "进行中"
     impact = str(beat.get("impact") or "").strip()
-    public_hint = str(beat.get("public_hint") or "").strip()
+    public_hint = str(beat.get("public_hint") or "").strip()[:120]
     affected_npcs = [str(x).strip() for x in (beat.get("affected_npcs") or []) if str(x).strip()]
     affected_locations = [str(x).strip() for x in (beat.get("affected_locations") or []) if str(x).strip()]
 
@@ -186,8 +187,12 @@ def _apply_background_beat(state: Any, ws: WorldState, beat: dict) -> dict | Non
             if existing and not existing.get("description"):
                 existing["description"] = event
             if existing:
-                existing.setdefault("related_npcs", []).extend(affected_npcs)
-                existing.setdefault("related_locations", []).extend(affected_locations)
+                for name in affected_npcs:
+                    if name not in (existing.get("related_npcs") or []):
+                        existing.setdefault("related_npcs", []).append(name)
+                for loc in affected_locations:
+                    if loc not in (existing.get("related_locations") or []):
+                        existing.setdefault("related_locations", []).append(loc)
         if impact:
             for npc_name in affected_npcs:
                 mem.add_character_impact(name=npc_name, impact=impact, event=event, turn=ws.turn_count)
@@ -287,7 +292,7 @@ async def advance_background_plot(state: Any) -> list[dict]:
             ),
             timeout=25,
         )
-        content = (resp.choices[0].message.content or "").strip()
+        content = strip_refusal(resp.choices[0].message.content or "")
     except Exception:
         return _fallback_background_plot(state)
 
@@ -320,7 +325,7 @@ def _fallback_background_plot(state: Any) -> list[dict]:
         return []
     key = target.get("key", "")
     status = "进行中" if target.get("status") == "未触发" else "进行中"
-    event = f"{key}的幕后势力继续活动"
+    event = f"{key}在暗中继续发展（第{ws.turn_count}轮）"
     beat = {
         "thread_key": key,
         "event": event,

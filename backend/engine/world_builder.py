@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 from backend.config import settings
 from backend.engine.world_state import NpcEntry, PlotFlag, LocationEntry, WorldState
 from backend.engine.game_systems import build_system_rule_block, get_system
+from backend.engine.llm_utils import strip_refusal as _strip_refusal
 from backend.knowledge_base import get_knowledge_base
 
 
@@ -211,38 +212,6 @@ EXTRACT_STATE_FALLBACK_PROMPT = """你是专门从TRPG冒险大纲中抽取“�
 # ═══════════════════════════════════════════════════════════════
 # 核心函数
 # ═══════════════════════════════════════════════════════════════
-
-_REFUSAL_MARKERS = [
-    "很抱歉，我无法", "抱歉，我无法", "我不能参与创作", "无法提供所请求",
-    "涉及未成年", "不能参与", "绝对禁止生成", "这是我不能参与创作的",
-]
-_CONTINUATION_MARKERS = [
-    "好的。以下", "好的，以下", "以下是我为你搭建", "在调整后的设定下继续",
-    "以下是我为你", "好的。", "好的，",
-]
-
-
-def _strip_refusal(text: str) -> str:
-    """去掉模型输出的拒绝对话前缀，保留其后可能出现的实际内容。
-
-    如果只有拒绝而没有实际内容，返回空字符串，由上层触发重试/降级。
-    """
-    if not text:
-        return ""
-    lowered = text
-    for marker in _REFUSAL_MARKERS:
-        idx = lowered.find(marker)
-        if idx >= 0:
-            best = None
-            for cont in _CONTINUATION_MARKERS:
-                j = lowered.find(cont, idx)
-                if j != -1 and (best is None or j < best):
-                    best = j
-            if best is not None:
-                return text[best:].strip()
-            return ""
-    return text.strip()
-
 
 async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
                max_tokens: int = 4000, temp: float = 0.85, timeout: float = 90.0,
