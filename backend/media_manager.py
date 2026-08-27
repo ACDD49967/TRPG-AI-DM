@@ -335,22 +335,34 @@ def list_maps(username: str, scenario_id: str | None = None) -> list[dict]:
     return items
 
 
-def sync_scenario_maps(username: str, scenario_id: str, locations: list[dict], system: str = "custom"):
-    """把世界状态中的常驻地点同步到该剧本的地点图鉴（幂等）。"""
+def sync_scenario_maps(username: str, scenario_id: str, locations: list, system: str = "custom"):
+    """把世界状态中的常驻地点同步到该剧本的地点图鉴（幂等）。
+
+    兼容 LocationEntry 数据类与 dict 两种输入，避免把 dataclass repr 当成地点名。
+    """
     if not scenario_id:
         return
     existing = {i.get("name") for i in list_maps(username, scenario_id)}
     for loc in locations:
-        name = str(loc.get("name", "")).strip() if isinstance(loc, dict) else str(loc).strip()
+        data = asdict(loc) if not isinstance(loc, dict) else dict(loc)
+        name = str(data.get("name", "")).strip()
         if not name or name in existing:
             continue
         add_map(
             username=username,
             name=name,
-            description=str(loc.get("description", "")) if isinstance(loc, dict) else "",
+            description=str(data.get("description", "") or ""),
             image_path="",
             locations=[],
             system=system,
+            details={
+                "type": str(data.get("type", "") or ""),
+                "status": str(data.get("status", "") or "可访问"),
+                "culture": str(data.get("culture", "") or ""),
+                "notable_figures": str(data.get("notable_figures", "") or ""),
+                "dangers": str(data.get("dangers", "") or ""),
+                "source": "剧本生成",
+            },
             scenario_id=scenario_id,
         )
         existing.add(name)

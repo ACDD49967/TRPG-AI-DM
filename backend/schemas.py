@@ -43,6 +43,7 @@ class NewGameRequest(BaseModel):
     custom_skills: list[str] = Field(default_factory=list)   # 剧本专属技能
     extra_attributes: dict[str, str] = Field(default_factory=dict)  # 额外属性
     known_spells: list[dict] = Field(default_factory=list)   # 已习得法术（名称/环位/学派/详情）
+    gold: int | None = None                                   # 起始金币（可选，缺省按职业/规则自动计算）
 
 
 class GenerateBackstoryRequest(BaseModel):

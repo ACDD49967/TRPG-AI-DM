@@ -424,7 +424,7 @@ async def generate_summary(
                         messages=[
                             {"role": "system", "content": "你是一位严谨的TRPG模组编辑，擅长写出高信息密度的中文剧本总结。"},
                             {"role": "user", "content": SUMMARY_PROMPT.format(
-                                outline=outline[:8000],
+                                outline=outline[:12000],
                                 source=source_text[:4000],
                             )},
                         ],
@@ -448,7 +448,7 @@ async def generate_summary(
                         messages=[
                             {"role": "system", "content": "你是一位严谨的TRPG模组编辑，擅长写出高信息密度的中文剧本总结。"},
                             {"role": "user", "content": SUMMARY_PROMPT.format(
-                                outline=outline[:8000],
+                                outline=outline[:12000],
                                 source=source_text[:4000],
                             )},
                         ],
@@ -580,6 +580,7 @@ async def generate_scenario_from_text(
                 "motivation": n.motivation, "secret": n.secret,
                 "relation_to_plot": n.relation_to_plot,
                 "visibility": n.visibility.to_dict() if hasattr(n.visibility, "to_dict") else {},
+                "discovered": n.discovered,
             }
             for n in world_state.npcs
         ],
@@ -588,7 +589,16 @@ async def generate_scenario_from_text(
             for f in world_state.plot_flags
         ],
         "locations": [
-            {"name": l.name, "description": l.description, "secrets": l.secrets}
+            {
+                "name": l.name, "description": l.description, "status": l.status,
+                "type": l.type, "culture": l.culture,
+                "notable_figures": l.notable_figures, "dangers": l.dangers,
+                "secrets": l.secrets, "secret_revealed": l.secret_revealed,
+                "related_locations": l.related_locations,
+                "related_npcs": l.related_npcs,
+                "related_creatures": l.related_creatures,
+                "discovered": l.discovered,
+            }
             for l in world_state.locations
         ],
         "world_rules": world_state.world_rules,

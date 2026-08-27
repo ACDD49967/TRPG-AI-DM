@@ -831,7 +831,7 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     skill = get_skill(_game_system(state))
     summary_limit = 300 if lite else skill.summary_limit
     outline_limit = 800 if lite else skill.outline_limit
-    world_state_limit = 500 if lite else 100000
+    world_state_limit = 2000 if lite else 200000
 
     summary_block = f"## 剧本总结\n{scenario_summary[:summary_limit]}" if scenario_summary else ""
     if world_state_text:
@@ -913,6 +913,13 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
         sp += f"\n\n## 世界上下文\n{wc}"
     if wsc:
         sp += f"\n\n## 世界状态精简\n{wsc}"
+    scenario_id = state.character_info.get("scenario_id", "")
+    sp += "\n\n## 当前剧本约束"
+    if scenario_id:
+        sp += f"\n- 当前剧本ID: {scenario_id}"
+    sp += "\n- 所有叙事必须严格贴合当前剧本的世界观、人物、地点、暗线与基调；不要脱离剧本自由发挥。"
+    sp += "\n- 如果玩家提及剧本中不存在的人物/地点/事件，应引导其在剧本内寻找、调查或确认引入，而不是直接凭空添加。"
+    sp += "\n- 地点/NPC/剧情信息只有在玩家通过探索、检定或剧情推进真正接触后才对玩家可见；不要一次性暴露后台设定。"
     if retrieved_chunks:
         sp += "\n\n## 检索到的设定/规则细节（按需使用，优先于你的记忆）\n"
         for item in retrieved_chunks[:3 if lite else 5]:
@@ -1787,17 +1794,31 @@ async def _exec_reveal_info(args: dict, state: GameSessionState) -> str:
     if ws is None: return "无世界状态"
     target_type = args.get("target_type",""); target_name = args.get("target_name",""); field = args.get("field",""); trigger = args.get("trigger","")
     if target_type == "npc_field":
+        npc = ws.get_npc(target_name)
+        if npc and not npc.discovered:
+            npc.discovered = True
         if ws.reveal_npc_field(target_name, field, "visible"):
+            ws.save()
             await push_event(state, "game_event", {"type":"info_revealed","description":f"对{target_name}有了新的认识"})
             return f"✅ {target_name}.{field}揭示 ({trigger})"
         return f"⚠ NPC {target_name} 不存在"
     elif target_type == "npc_all":
         npc = ws.get_npc(target_name)
         if npc:
+            npc.discovered = True
             npc.visibility = type(npc.visibility).full_reveal()
             ws.save()
             await push_event(state, "game_event", {"type":"info_revealed","description":f"{target_name}的真实面目完全揭露！"})
             return f"✅ {target_name}全部揭示"
+    elif target_type == "flag":
+        for f in ws.plot_flags:
+            if f.key != target_name:
+                continue
+            f.visible = True
+            ws.save()
+            await push_event(state, "journal_update", ws.to_player_journal())
+            return f"✅ 旗标公开: {target_name}"
+        return f"⚠ 旗标 {target_name} 不存在"
     elif target_type == "location":
         for l in ws.locations:
             if l.name != target_name:

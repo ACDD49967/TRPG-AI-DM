@@ -139,11 +139,11 @@ async def generate_world(request: WorldGenRequest):
         "npcs": [{"name":n.name,"race":n.race,"role":n.role,"location":n.location,
                    "attitude":n.attitude,"alive":n.alive,"personality":n.personality,
                    "motivation":n.motivation,"secret":n.secret,
-                   "relation_to_plot":n.relation_to_plot,"visibility":n.visibility.to_dict()}
+                   "relation_to_plot":n.relation_to_plot,"visibility":n.visibility.to_dict(),"discovered":n.discovered}
                   for n in world_state.npcs],
-        "plot_flags": [{"key":f.key,"status":f.status,"description":f.description}
+        "plot_flags": [{"key":f.key,"status":f.status,"description":f.description,"consequence":f.consequence,"visible":f.visible}
                        for f in world_state.plot_flags],
-        "locations": [{"name":l.name,"description":l.description,"secrets":l.secrets}
+        "locations": [{"name":l.name,"description":l.description,"status":l.status,"type":l.type,"culture":l.culture,"notable_figures":l.notable_figures,"dangers":l.dangers,"secrets":l.secrets,"secret_revealed":l.secret_revealed,"related_locations":l.related_locations,"related_npcs":l.related_npcs,"related_creatures":l.related_creatures,"discovered":l.discovered}
                       for l in world_state.locations],
         "world_rules": world_state.world_rules,
     }, ensure_ascii=False)
@@ -194,11 +194,9 @@ async def generate_world(request: WorldGenRequest):
             "npcs": [{"name":n.name,"race":n.race,"role":n.role,"location":n.location,
                        "attitude":n.attitude,"alive":n.alive,"personality":n.personality,
                        "motivation":n.motivation,"secret":n.secret,
-                       "relation_to_plot":n.relation_to_plot} for n in world_state.npcs],
-            "plot_flags": [{"key":f.key,"status":f.status,"description":f.description}
-                           for f in world_state.plot_flags],
-            "locations": [{"name":l.name,"description":l.description,"secrets":l.secrets}
-                          for l in world_state.locations],
+                       "relation_to_plot":n.relation_to_plot,"discovered":n.discovered} for n in world_state.npcs],
+            "plot_flags": [{"key":f.key,"status":f.status,"description":f.description,"consequence":f.consequence,"visible":f.visible} for f in world_state.plot_flags],
+            "locations": [{"name":l.name,"description":l.description,"status":l.status,"type":l.type,"culture":l.culture,"notable_figures":l.notable_figures,"dangers":l.dangers,"secrets":l.secrets,"secret_revealed":l.secret_revealed,"related_locations":l.related_locations,"related_npcs":l.related_npcs,"related_creatures":l.related_creatures,"discovered":l.discovered} for l in world_state.locations],
         }, ensure_ascii=False),
     }
 
@@ -274,10 +272,10 @@ async def generate_world_stream(request: WorldGenRequest):
                     "npcs": [{"name": n.name, "race": n.race, "role": n.role, "location": n.location,
                               "attitude": n.attitude, "alive": n.alive, "personality": n.personality,
                               "motivation": n.motivation, "secret": n.secret,
-                              "relation_to_plot": n.relation_to_plot, "visibility": n.visibility.to_dict()}
+                              "relation_to_plot": n.relation_to_plot, "visibility": n.visibility.to_dict(), "discovered": n.discovered}
                              for n in world_state.npcs],
-                    "plot_flags": [{"key": f.key, "status": f.status, "description": f.description} for f in world_state.plot_flags],
-                    "locations": [{"name": l.name, "description": l.description, "secrets": l.secrets} for l in world_state.locations],
+                    "plot_flags": [{"key": f.key, "status": f.status, "description": f.description, "consequence": f.consequence, "visible": f.visible} for f in world_state.plot_flags],
+                    "locations": [{"name": l.name, "description": l.description, "status": l.status, "type": l.type, "culture": l.culture, "notable_figures": l.notable_figures, "dangers": l.dangers, "secrets": l.secrets, "secret_revealed": l.secret_revealed, "related_locations": l.related_locations, "related_npcs": l.related_npcs, "related_creatures": l.related_creatures, "discovered": l.discovered} for l in world_state.locations],
                     "world_rules": world_state.world_rules,
                 }, ensure_ascii=False)
                 from backend.scenario_importer import generate_summary
@@ -322,9 +320,9 @@ async def generate_world_stream(request: WorldGenRequest):
                         "npcs": [{"name": n.name, "race": n.race, "role": n.role, "location": n.location,
                                   "attitude": n.attitude, "alive": n.alive, "personality": n.personality,
                                   "motivation": n.motivation, "secret": n.secret,
-                                  "relation_to_plot": n.relation_to_plot} for n in world_state.npcs],
-                        "plot_flags": [{"key": f.key, "status": f.status, "description": f.description} for f in world_state.plot_flags],
-                        "locations": [{"name": l.name, "description": l.description, "secrets": l.secrets} for l in world_state.locations],
+                                  "relation_to_plot": n.relation_to_plot, "discovered": n.discovered} for n in world_state.npcs],
+                        "plot_flags": [{"key": f.key, "status": f.status, "description": f.description, "consequence": f.consequence, "visible": f.visible} for f in world_state.plot_flags],
+                        "locations": [{"name": l.name, "description": l.description, "status": l.status, "type": l.type, "culture": l.culture, "notable_figures": l.notable_figures, "dangers": l.dangers, "secrets": l.secrets, "secret_revealed": l.secret_revealed, "related_locations": l.related_locations, "related_npcs": l.related_npcs, "related_creatures": l.related_creatures, "discovered": l.discovered} for l in world_state.locations],
                     }, ensure_ascii=False),
                 }
                 yield f"data: {json.dumps(result, ensure_ascii=False)}\n\n"
@@ -1883,6 +1881,8 @@ async def create_new_game(request: NewGameRequest):
         if not char_name or char_name.strip() in ("", "冒险者"):
             char_name = _generate_character_name(request.race, request.gender)
 
+        from backend.engine.game_systems import get_starting_gold
+        starting_gold = request.gold if request.gold is not None else get_starting_gold(request.game_system, request.char_class)
         character = Character(
             user_id=user.id,
             name=char_name,
@@ -1892,6 +1892,7 @@ async def create_new_game(request: NewGameRequest):
             level=1,
             hp=30, max_hp=30,
             mp=10, max_mp=10,
+            gold=starting_gold,
             attributes=attrs,
         )
         db.add(character)
@@ -2101,7 +2102,7 @@ async def create_new_game(request: NewGameRequest):
                                          if k in ["name","race","role","location","attitude",
                                                   "alive","personality","motivation","secret",
                                                   "relation_to_plot","notes",
-                                                  "level","ac","hp","max_hp","attributes","skills","traits","equipment","related_locations","related_npcs","related_creatures","image_path","importance"]}))
+                                                  "level","ac","hp","max_hp","attributes","skills","traits","equipment","related_locations","related_npcs","related_creatures","image_path","importance","discovered"]}))
                 for p in ws_data.get("plot_flags", []):
                     ws.plot_flags.append(PF(**{k: v for k, v in p.items()
                                                if k in ["key","status","description","consequence","visible"]}))

@@ -66,6 +66,24 @@ def get_xp_progress(xp: int, system: str = "dnd5e", level: int | None = None) ->
     }
 
 
+DND5_STARTING_GOLD = {
+    "战士": 100, "圣武士": 100, "游侠": 100, "野蛮人": 50,
+    "武僧": 10, "游荡者": 100, "吟游诗人": 100, "牧师": 50,
+    "德鲁伊": 10, "邪术师": 100, "法师": 50, "术士": 50,
+}
+
+
+def get_starting_gold(game_system: str, char_class: str = "战士") -> int:
+    """返回新角色的起始金币；优先按职业/规则系统给出合理值，而不是固定 10。"""
+    if game_system == "dnd5e":
+        return DND5_STARTING_GOLD.get(char_class, 50)
+    if game_system == "dnd4e":
+        return 100
+    if game_system == "coc":
+        return 0  # COC 用信用评级而非金币，前端不应显示金币
+    return 50
+
+
 SYSTEM_TYPES = {
     "dnd5e": {
         "id": "dnd5e",

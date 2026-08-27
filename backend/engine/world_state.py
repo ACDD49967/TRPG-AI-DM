@@ -104,6 +104,7 @@ class NpcEntry:
     related_creatures: list = field(default_factory=list)  # 关联生物/怪物名
     image_path: str = ""
     importance: str = "minor"       # major=重要NPC（完整卡） minor=简单NPC（简要卡）
+    discovered: bool = True         # 玩家是否已见过/知道该NPC；False 时不出现在玩家笔记
     visibility: NpcVisibility = field(default_factory=NpcVisibility)
 
     def to_player_view(self) -> dict:
@@ -274,7 +275,7 @@ class WorldState:
                                   if k in ["name","race","role","location","attitude",
                                            "alive","appearance","personality","motivation",
                                            "secret","relation_to_plot","notes",
-                                           "level","ac","hp","max_hp","attributes","skills","traits","equipment","related_locations","related_npcs","related_creatures","image_path","importance"]})
+                                           "level","ac","hp","max_hp","attributes","skills","traits","equipment","related_locations","related_npcs","related_creatures","image_path","importance","discovered"]})
                 npc.visibility = NpcVisibility.from_dict(vis_data)
                 ws.npcs.append(npc)
 
@@ -389,10 +390,14 @@ class WorldState:
         for k, v in kwargs.items():
             if hasattr(self.scene, k):
                 setattr(self.scene, k, v)
-        # P0-0修复：场景中出现的NPC名若不存在，自动创建默认NpcEntry
+        # P0-0修复：场景中出现的NPC名若不存在，自动创建默认NpcEntry；已存在则标记为已发现
         for npc_name in self.scene.visible_npcs_here:
-            if not self.get_npc(npc_name):
-                self.add_npc(NpcEntry(name=npc_name, role="未知身份", location=self.scene.current_location, attitude="中立"))
+            npc = self.get_npc(npc_name)
+            if npc is None:
+                self.add_npc(NpcEntry(name=npc_name, role="未知身份", location=self.scene.current_location, attitude="中立", discovered=True))
+            elif not npc.discovered:
+                npc.discovered = True
+                self._log_change(f"NPC[{npc_name}] 已发现")
         self.save()
         # P0-1修复：日志输出，方便追踪Journal数据流
         print(f"[WorldState] 场景更新: location={self.scene.current_location}, "
@@ -465,6 +470,8 @@ class WorldState:
         enemies = []
         neutrals = []
         for n in self.npcs:
+            if not getattr(n, "discovered", True):
+                continue  # 玩家尚未见过的 NPC 不暴露
             view = n.to_player_view()
             view["location"] = n.location  # 位置始终可见
             if n.attitude in ("友善", "忠诚"): allies.append(view)

@@ -545,7 +545,7 @@ async def build_world(
     try:
         extract_result = await _llm(client, model,
             "你是一位数据分析师。从文本中提取结构化信息。只返回JSON。",
-            EXTRACT_STATE_PROMPT.format(outline=outline[:16000]),
+            EXTRACT_STATE_PROMPT.format(outline=outline[:24000]),
             max_tokens=4000, temp=0.3, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
         state_data = _extract_json(extract_result)
     except Exception as e:
@@ -557,7 +557,7 @@ async def build_world(
         try:
             fallback_result = await _llm(client, model,
                 "你是一位专门抽取TRPG角色、地点与剧情旗标的专家。只返回JSON。",
-                EXTRACT_STATE_FALLBACK_PROMPT.format(outline=outline[:12000]),
+                EXTRACT_STATE_FALLBACK_PROMPT.format(outline=outline[:20000]),
                 max_tokens=2500, temp=0.2, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
             fallback_data = _extract_json(fallback_result)
             if fallback_data:
@@ -582,11 +582,13 @@ async def build_world(
                 related_npcs=n.get("related_npcs", []),
                 related_creatures=n.get("related_creatures", []),
                 importance=n.get("importance", "minor"),
+                discovered=False,
             ))
         for p in state_data.get("plot_flags", []):
             ws.plot_flags.append(PlotFlag(
                 key=p.get("key",""), status=p.get("status","未触发"),
                 description=p.get("description",""),
+                visible=False,
             ))
         for l in state_data.get("locations", []):
             ws.locations.append(LocationEntry(
@@ -597,6 +599,7 @@ async def build_world(
                 related_locations=l.get("related_locations", []),
                 related_npcs=l.get("related_npcs", []),
                 related_creatures=l.get("related_creatures", []),
+                discovered=False,
             ))
         ws.creatures = state_data.get("creatures", [])
         ws.spells = state_data.get("spells", [])
