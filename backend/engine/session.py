@@ -57,6 +57,9 @@ class GameSessionState:
     bestiary_overrides: dict[str, dict] = field(default_factory=dict, repr=False)
     city_overrides: dict[str, dict] = field(default_factory=dict, repr=False)
 
+    # 每会话串行锁：防止同一会话的多个玩家行动并发修改世界状态
+    action_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
     def check_rate_limit(self) -> bool:
         """检查距上次操作是否已超过速率限制。"""
         now = time.time()

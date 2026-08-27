@@ -569,6 +569,14 @@ class WorldState:
                     line += f" [可被玩家听闻：{e['public_hint']}]"
                 lines.append(line)
 
+        try:
+            from backend.engine.knowledge_graph import graph_to_context
+            kg = graph_to_context(self)
+            if kg:
+                lines.append("\n" + kg)
+        except Exception:
+            pass
+
         return "\n".join(lines)
 
     def to_context_compact(self) -> str:

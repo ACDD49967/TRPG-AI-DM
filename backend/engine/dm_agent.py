@@ -1286,6 +1286,11 @@ async def _exec_add_memory(args: dict, state: GameSessionState) -> str:
     return f"已记录: {fact}"
 
 
+def _safe_error_text(e: Exception) -> str:
+    """返回适合回传给LLM的安全错误信息（不含堆栈/文件路径）。"""
+    return f"{type(e).__name__}: {str(e)[:120]}"
+
+
 def _as_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -2533,6 +2538,12 @@ async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2
 
 
 async def process_player_action(state: GameSessionState, player_input: str) -> str:
+    """对外入口：串行化同一会话的玩家行动，避免并发修改世界状态。"""
+    async with state.action_lock:
+        return await _process_player_action_inner(state, player_input)
+
+
+async def _process_player_action_inner(state: GameSessionState, player_input: str) -> str:
     state.reset_abort()
     # P0-1修复（双保险）：确保WorldState始终存在，即使create_new_game漏初始化
     if getattr(state, 'world_state', None) is None:
@@ -2576,6 +2587,7 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
 
     full = ""
     suggested = False
+    error_streak = 0
     try:
         while True:
             if state.aborted:
@@ -2590,29 +2602,42 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
             atc = [{"id":t["id"],"type":"function","function":t["function"]} for t in tcs]
             if atc: asst["tool_calls"] = atc
             messages.append(asst)
+            too_many_errors = False
             for t in tcs:
                 tool_name = t.get("function", {}).get("name", "")
                 try:
                     args = json.loads(t["function"]["arguments"])
                 except json.JSONDecodeError as e:
                     # ReAct：把参数错误回传给 DM，让它修正后重试，而不是直接中断
+                    error_streak += 1
                     messages.append({
                         "role": "tool",
                         "tool_call_id": t.get("id", ""),
-                        "content": f"[工具参数错误] {tool_name} 参数不是合法JSON: {e}。请修正参数后重新调用。",
+                        "content": f"[工具参数错误] {tool_name} 参数不是合法JSON: {_safe_error_text(e)}。请修正参数后重新调用。",
                     })
+                    if error_streak >= 3:
+                        too_many_errors = True
+                        break
                     continue
                 try:
                     result = await execute_tool(tool_name, args, state)
+                    error_streak = 0
                 except Exception as e:
                     # ReAct：工具执行失败也回传给 DM，让其接受报错并修改方案
+                    error_streak += 1
                     messages.append({
                         "role": "tool",
                         "tool_call_id": t.get("id", ""),
-                        "content": f"[工具执行失败] {tool_name} 返回错误: {e}。请根据错误调整参数或改用其他工具。",
+                        "content": f"[工具执行失败] {tool_name} 返回错误: {_safe_error_text(e)}。请根据错误调整参数或改用其他工具。",
                     })
+                    if error_streak >= 3:
+                        too_many_errors = True
+                        break
                     continue
                 messages.append({"role":"tool","tool_call_id":t["id"],"content":result})
+            if too_many_errors:
+                print("[DM] 工具连续错误超过3次，停止本轮工具重试")
+                break
 
             # P0-1: 每次工具调用后强制场景校验——防止场景漂移
             ws = getattr(state, 'world_state', None)
