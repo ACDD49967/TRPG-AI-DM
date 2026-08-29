@@ -59,6 +59,9 @@ async def generate_starting_gold(
     if game_system != "dnd5e":
         # 4e/COC/custom 暂不强制 LLM，直接使用规则默认
         return fallback
+    if not (outline or "").strip() and not (backstory or "").strip():
+        # 没有剧本/背景上下文时，LLM 生成没有意义，直接使用规则默认，避免开局卡顿
+        return fallback
     try:
         api_key = ensure_valid_api_key(api_key or settings.LLM_API_KEY)
         model = model_name or settings.LLM_MODEL_NAME
@@ -79,7 +82,7 @@ async def generate_starting_gold(
                 max_tokens=300,
                 temperature=0.5,
             ),
-            timeout=45,
+            timeout=8,
         )
         gold = _extract_gold(resp.choices[0].message.content or "")
         if gold is not None and 0 <= gold <= 100000:

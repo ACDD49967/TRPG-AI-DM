@@ -17,12 +17,12 @@ export default function InputArea() {
     store.setProcessing(true); store.setChoices([]); store.setDecisionSuggestions([]);
     setInput('');
     try {
-      const r = await fetch(`/api/game/${sessionId}/action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_input: text }) });
+      const r = await fetch(`/api/game/${sessionId}/action?username=${encodeURIComponent(useGameStore.getState().status.username||'default')}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_input: text }) });
       if (!r.ok) { const e = await r.json(); store.appendNarrativeText(`⚠ ${e.detail || '发送失败'}`); store.setProcessing(false); }
     } catch { store.appendNarrativeText('⚠ 网络错误'); store.setProcessing(false); }
   };
 
-  const abort = async () => { if (!sessionId) return; try { await fetch(`/api/game/${sessionId}/abort`, { method: 'POST' }); } catch {} };
+  const abort = async () => { if (!sessionId) return; try { await fetch(`/api/game/${sessionId}/abort?username=${encodeURIComponent(useGameStore.getState().status.username||'default')}`, { method: 'POST' }); } catch {} };
 
   return (
     <div className="border-t border-gray-200 bg-white p-3">

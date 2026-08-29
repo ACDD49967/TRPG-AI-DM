@@ -115,6 +115,14 @@ export default function GameScreen() {
   };
 
   const q = (s: string) => s.toLowerCase();
+  const graphNodes = graphData?.nodes || [];
+  const graphEdges = graphData?.edges || [];
+  const graphIndex = new Map(graphNodes.map((n, i) => [n.id, i]));
+  const graphPos = graphNodes.map((_, i) => {
+    const angle = (i / Math.max(1, graphNodes.length)) * Math.PI * 2;
+    const radius = Math.min(150, 60 + Math.min(graphNodes.length, 14) * 16);
+    return { x: 200 + radius * Math.cos(angle), y: 200 + radius * Math.sin(angle) };
+  });
   const currentSid = status.scenario_id || '';
   const scopedMaps = showGlobalRef || !currentSid ? maps : maps.filter(m => m.scenario_id === currentSid);
   const scopedBestiary = showGlobalRef || !currentSid ? bestiary : bestiary.filter(b => b.scenario_id === currentSid);
@@ -963,6 +971,69 @@ export default function GameScreen() {
               </div>
               <button onClick={addDmSpell} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增法术</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 知识图谱（玩家视角，未暴露信息显示 ???） */}
+      {showGraph && (
+        <div className="fixed inset-0 z-[75] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowGraph(false)}>
+          <div className="paper-card rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="paper-title text-lg font-bold">关系图谱（玩家视角）</h3>
+              <button onClick={()=>setShowGraph(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+            </div>
+
+            <div className="flex gap-2 mb-3">
+              <input
+                value={graphQuery}
+                onChange={e=>setGraphQuery(e.target.value)}
+                onKeyDown={e=>{if(e.key==='Enter') openGraph();}}
+                placeholder="搜索节点..."
+                className="input-field text-xs flex-1"
+              />
+              <button onClick={()=>openGraph()} className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200 hover:bg-emerald-100">搜索</button>
+            </div>
+
+            <div className="border border-gray-200 rounded-xl bg-white overflow-hidden">
+              <svg viewBox="0 0 400 400" className="w-full h-auto">
+                {graphEdges.map((e, i) => {
+                  const si = graphIndex.get(e.source);
+                  const ti = graphIndex.get(e.target);
+                  if (si === undefined || ti === undefined) return null;
+                  const p1 = graphPos[si];
+                  const p2 = graphPos[ti];
+                  const mx = (p1.x + p2.x) / 2;
+                  const my = (p1.y + p2.y) / 2;
+                  const hidden = e.relation === '???';
+                  return (
+                    <g key={i}>
+                      <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={hidden ? '#d1d5db' : '#a5b4fc'} strokeWidth={hidden ? 1 : 1.5} strokeDasharray={hidden ? '4 3' : undefined} />
+                      {!hidden && (
+                        <text x={mx} y={my - 4} textAnchor="middle" fill="#9ca3af" fontSize="8">{e.relation}</text>
+                      )}
+                    </g>
+                  );
+                })}
+                {graphNodes.map((n, i) => {
+                  const p = graphPos[i];
+                  const hidden = n.label === '???';
+                  const fill = hidden ? '#f3f4f6' : n.type === 'npc' ? '#c7d2fe' : n.type === 'location' ? '#bbf7d0' : n.type === 'plot' ? '#fde68a' : '#e5e7eb';
+                  const stroke = hidden ? '#9ca3af' : '#6366f1';
+                  return (
+                    <g key={n.id} onClick={()=>{ if (!hidden) openGraph(n.id); }} className={hidden ? 'cursor-default' : 'cursor-pointer'}>
+                      <circle cx={p.x} cy={p.y} r={hidden ? 10 : 18} fill={fill} stroke={stroke} strokeWidth={hidden ? 1 : 2} />
+                      <text x={p.x} y={p.y + 4} textAnchor="middle" fontSize={hidden ? 8 : 10} fill={hidden ? '#9ca3af' : '#1f2937'} fontWeight="bold">{n.label}</text>
+                      {!hidden && n.extra && (
+                        <text x={p.x} y={p.y + 32} textAnchor="middle" fontSize="7" fill="#6b7280">{n.extra.slice(0, 14)}</text>
+                      )}
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+
+            <p className="text-[10px] text-gray-400 mt-2">灰色虚线表示存在关联但信息尚未暴露；点击已知节点可查看局部关系。</p>
           </div>
         </div>
       )}

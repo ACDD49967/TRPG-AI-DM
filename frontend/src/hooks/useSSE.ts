@@ -52,7 +52,8 @@ export function useSSE(sessionId: string | null) {
       eventSourceRef.current.close();
     }
 
-    const url = `/api/game/${sessionId}/stream?last_event_seq=${lastSeqRef.current}`;
+    const username = useGameStore.getState().status.username || 'default';
+    const url = `/api/game/${sessionId}/stream?last_event_seq=${lastSeqRef.current}&username=${encodeURIComponent(username)}`;
     const es = new EventSource(url);
     eventSourceRef.current = es;
 

@@ -78,8 +78,8 @@ RECORD_PLOT_MEMORY_TOOL = _tool("record_plot_memory",
     ["kind","title"])
 
 SUGGEST_CHOICES_TOOL = _tool("suggest_choices",
-    "玩家不知所措时给2-4个有趣的具体建议。",
-    {"options": {"type":"array","items":{"type":"string"},"minItems":2,"maxItems":4}},
+    "玩家不知所措时给2-4个有趣的具体建议。每个选项必须是简洁纯文本（不超过25字），禁止Markdown、编号、换行、引号。",
+    {"options": {"type":"array","items":{"type":"string","maxLength":25},"minItems":2,"maxItems":4}},
     ["options"])
 
 # ── 世界状态工具 ──
@@ -305,6 +305,13 @@ UPDATE_KNOWLEDGE_GRAPH_TOOL = _tool("update_knowledge_graph",
      "hint": {"type": "string", "description": "可选：提示应关注的关系类型或实体"}},
     ["text"])
 
+GET_GRAPH_PATH_TOOL = _tool("get_graph_path",
+    "查询知识图谱中两个实体之间的最短关系路径。用于确认人物如何认识、地点如何关联等。",
+    {"source": {"type": "string", "description": "起点实体名"},
+     "target": {"type": "string", "description": "终点实体名"},
+     "max_depth": {"type": "integer", "minimum": 1, "maximum": 6, "description": "最大深度，默认4"}},
+    ["source", "target"])
+
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, EQUIP_ITEM_TOOL, ADD_MEMORY_TOOL, RECORD_PLOT_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
@@ -316,5 +323,5 @@ DM_TOOLS = [
     GET_CHARACTER_STATE_TOOL, ADJUST_RESOURCE_TOOL, CAST_SPELL_TOOL,
     LEARN_SPELL_TOOL, FORGET_SPELL_TOOL, SEARCH_NPC_TOOL, ADJUST_NPC_TOOL,
     ADJUST_BESTIARY_TOOL, PROMOTE_NPC_TOOL, GET_BESTIARY_CARD_TOOL, GET_LOCATION_CARD_TOOL,
-    GET_ENTITY_GRAPH_TOOL, UPDATE_KNOWLEDGE_GRAPH_TOOL,
+    GET_ENTITY_GRAPH_TOOL, UPDATE_KNOWLEDGE_GRAPH_TOOL, GET_GRAPH_PATH_TOOL,
 ]

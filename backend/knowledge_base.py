@@ -24,13 +24,14 @@ from typing import Any
 
 from rank_bm25 import BM25Okapi
 
+from backend.config import settings
 from backend.engine.game_systems import (
     build_stat_glossary,
     build_system_rule_block,
     get_system,
 )
 from backend.scenario_importer import split_text
-from backend.engine.rag_utils import embed_text, cosine as dense_cosine
+from backend.engine.rag_utils import embed_text, cosine as dense_cosine, rerank as rag_rerank, get_provider, set_provider, model_ready, reranker_ready, sparse_embed, sparse_cosine, sparse_ready
 
 DEFAULT_KB_PATH = Path("knowledge_base/documents.json")
 
@@ -96,13 +97,35 @@ def _is_garbled(text: str) -> bool:
     return (repl + nonprint) / max(1, len(text)) > 0.2
 
 
+def _classify_query(query: str) -> str:
+    """简单查询分类：规则/实体/通用，用于动态调整三路权重。"""
+    q = query.lower()
+    rule_kw = ["规则", "检定", "dc", "豁免", "伤害", "法术", "职业", "属性", "骰", "cr", "等级", "行动", "专注", "死亡", "回合"]
+    entity_kw = ["谁", "在哪", "地点", "npc", "人物", "关系", "认识", "生物", "怪物", "boss", "城市", "地图", "线索"]
+    rule_hits = sum(1 for k in rule_kw if k in q)
+    entity_hits = sum(1 for k in entity_kw if k in q)
+    if rule_hits > entity_hits:
+        return "rule"
+    if entity_hits > rule_hits:
+        return "entity"
+    return "general"
+
+
 class KnowledgeBase:
     def __init__(self, path: str | Path = DEFAULT_KB_PATH):
         self.path = Path(path)
         self.documents: list[dict[str, Any]] = []
         self._loaded = False
-        # 稠密向量缓存：{(doc_id, chunk_index, content_md5): vector}
-        self._vec_cache: dict[tuple[str, int, str], list[float]] = {}
+        # 本地向量与模型向量分离缓存：provider -> {(doc_id, chunk_index, content_md5): vector}
+        self._vec_caches: dict[str, dict[tuple[str, int, str], list[float]]] = {
+            "local": {},
+            "bge": {},
+        }
+        # BGE-M3 稀疏向量缓存（与稠密向量同样按 provider 隔离）
+        self._sparse_caches: dict[str, dict[tuple[str, int, str], dict[str, float]]] = {
+            "local": {},
+            "bge": {},
+        }
 
     def load(self) -> "KnowledgeBase":
         if self._loaded:
@@ -167,10 +190,12 @@ class KnowledgeBase:
         tags: list[str] | None = None,
         chunk_size: int = 900,
         username: str | None = None,
+        splitter: str = "semantic",
     ) -> dict:
         self.load()
         content = _clean_content(content)
-        chunks = split_text(content, mode="naive", chunk_size=chunk_size)
+        mode = "semantic" if splitter in ("semantic", "llm") else "naive"
+        chunks = split_text(content, mode=mode, chunk_size=chunk_size)
         if not chunks:
             chunks = [content.strip()] if content.strip() else []
         doc = {
@@ -226,6 +251,21 @@ class KnowledgeBase:
             if d["id"] == doc_id and self._visible_to(d, username):
                 return d
         return None
+
+    def set_vector_mode(self, mode: str):
+        """切换本地/模型向量模式；bge 不可用时可切换但实际回退 local。"""
+        set_provider(mode)
+        self._vec_caches.setdefault(mode, {})
+        self._sparse_caches.setdefault(mode, {})
+
+    def get_vector_mode(self) -> str:
+        return get_provider()
+
+    def model_ready(self) -> bool:
+        return model_ready()
+
+    def reranker_ready(self) -> bool:
+        return reranker_ready()
 
     def retrieve(self, query: str, system: str | None = None, top_k: int = 5,
                  username: str | None = None) -> list[dict]:
@@ -285,20 +325,56 @@ class KnowledgeBase:
 
         # 稠密向量检索（本地哈希嵌入，缓存加速）
         dense_scores: list[float] = []
+        provider = get_provider()
+        cache = self._vec_caches.setdefault(provider, {})
         q_vec = embed_text(query)
         for doc, idx, chunk in candidates:
             key = (doc["id"], idx, hashlib.md5(chunk.encode("utf-8", errors="replace")).hexdigest())
-            vec = self._vec_cache.get(key)
+            vec = cache.get(key)
             if vec is None:
                 vec = embed_text(chunk)
-                self._vec_cache[key] = vec
+                cache[key] = vec
             dense_scores.append(max(0.0, dense_cosine(q_vec, vec)))
         dense_norm = _norm(dense_scores)
 
+        # BGE-M3 稀疏向量（lexical weights）参与混合检索
+        bge_sparse_norm: list[float] = []
+        sparse_on = sparse_ready()
+        if sparse_on:
+            sparse_cache = self._sparse_caches.setdefault(provider, {})
+            q_sparse = sparse_embed(query)
+            bge_sparse_scores = []
+            for doc, idx, chunk in candidates:
+                key = (doc["id"], idx, hashlib.md5(chunk.encode("utf-8", errors="replace")).hexdigest())
+                svec = sparse_cache.get(key)
+                if svec is None:
+                    svec = sparse_embed(chunk)
+                    sparse_cache[key] = svec
+                bge_sparse_scores.append(sparse_cosine(q_sparse, svec))
+            bge_sparse_norm = _norm(bge_sparse_scores)
+
+        # 查询分类动态权重：规则查询偏词法，实体查询偏语义
+        query_type = _classify_query(query) if settings.RAG_QUERY_CLASSIFY else "general"
+        if sparse_on:
+            if query_type == "rule":
+                w_dense, w_sparse, w_tfidf, w_bm25 = 0.25, 0.30, 0.20, 0.25
+            elif query_type == "entity":
+                w_dense, w_sparse, w_tfidf, w_bm25 = 0.40, 0.30, 0.15, 0.15
+            else:
+                w_dense, w_sparse, w_tfidf, w_bm25 = 0.35, 0.30, 0.20, 0.15
+        else:
+            w_sparse = 0.0
+            if query_type == "rule":
+                w_dense, w_tfidf, w_bm25 = 0.30, 0.35, 0.35
+            elif query_type == "entity":
+                w_dense, w_tfidf, w_bm25 = 0.50, 0.30, 0.20
+            else:
+                w_dense, w_tfidf, w_bm25 = 0.45, 0.30, 0.25
+
         scored = []
-        for (doc, idx, chunk), tfidf_v, bm25_v, dense_v in zip(candidates, tfidf_norm, bm25_norm, dense_norm):
-            # 0.45 稠密向量 + 0.3 TF-IDF + 0.25 BM25 三路融合
-            final = 0.45 * dense_v + 0.3 * tfidf_v + 0.25 * bm25_v
+        for i, ((doc, idx, chunk), tfidf_v, bm25_v, dense_v) in enumerate(zip(candidates, tfidf_norm, bm25_norm, dense_norm)):
+            sparse_v = bge_sparse_norm[i] if sparse_on else 0.0
+            final = w_dense * dense_v + w_sparse * sparse_v + w_tfidf * tfidf_v + w_bm25 * bm25_v
             if final > 0:
                 scored.append({
                     "doc_id": doc["id"],
@@ -311,6 +387,18 @@ class KnowledgeBase:
                 })
 
         scored.sort(key=lambda x: x["score"], reverse=True)
+
+        # 可选 BGE-reranker 重排（用户本地配置存在时才启用；否则原序）
+        pre_top = scored[:max(5, settings.RAG_RERANK_TOP_K)]
+        if pre_top:
+            reranked = rag_rerank(query, [s["text"] for s in pre_top], top_k=top_k)
+            rerank_order = {text: score for text, score in reranked}
+            if rerank_order:
+                scored = [s for s in pre_top if s["text"] in rerank_order]
+                scored.sort(key=lambda s: rerank_order.get(s["text"], 0.0), reverse=True)
+                for s in scored:
+                    s["score"] = round(rerank_order.get(s["text"], s["score"]), 4)
+
         return scored[:top_k]
 
     def seed_builtin_rules(self):

@@ -136,9 +136,9 @@ export default function PlayerJournal(){
 
   // Fallback: SSE不可用时仍做API轮询
   useEffect(()=>{
-    if(sessionId && !storeJournalData){fetch(`/api/game/${sessionId}/journal`).then(r=>r.json()).then(setJ).catch(()=>{});}
+    if(sessionId && !storeJournalData){fetch(`/api/game/${sessionId}/journal?username=${encodeURIComponent(status.username||'default')}`).then(r=>r.json()).then(setJ).catch(()=>{});}
   },[sessionId]);
-  useEffect(()=>{if(!isProcessing&&sessionId&&!storeJournalData){fetch(`/api/game/${sessionId}/journal`).then(r=>r.json()).then(setJ).catch(()=>{});}},[isProcessing,sessionId]);
+  useEffect(()=>{if(!isProcessing&&sessionId&&!storeJournalData){fetch(`/api/game/${sessionId}/journal?username=${encodeURIComponent(status.username||'default')}`).then(r=>r.json()).then(setJ).catch(()=>{});}},[isProcessing,sessionId]);
 
   // 关联地点图鉴：右侧“地点”页合并图鉴公开详情（不含秘密）
   useEffect(()=>{
@@ -152,7 +152,7 @@ export default function PlayerJournal(){
       }).catch(()=>{});
   },[status.username,status.scenario_id]);
 
-  if(!j)return null;
+  if(!j || !j.npcs) return null;
   const {npcs}=j;
 
   return (

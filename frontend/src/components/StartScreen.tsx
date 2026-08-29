@@ -135,6 +135,12 @@ export default function StartScreen(){
   const [modelOptions,setModelOptions]=useState<string[]>([]);
   const [modelFetchBusy,setModelFetchBusy]=useState(false);
   const [modelFetchErr,setModelFetchErr]=useState('');
+  const [bgeBusy,setBgeBusy]=useState<'embedding'|'reranker'|null>(null);
+  const [bgeStatus,setBgeStatus]=useState('');
+  const [bgeProgress,setBgeProgress]=useState<number|null>(null);
+  const [vectorMode,setVectorMode]=useState<'local'|'bge'>('local');
+  const [bgeDownloaded,setBgeDownloaded]=useState(false);
+  const [bgeRerankerDownloaded,setBgeRerankerDownloaded]=useState(false);
   const [modelInputMode,setModelInputMode]=useState<'select'|'manual'>('manual');
   const [thinkingStrength,setThinkingStrength]=useState<'low'|'medium'|'high'>(()=>{try{const v=JSON.parse(localStorage.getItem('dnd_thinking')||'\"medium\"');return v==='low'||v==='high'?v:'medium';}catch{return 'medium';}});
   const [endpointPresets,setEndpointPresets]=useState<Array<{name:string;baseUrl:string}>>(()=>{try{return JSON.parse(localStorage.getItem('dnd_endpoints')||'[]')}catch{return[]}});
@@ -195,7 +201,7 @@ export default function StartScreen(){
   const [cocPerInc,setCocPerInc]=useState<Record<string,number>>(()=>Object.fromEntries(COC_SKILLS.map(s=>[s,0])));
   const [cocLuck,setCocLuck]=useState<number>(()=>rollCocLuck());
   const [customAttrs,setCustomAttrs]=useState<Record<string,number>>({str:10,dex:10,con:10,int:10,wis:10,cha:10});
-  const [splitter,setSplitter]=useState<'naive'|'semantic'|'llm'>('naive');
+  const [splitter,setSplitter]=useState<'semantic'|'llm'>('semantic');
   const [chunkSize,setChunkSize]=useState(900);
   const [scenarioSummary,setScenarioSummary]=useState('');
   const [sourceChunks,setSourceChunks]=useState<string[]>([]);
@@ -244,6 +250,7 @@ export default function StartScreen(){
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState('');
   const setSession=useGameStore(s=>s.setSession);
+  const updateStatus=useGameStore(s=>s.updateStatus);
   const showToast=useToastStore(s=>s.showToast);
 
   // 自动加载已保存剧本
@@ -325,6 +332,60 @@ export default function StartScreen(){
       if(d.models?.length>0)setModelInputMode('select');
     }catch(e:unknown){setModelFetchErr(e instanceof Error?e.message:'获取模型失败');}
     finally{setModelFetchBusy(false);}
+  };
+
+  const fetchVectorMode=async()=>{
+    try{
+      const r=await fetch('/api/knowledge/vector-mode');
+      if(!r.ok)return;
+      const d=await r.json();
+      setVectorMode(d.mode==='bge' && !!d.model_ready ? 'bge' : 'local');
+      setBgeDownloaded(!!d.model_ready);
+      setBgeRerankerDownloaded(!!d.reranker_ready);
+    }catch{}
+  };
+  useEffect(()=>{fetchVectorMode();},[]);
+
+  const setVectorModeNow=async(mode:'local'|'bge')=>{
+    try{
+      await fetch('/api/knowledge/vector-mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
+      setVectorMode(mode);
+    }catch{}
+  };
+
+  const downloadBge=async(kind:'embedding'|'reranker')=>{
+    setBgeBusy(kind);setBgeStatus('');setBgeProgress(null);
+    try{
+      const r=await fetch('/api/models/download-bge/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind})});
+      if(!r.ok || !r.body){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'下载失败');}
+      const reader=r.body.getReader();
+      const decoder=new TextDecoder();
+      let buffer='';
+      while(true){
+        const {done,value}=await reader.read();
+        if(done)break;
+        buffer+=decoder.decode(value,{stream:true});
+        const events=buffer.split('\n\n');
+        buffer=events.pop()||'';
+        for(const evt of events){
+          const line=evt.split('\n').find(l=>l.startsWith('data: '));
+          if(!line)continue;
+          const data=JSON.parse(line.slice(6));
+          if(data.type==='status'){
+            setBgeStatus(data.msg || '');
+          }else if(data.type==='progress'){
+            if(typeof data.percent==='number')setBgeProgress(data.percent);
+          }else if(data.type==='complete'){
+            setBgeStatus(`${kind==='embedding'?'BGE-M3':'BGE-Reranker-base'} 下载完成`);
+            if(kind==='embedding'){setBgeDownloaded(true); setVectorModeNow('bge');}
+            if(kind==='reranker'){setBgeRerankerDownloaded(true);}
+          }else if(data.type==='error'){
+            throw new Error(data.msg||'下载失败');
+          }
+        }
+      }
+    }catch(e:unknown){setBgeStatus(`下载失败：${e instanceof Error?e.message:'未知错误'}`);}
+    finally{setBgeBusy(null);setBgeProgress(null);}
   };
 
   const pb = pointBuyConfig(gameSystem);
@@ -641,6 +702,7 @@ export default function StartScreen(){
         source:'player-note',
         tags:kbTags.split(',').map(s=>s.trim()).filter(Boolean),
         username:username||'default',
+        splitter,
       })});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'添加失败');}
       setKbTitle('');setKbContent('');setKbTags('');
@@ -659,6 +721,7 @@ export default function StartScreen(){
       fd.append('source','upload');
       fd.append('tags',kbTags);
       fd.append('username',username||'default');
+      fd.append('splitter',splitter);
       const r=await fetch('/api/knowledge/upload',{method:'POST',body:fd});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'上传失败');}
       setKbTitle('');setKbTags('');setKbUploadFile(null);
@@ -761,6 +824,7 @@ export default function StartScreen(){
         return;
       }
       const d=await r.json();
+      if(d.status) updateStatus(d.status);
       setSession(d.session_id);
     }catch(e:unknown){setError(e instanceof Error?e.message:'载入存档失败');}
   };
@@ -940,7 +1004,9 @@ export default function StartScreen(){
         })):[],
       })});
       if(!r.ok){const e=await r.json();throw new Error(e.detail||'创建失败');}
-      setSession((await r.json()).session_id);
+      const d=await r.json();
+      if(d.status) updateStatus(d.status);
+      setSession(d.session_id);
     }catch(e:unknown){setError(e instanceof Error?e.message:'未知错误');setLoading(false);}
   };
 
@@ -1035,6 +1101,7 @@ export default function StartScreen(){
               </div>
               {modelFetchErr&&<p className="text-red-500 text-[10px] mt-1">{modelFetchErr}</p>}
               {modelOptions.length>0&&<p className="text-[10px] text-gray-400 mt-1">已获取 {modelOptions.length} 个模型，可从下拉中选择。</p>}
+
             </div>
           </div>
         </div>
@@ -1665,8 +1732,7 @@ export default function StartScreen(){
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">切分方式</label>
-                    <select value={splitter} onChange={e=>setSplitter(e.target.value as 'naive'|'semantic'|'llm')} className="input-field">
-                      <option value="naive">切分器（快速）</option>
+                    <select value={splitter} onChange={e=>setSplitter(e.target.value as 'semantic'|'llm')} className="input-field">
                       <option value="semantic">语义切分（更连贯）</option>
                       <option value="llm">LLM 智能切分（更准确）</option>
                     </select>
@@ -1744,7 +1810,7 @@ export default function StartScreen(){
                     </details>
                   )}
                   {sourceChunks.length>0&&(
-                    <p className="text-[10px] text-gray-400">已切分为 {sourceChunks.length} 个片段 · 切分方式: {splitter==='llm'?'LLM 智能切分':splitter==='semantic'?'语义切分':'切分器'}</p>
+                    <p className="text-[10px] text-gray-400">已切分为 {sourceChunks.length} 个片段 · 切分方式: {splitter==='llm'?'LLM 智能切分':'语义切分'}</p>
                   )}
                   {scenarioId&&<p className="text-[10px] text-gray-400">已保存 · 可在下次游戏时直接加载</p>}
                 </div>
@@ -1839,10 +1905,6 @@ export default function StartScreen(){
               </div>
 
               <div className="bg-indigo-50/40 rounded-lg p-3 border border-indigo-100">
-                <p className="text-[10px] text-indigo-700 leading-relaxed">
-                  知识库用于 RAG 检索：游戏中的规则细节、剧本设定、玩家备注会按需被检索并注入 AI 提示词，而不是全部塞进上下文。
-                  你可以上传苹果园/克苏鲁公社的 PDF/DOCX，或直接添加文字备注。
-                </p>
               </div>
 
               <div className="grid md:grid-cols-2 gap-4">
@@ -1872,10 +1934,58 @@ export default function StartScreen(){
                     {GAME_SYSTEM_OPTIONS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
                   </select>
                   <input value={kbTags} onChange={e=>setKbTags(e.target.value)} placeholder="标签，用逗号分隔" className="input-field text-xs" />
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">切分方式</label>
+                    <select value={splitter} onChange={e=>setSplitter(e.target.value as 'semantic'|'llm')} className="input-field text-xs">
+                      <option value="semantic">语义切分（更连贯）</option>
+                      <option value="llm">LLM 智能切分（更准确）</option>
+                    </select>
+                  </div>
+                  {!bgeDownloaded && (
+                    <div className="pt-1 border-t border-gray-200 space-y-1.5">
+                      <p className="text-[10px] font-medium text-gray-500">下载向量模型（可选，点击后下载）</p>
+                      <button onClick={()=>downloadBge('embedding')} disabled={bgeBusy!==null} className="btn-secondary text-xs px-3 whitespace-nowrap">
+                        {bgeBusy==='embedding' ? '下载中...' : '下载 BGE-M3（稠密+稀疏，约2.2GB）'}
+                      </button>
+                      {bgeBusy==='embedding' && (
+                        <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          {bgeProgress!==null ? (
+                            <div className="h-full bg-emerald-500 transition-all" style={{width:`${bgeProgress}%`}} />
+                          ) : (
+                            <div className="h-full bg-emerald-500 animate-pulse" style={{width:'100%'}} />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!bgeRerankerDownloaded && (
+                    <div className="pt-1 border-t border-gray-200 space-y-1.5">
+                      <p className="text-[10px] font-medium text-gray-500">可选重排模型（增强检索精度）</p>
+                      <button onClick={()=>downloadBge('reranker')} disabled={bgeBusy!==null} className="btn-secondary text-xs px-3 whitespace-nowrap">
+                        {bgeBusy==='reranker' ? '下载中...' : '下载 BGE-Reranker-base'}
+                      </button>
+                      {bgeBusy==='reranker' && (
+                        <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div className="h-full bg-emerald-500 animate-pulse" style={{width:'100%'}} />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {bgeStatus&&<p className={`text-[10px] ${bgeStatus.startsWith('下载失败')?'text-red-500':'text-emerald-600'}`}>{bgeStatus}</p>}
                   <button onClick={()=>kbUploadFile&&uploadKb(kbUploadFile)} disabled={kbBusy || !kbUploadFile} className="w-full py-2 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium disabled:opacity-50">
                     {kbBusy?'处理中...':'上传到知识库'}
                   </button>
                 </div>
+              </div>
+
+              {/* 本地/模型向量模式切换 */}
+              <div className="bg-white rounded-lg p-3 border border-gray-200 space-y-2">
+                <p className="text-xs font-medium text-gray-700">向量检索模式</p>
+                <div className="flex gap-2">
+                  <button onClick={()=>setVectorModeNow('local')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='local'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>本地向量</button>
+                  <button onClick={()=>setVectorModeNow('bge')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='bge'?'border-emerald-400 bg-emerald-50 text-emerald-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`} disabled={!bgeDownloaded}>模型向量（BGE）</button>
+                </div>
+                <p className="text-[10px] text-gray-400">本地向量与模型向量使用独立缓存；模型未下载时“模型向量”不可用。</p>
               </div>
 
               {kbErr&&<p className="text-red-500 text-xs">{kbErr}</p>}

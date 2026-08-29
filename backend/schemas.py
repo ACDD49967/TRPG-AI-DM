@@ -105,6 +105,8 @@ class WorldGenRequest(BaseModel):
 class NewGameResponse(BaseModel):
     session_id: str
     character_id: str
+    username: str = "default"
+    status: dict = Field(default_factory=dict)
     sse_url: str
 
 

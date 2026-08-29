@@ -16,6 +16,7 @@ from backend.config import settings
 from backend.engine.world_state import NpcEntry, PlotFlag, LocationEntry, WorldState
 from backend.engine.game_systems import build_system_rule_block, get_system
 from backend.engine.llm_utils import strip_refusal as _strip_refusal
+from backend.engine.prompt_guard import extract_json_object, sanitize_user_text
 from backend.engine.agent_graph import run_extraction_agent
 from backend.knowledge_base import get_knowledge_base
 
@@ -255,12 +256,16 @@ def _validate_extracted_state(data: dict) -> list[str]:
 
 
 async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
-               max_tokens: int = 4000, temp: float = 0.85, timeout: float = 90.0,
+               max_tokens: int = 4000, temp: float = 0.85, timeout: float = 180.0,
                thinking_strength: str = "medium", token_callback=None) -> str:
-    """单次LLM调用，带超时保护与重试；第二次自动提高 max_tokens 以兼容推理模型。
+    """单次LLM调用，统一使用流式输出。
 
-    token_callback 不为 None 时使用流式输出，把每个增量文本实时回调给调用方。
+    流式模式下超时只作用于“等待首个响应头”，不会在模型长文本生成中途掐断，
+    从而大幅减少长剧本/推理模型场景下的 Request timed out。
     """
+    from backend.engine.prompt_guard import with_json_instruction
+    if "JSON" in system or "JSON" in user:
+        system = with_json_instruction(system)
     import asyncio
     mult = 1.8 if thinking_strength == "high" else (0.6 if thinking_strength == "low" else 1.0)
     max_tokens = min(8000, int(max_tokens * mult))
@@ -268,49 +273,34 @@ async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
     for attempt in range(1, 3):
         current_max_tokens = max_tokens if attempt == 1 else min(max(max_tokens * 2, 8000), 8000)
         try:
-            if token_callback is not None:
-                stream = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=model,
-                        messages=[{"role":"system","content":system},{"role":"user","content":user}],
-                        max_tokens=current_max_tokens, temperature=temp, stream=True),
-                    timeout=timeout,
-                )
-                content = ""
-                last_chunk = None
-                async for chunk in stream:
-                    last_chunk = chunk
-                    d = chunk.choices[0].delta if chunk.choices else None
-                    if d and d.content:
-                        content += d.content
-                        token_callback(d.content)
-                content = _strip_refusal(content)
-                if content:
-                    return content
-                reasoning = ""
-                if last_chunk is not None and last_chunk.choices:
-                    delta = getattr(last_chunk.choices[0], "delta", None)
-                    reasoning = getattr(delta, "reasoning_content", None) if delta is not None else None
-                print(f"[WorldBuilder] LLM流式调用第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
-                raise RuntimeError("空响应")
-            resp = await asyncio.wait_for(
+            stream = await asyncio.wait_for(
                 client.chat.completions.create(
                     model=model,
                     messages=[{"role":"system","content":system},{"role":"user","content":user}],
-                    max_tokens=current_max_tokens, temperature=temp),
+                    max_tokens=current_max_tokens, temperature=temp, stream=True),
                 timeout=timeout,
             )
-            content = resp.choices[0].message.content
-            content = _strip_refusal(content or "")
+            content = ""
+            last_chunk = None
+            async for chunk in stream:
+                last_chunk = chunk
+                d = chunk.choices[0].delta if chunk.choices else None
+                if d and d.content:
+                    content += d.content
+                    if token_callback is not None:
+                        token_callback(d.content)
+            content = _strip_refusal(content)
             if content:
                 return content
-            # DeepSeek 等推理模型可能把 token 全花在 reasoning_content 上，导致 content 为空
-            reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
-            print(f"[WorldBuilder] LLM调用第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
+            reasoning = ""
+            if last_chunk is not None and last_chunk.choices:
+                delta = getattr(last_chunk.choices[0], "delta", None)
+                reasoning = getattr(delta, "reasoning_content", None) if delta is not None else None
+            print(f"[WorldBuilder] LLM流式调用第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
             raise RuntimeError("空响应")
-        except asyncio.TimeoutError as e:
-            last_err = f"超时({timeout}s)"
-            print(f"[WorldBuilder] LLM调用第{attempt}次超时({timeout}s)")
+        except asyncio.TimeoutError:
+            last_err = f"超时({timeout}s，等待首个响应)"
+            print(f"[WorldBuilder] LLM调用第{attempt}次超时({timeout}s，等待首个响应)")
         except Exception as e:
             last_err = str(e)
             print(f"[WorldBuilder] LLM调用第{attempt}次失败: {e}")
@@ -378,31 +368,8 @@ def _dedupe_headings(text: str) -> str:
 
 
 def _extract_json(text: str) -> dict:
-    """从可能含有markdown包裹的文本中提取JSON。"""
-    t = text.strip()
-    if t.startswith("```"):
-        lines = t.split("\n")
-        t = "\n".join(lines[1:])
-        if t.endswith("```"): t = t[:-3]
-        t = t.strip()
-    # 尝试找到第一个{和最后一个}
-    start = t.find("{")
-    end = t.rfind("}")
-    if start >= 0 and end > start:
-        t = t[start:end+1]
-    try:
-        data = json.loads(t)
-    except Exception:
-        # LLM 输出 JSON 有轻微语法问题时，用 json_repair 自动修复
-        try:
-            from json_repair import repair_json
-            t = repair_json(t, return_objects=False)
-            data = json.loads(t)
-        except Exception:
-            raise
-    if not isinstance(data, dict):
-        raise json.JSONDecodeError("JSON must be an object", t, 0)
-    return data
+    """从可能含有markdown包裹的文本中提取JSON（统一走 prompt_guard 修复逻辑）。"""
+    return extract_json_object(text)
 
 
 async def build_world(
@@ -433,6 +400,16 @@ async def build_world(
     if not model:
         raise ValueError("请提供模型名称")
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+    # 提示注入防护：清洗所有用户可控文本后再送入 LLM
+    player_input = sanitize_user_text(player_input)
+    reference_script = sanitize_user_text(reference_script)
+    custom_rules = sanitize_user_text(custom_rules)
+    custom_classes = [sanitize_user_text(x) for x in (custom_classes or []) if sanitize_user_text(x)]
+    custom_skills = [sanitize_user_text(x) for x in (custom_skills or []) if sanitize_user_text(x)]
+    if extra_attributes:
+        extra_attributes = {str(k): sanitize_user_text(str(v)) for k, v in extra_attributes.items()}
+
     # P2修复：为世界生成增加宽松的评分基线，避免无限修订循环
 
     ref = f"\n## 参考剧本\n{reference_script}" if reference_script.strip() else ""
@@ -462,7 +439,7 @@ async def build_world(
     step1 = await _llm(client, model,
         "你是一位获奖奇幻小说家。创作深刻、独特的世界观。",
         _with_knowledge(STEP1_CONFLICT.format(style_directive=style_directive, player_input=pi, reference=ref), "世界观 冲突 势力 阵营 魔法 社会", game_system, 3, username),
-        max_tokens=3000, temp=0.9, timeout=60, thinking_strength=thinking_strength, token_callback=token_callback)
+        max_tokens=3000, temp=0.9, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
     if not step1:
         raise RuntimeError("世界生成失败：模型调用多次超时，请检查模型/网络后重试")
 
@@ -472,7 +449,7 @@ async def build_world(
     step2 = await _llm(client, model,
         "你是一位TRPG冒险设计师。设计引人入胜的三幕结构。",
         _with_knowledge(STEP2_PLOT.format(style_directive=style_directive, world_context=step1), "三幕结构 剧情节点 转折 结局", game_system, 3, username),
-        max_tokens=4000, temp=0.85, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
+        max_tokens=4000, temp=0.85, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
     if not step2:
         step2 = "主线采用经典三幕结构：第一幕引入冲突，第二幕遭遇转折与背叛，第三幕迎来高潮与结局。具体情节建议结合世界观继续细化。"
 
@@ -482,7 +459,7 @@ async def build_world(
     step3 = await _llm(client, model,
         "你是一位角色设计大师。创造有深度的NPC网络。",
         _with_knowledge(STEP3_NPC.format(style_directive=style_directive, world_context=step1, plot_context=step2), "NPC 反派 动机 支线 关系", game_system, 3, username),
-        max_tokens=3500, temp=0.9, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
+        max_tokens=3500, temp=0.9, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
     if not step3:
         step3 = "关键NPC网络：围绕核心冲突设置至少五名角色，包含盟友、对手与隐藏敌意的中立者，并安排两条与主线隐性关联的支线。"
 
@@ -492,7 +469,7 @@ async def build_world(
     step4 = await _llm(client, model,
         "你是一位TRPG遭遇设计师。设计挑战与秘密。",
         _with_knowledge(STEP4_ENCOUNTERS.format(style_directive=style_directive, world_context=step1, plot_context=step2, npc_context=step3), "遭遇 战斗 陷阱 魔法物品 秘密", game_system, 3, username),
-        max_tokens=3500, temp=0.85, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
+        max_tokens=3500, temp=0.85, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
     if not step4:
         step4 = "遭遇与隐藏内容：设计五场类型各异的遭遇（战斗、社交、探索、陷阱），三处秘密区域，以及一件带有背景故事的独特宝物。"
 
@@ -503,7 +480,7 @@ async def build_world(
     merge_result = await _llm(client, model,
         "你是一位TRPG模组主编。诚实评分，合理打分，不要过分苛刻。",
         MERGE_PROMPT.format(style_directive=style_directive, step1=step1, step2=step2, step3=step3, step4=step4),
-        max_tokens=5000, temp=0.4, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
+        max_tokens=5000, temp=0.4, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
 
     try:
         scored = _extract_json(merge_result)
@@ -537,7 +514,7 @@ async def build_world(
                     "issues": scored.get("issues", []),
                     "suggestions": scored.get("suggestions", []),
                 }, ensure_ascii=False)),
-            max_tokens=6000, temp=0.5, timeout=120, thinking_strength=thinking_strength, token_callback=token_callback)
+            max_tokens=6000, temp=0.5, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
 
         try:
             rev_data = _extract_json(rev_result)
@@ -553,7 +530,7 @@ async def build_world(
         rescore = await _llm(client, model,
             "你是一位公平的TRPG模组评委。诚实评价，不过分苛刻也不故意放水。",
             f"新大纲:\n{outline[:4000]}\n\n请输出JSON: {{\"total_score\":数字(0-100)}}",
-            max_tokens=1200, temp=0.3, timeout=60, thinking_strength=thinking_strength, token_callback=token_callback)
+            max_tokens=1200, temp=0.3, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
         try:
             rescore_data = _extract_json(rescore)
             new_score = rescore_data.get("total_score", score)
@@ -587,8 +564,13 @@ async def build_world(
         result = await _llm(client, model,
             "你是一位专门抽取TRPG角色、地点与剧情旗标的专家。只返回JSON。",
             EXTRACT_STATE_FALLBACK_PROMPT.format(outline=outline[:20000]),
-            max_tokens=2500, temp=0.2, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
-        return _extract_json(result)
+            max_tokens=2500, temp=0.2, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+        if not result:
+            return {"npcs": [], "locations": [], "plot_flags": [], "world_rules": ""}
+        try:
+            return _extract_json(result)
+        except Exception:
+            return {"npcs": [], "locations": [], "plot_flags": [], "world_rules": ""}
 
     async def fix_fn(data: dict, errors: list[str]) -> dict:
         fix_prompt = (
@@ -602,8 +584,13 @@ async def build_world(
         result = await _llm(client, model,
             "你是专业TRPG字段校验员。根据错误修正JSON。只输出修正后的完整JSON。",
             fix_prompt,
-            max_tokens=2500, temp=0.1, timeout=90, thinking_strength=thinking_strength, token_callback=token_callback)
-        fixed = _extract_json(result)
+            max_tokens=2500, temp=0.1, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+        if not result:
+            return data
+        try:
+            fixed = _extract_json(result)
+        except Exception:
+            return data
         return fixed if fixed else data
 
     try:

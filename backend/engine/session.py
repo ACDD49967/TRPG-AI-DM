@@ -165,7 +165,7 @@ async def sse_event_generator(
         state.resumed = False
     else:
         try:
-            await asyncio.wait_for(generate_opening_scene(state), timeout=60)
+            await asyncio.wait_for(generate_opening_scene(state), timeout=20)
         except Exception:
             await push_narrative_token(state, f"欢迎，{state.character_name}。冒险开始了…")
 

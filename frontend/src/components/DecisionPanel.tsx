@@ -12,7 +12,7 @@ export default function DecisionPanel() {
     if (!sessionId || store.isProcessing) return;
     store.appendNarrativeText(`你说：${s}`); store.setProcessing(true); store.setDecisionSuggestions([]);
     try {
-      const r = await fetch(`/api/game/${sessionId}/action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_input: s }) });
+      const r = await fetch(`/api/game/${sessionId}/action?username=${encodeURIComponent(useGameStore.getState().status.username||'default')}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_input: s }) });
       if (!r.ok) { const e = await r.json(); store.appendNarrativeText(`错误：${e.detail}`); store.setProcessing(false); }
     } catch { store.appendNarrativeText('错误：网络错误'); store.setProcessing(false); }
   };

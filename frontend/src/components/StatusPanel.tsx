@@ -34,7 +34,7 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
     const name = itemName(it);
     const equipped = !isEquipped(it);
     try {
-      await fetch(`/api/game/${sessionId}/equip`, {
+      await fetch(`/api/game/${sessionId}/equip?username=${encodeURIComponent(status.username||'default')}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, equipped }),

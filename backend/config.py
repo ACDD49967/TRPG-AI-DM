@@ -49,6 +49,23 @@ class Settings:
         "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
     ).split(",")
 
+    # ── 可选 RAG 向量/重排模型（默认关闭，不会自动下载）──
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")  # local | bge
+    BGE_MODEL_PATH: str = os.getenv("BGE_MODEL_PATH", "models/bge-m3-q4_k_m.gguf")
+    BGE_M3_DIR: str = os.getenv("BGE_M3_DIR", "models/bge-m3")
+    BGE_M3_REPO: str = os.getenv("BGE_M3_REPO", "BAAI/bge-m3")
+    BGE_RERANKER_PATH: str = os.getenv("BGE_RERANKER_PATH", "models/bge-reranker-base")
+    BGE_MODEL_DOWNLOAD_URL: str = os.getenv(
+        "BGE_MODEL_DOWNLOAD_URL",
+        "https://huggingface.co/Infini-Model/BGE-M3-GGUF/resolve/main/bge-m3-q4_k_m.gguf",
+    )
+    BGE_RERANKER_REPO: str = os.getenv("BGE_RERANKER_REPO", "BAAI/bge-reranker-base")
+    RAG_RERANK_TOP_K: int = int(os.getenv("RAG_RERANK_TOP_K", "20"))
+    RAG_QUERY_CLASSIFY: bool = os.getenv("RAG_QUERY_CLASSIFY", "true").lower() in ("1", "true", "yes")
+
+    # ── 可选 PostgreSQL / pgvector ──
+    ENABLE_PGVECTOR: bool = os.getenv("ENABLE_PGVECTOR", "false").lower() in ("1", "true", "yes")
+
     # ── 游戏设置 ──
     MAX_ACTIVE_CONTEXT_ROUNDS: int = int(os.getenv("MAX_ACTIVE_CONTEXT_ROUNDS", "10"))
     SUMMARY_TRIGGER_ROUNDS: int = int(os.getenv("SUMMARY_TRIGGER_ROUNDS", "8"))

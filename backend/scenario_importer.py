@@ -27,6 +27,7 @@ from openai import AsyncOpenAI
 from backend.config import ensure_valid_api_key, settings
 from backend.engine.game_systems import detect_game_system
 from backend.engine.rag_utils import embed_text, cosine as dense_cosine
+from backend.engine.prompt_guard import extract_json_array, sanitize_user_text
 from backend.engine.llm_utils import strip_refusal as _strip_refusal
 
 
@@ -237,10 +238,14 @@ def split_text_semantic(
 
     # 先按段落粗分，段内再按句子切，保留标点
     raw_sentences: list[str] = []
+    TITLE_BREAK = "\u0000TITLE_BREAK\u0000"
     for para in re.split(r"\n\s*\n", text):
         para = para.strip()
         if not para:
             continue
+        # Markdown 标题强制作为切分边界
+        if para.startswith("#"):
+            raw_sentences.append(TITLE_BREAK)
         sentences = re.split(r"(?<=[。！？；;])|(?<=[.!?])\s+|\n", para)
         for s in sentences:
             s = s.strip()
@@ -263,6 +268,9 @@ def split_text_semantic(
         current_count = 0
 
     for sent in raw_sentences:
+        if sent == TITLE_BREAK:
+            flush()
+            continue
         emb = embed_text(sent)
         if current and current_len >= min_chunk_size and current_emb:
             mean = [v / current_count for v in current_emb]
@@ -329,20 +337,26 @@ async def llm_split_text(
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
     if progress_callback:
         progress_callback("LLM 智能切分", 5, "正在调用 LLM 划分语义片段...")
+    text = sanitize_user_text(text)
     try:
         mult = 1.8 if thinking_strength == "high" else (0.6 if thinking_strength == "low" else 1.0)
         max_tokens = min(8000, int(4000 * mult))
-        resp = await asyncio.wait_for(
+        # 统一流式：超时只等待首个响应头，避免长文本生成中途被掐断
+        stream = await asyncio.wait_for(
             client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": LLM_SPLIT_PROMPT.format(text=text[:24000])}],
-                max_tokens=max_tokens, temperature=0.3,
+                max_tokens=max_tokens, temperature=0.3, stream=True,
             ),
             timeout=120,
         )
-        content = (resp.choices[0].message.content or "").strip()
-        content = content.replace("```json", "").replace("```", "").strip()
-        data = json.loads(content)
+        content = ""
+        async for chunk in stream:
+            d = chunk.choices[0].delta if chunk.choices else None
+            if d and d.content:
+                content += d.content
+        content = content.strip()
+        data = extract_json_array(content)
         if isinstance(data, list):
             chunks = [str(x.get("content") if isinstance(x, dict) else x).strip() for x in data if str(x.get("content") if isinstance(x, dict) else x).strip()]
             if chunks:
@@ -424,59 +438,41 @@ async def generate_summary(
 ) -> str:
     """调用 LLM 生成剧本总结；失败时使用结构化降级摘要，而不是简单截断。"""
     import asyncio
+    source_text = sanitize_user_text(source_text)
     last_err = None
     for attempt in range(1, 3):
         current_max_tokens = 2000 if attempt == 1 else 4000
         try:
-            if token_callback is not None:
-                stream = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": "你是一位严谨的TRPG模组编辑，擅长写出高信息密度的中文剧本总结。"},
-                            {"role": "user", "content": SUMMARY_PROMPT.format(
-                                outline=outline[:12000],
-                                source=source_text[:4000],
-                            )},
-                        ],
-                        max_tokens=current_max_tokens,
-                        temperature=0.4,
-                        stream=True,
-                    ),
-                    timeout=60,
-                )
-                summary = ""
-                async for chunk in stream:
-                    d = chunk.choices[0].delta if chunk.choices else None
-                    if d and d.content:
-                        summary += d.content
+            # 统一流式：超时只等待首个响应头，不会在长文本生成中途掐断
+            stream = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "你是一位严谨的TRPG模组编辑，擅长写出高信息密度的中文剧本总结。"},
+                        {"role": "user", "content": SUMMARY_PROMPT.format(
+                            outline=outline[:12000],
+                            source=source_text[:4000],
+                        )},
+                    ],
+                    max_tokens=current_max_tokens,
+                    temperature=0.4,
+                    stream=True,
+                ),
+                timeout=120,
+            )
+            summary = ""
+            async for chunk in stream:
+                d = chunk.choices[0].delta if chunk.choices else None
+                if d and d.content:
+                    summary += d.content
+                    if token_callback is not None:
                         token_callback(d.content)
-                summary = _strip_refusal(summary)
-            else:
-                resp = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": "你是一位严谨的TRPG模组编辑，擅长写出高信息密度的中文剧本总结。"},
-                            {"role": "user", "content": SUMMARY_PROMPT.format(
-                                outline=outline[:12000],
-                                source=source_text[:4000],
-                            )},
-                        ],
-                        max_tokens=current_max_tokens,
-                        temperature=0.4,
-                    ),
-                    timeout=60,
-                )
-                summary = (resp.choices[0].message.content or "").strip()
+            summary = _strip_refusal(summary)
             if len(summary) > max_chars * 1.4:
                 summary = summary[:max_chars]
             if summary:
                 return summary
-            reasoning = ""
-            if token_callback is None:
-                reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
-            print(f"[ScenarioImporter] 总结生成第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
+            print(f"[ScenarioImporter] 总结生成第{attempt}次空响应 (max_tokens={current_max_tokens})")
             raise RuntimeError("空响应")
         except Exception as e:
             last_err = str(e)
@@ -520,6 +516,7 @@ async def generate_scenario_from_text(
     from backend.engine.world_builder import build_world
     from backend.scenario_store import create_scenario
 
+    source_text = sanitize_user_text(source_text)
     api_key = api_key or settings.LLM_API_KEY
     base_url = base_url or settings.LLM_BASE_URL
     model = model_name or settings.LLM_MODEL_NAME

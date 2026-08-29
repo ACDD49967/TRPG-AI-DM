@@ -16,6 +16,7 @@ import random, re
 from backend.config import ensure_valid_api_key, settings
 from backend.database import get_db, init_db
 from backend.engine.dm_agent import process_player_action
+from backend.engine.prompt_guard import extract_json_array, extract_json_object, sanitize_user_text
 from backend.engine.world_state import WorldState
 from backend.engine.session import (
     GameSessionState,
@@ -632,11 +633,12 @@ async def add_knowledge(payload: dict):
     source = str(payload.get("source") or "user")
     tags = payload.get("tags") or []
     username = str(payload.get("username") or "default")
+    splitter = str(payload.get("splitter") or "semantic")
     if not content.strip():
         raise HTTPException(status_code=400, detail="内容不能为空")
     doc = get_knowledge_base().add_document(
         title=title, content=content, source=source, system=system, tags=tags,
-        username=username,
+        username=username, splitter=splitter,
     )
     return {"doc": doc}
 
@@ -649,6 +651,7 @@ async def upload_knowledge(
     source: str = Form("user"),
     tags: str = Form(""),
     username: str = Form("default"),
+    splitter: str = Form("semantic"),
 ):
     """上传 PDF/DOCX/TXT/MD 到知识库（按用户名隔离）。"""
     from backend.knowledge_base import get_knowledge_base
@@ -667,7 +670,7 @@ async def upload_knowledge(
         source=source,
         system=system,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
-        username=username,
+        username=username, splitter=splitter,
     )
     return {"doc": doc}
 
@@ -754,10 +757,9 @@ async def knowledge_llm_process(payload: dict):
             )
             text = (resp.choices[0].message.content or "").strip().replace("```json", "").replace("```", "").strip()
             try:
-                completed = json.loads(text)
+                completed = extract_json_object(text)
             except Exception:
-                from json_repair import repair_json
-                completed = json.loads(repair_json(text, return_objects=False))
+                completed = {}
             if isinstance(completed, dict):
                 merged = {**item, **completed}
                 if kind == "creatures":
@@ -770,7 +772,7 @@ async def knowledge_llm_process(payload: dict):
 
     for doc in docs:
         full = kb.get_document(doc["id"], username)
-        content = (full or {}).get("content", "") or ""
+        content = sanitize_user_text((full or {}).get("content", "") or "")
         if len(content) < 200:
             continue
         prompt = (
@@ -787,10 +789,9 @@ async def knowledge_llm_process(payload: dict):
             )
             text = (resp.choices[0].message.content or "").strip().replace("```json", "").replace("```", "").strip()
             try:
-                data = json.loads(text)
+                data = extract_json_object(text)
             except Exception:
-                from json_repair import repair_json
-                data = json.loads(repair_json(text, return_objects=False))
+                continue
             if not isinstance(data, dict):
                 continue
             for loc in data.get("locations") or []:
@@ -826,6 +827,24 @@ async def knowledge_llm_process(payload: dict):
             continue
 
     return {"locations": counts["locations"], "creatures": counts["creatures"], "spells": counts["spells"]}
+
+
+@app.get("/api/knowledge/vector-mode")
+async def get_knowledge_vector_mode():
+    from backend.knowledge_base import get_knowledge_base
+    kb = get_knowledge_base()
+    return {"mode": kb.get_vector_mode(), "model_ready": kb.model_ready(), "reranker_ready": kb.reranker_ready()}
+
+
+@app.post("/api/knowledge/vector-mode")
+async def set_knowledge_vector_mode(payload: dict):
+    from backend.knowledge_base import get_knowledge_base
+    mode = str(payload.get("mode") or "local")
+    if mode not in ("local", "bge"):
+        raise HTTPException(status_code=400, detail="mode 仅支持 local 或 bge")
+    kb = get_knowledge_base()
+    kb.set_vector_mode(mode)
+    return {"mode": kb.get_vector_mode(), "model_ready": kb.model_ready(), "reranker_ready": kb.reranker_ready()}
 
 
 @app.post("/api/knowledge/seed")
@@ -890,6 +909,7 @@ JSON 格式：
   "content": "扩展包具体内容：新增规则、职业/调查员能力、物品、NPC、事件、特殊机制等，Markdown 格式，300-800字",
   "tags": ["标签1", "标签2"]
 }}"""
+    prompt = sanitize_user_text(prompt)
     try:
         resp = await client.chat.completions.create(
             model=model,
@@ -906,13 +926,10 @@ JSON 格式：
             if text.endswith("```"):
                 text = text[:-3]
             text = text.strip()
-        import json as _json
         try:
-            data = _json.loads(text)
+            data = extract_json_object(text)
         except Exception:
-            from json_repair import repair_json
-            text = repair_json(text, return_objects=False)
-            data = _json.loads(text)
+            raise HTTPException(status_code=502, detail="扩展包生成返回的不是合法JSON")
         ext = add_extension(
             username=username,
             name=str(data.get("name") or "LLM生成扩展包"),
@@ -941,13 +958,19 @@ async def list_saves_api(username: str = "default"):
     return {"saves": list_saves(username)}
 
 
+def _get_session_for_user(session_id: str, username: str = "default"):
+    """按会话归属校验并返回状态；不存在/非归属返回 404。"""
+    state = session_manager.get_session(session_id)
+    if state is None or state.username != (username or "default"):
+        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+    return state
+
+
 @app.post("/api/game/{session_id}/save")
-async def manual_save_api(session_id: str, payload: dict):
+async def manual_save_api(session_id: str, payload: dict, username: str = "default"):
     """手动存档当前会话。"""
     from backend.save_manager import create_save
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    state = _get_session_for_user(session_id, username)
     save = create_save(state, label=str(payload.get("label") or "手动存档"), auto=False)
     return {"save": save}
 
@@ -997,9 +1020,32 @@ async def load_save_api(payload: dict):
             state.memory.add_world_fact(fact)
     except Exception:
         pass
+    # 返回可直接用于前端状态恢复的 status（含正确 username 与 camelCase 字段）
+    _ci = state.character_info or {}
+    _status_keys = [
+        "hp", "max_hp", "mp", "max_mp", "xp", "gold", "level", "ac", "inventory", "attributes",
+        "character_name", "race", "char_class", "gender", "game_system", "username",
+        "character_image", "scenario_id", "backstory", "skill_proficiencies", "skills", "saves",
+        "passive_perception", "feats", "custom_classes", "custom_skills", "extra_attributes",
+        "race_traits", "class_proficiencies", "hit_die", "san", "max_san", "luck",
+        "healing_surges", "max_healing_surges", "surge_value", "speed", "proficiency_bonus",
+        "spell_slots", "class_resources", "known_spells", "action_points", "fortitude",
+        "reflex", "will", "damage_bonus", "build",
+    ]
+    status = {k: _ci.get(k) for k in _status_keys if k in _ci}
+    status["username"] = state.username or "default"
+    status["character_name"] = state.character_name or status.get("character_name", "")
+    # 兼容后端历史格式：inventory 可能是 {"items":[...]}，前端需要数组
+    if isinstance(status.get("inventory"), dict):
+        status["inventory"] = status["inventory"].get("items") or []
+    for snake, camel in (("max_hp", "maxHp"), ("max_mp", "maxMp"), ("max_san", "maxSan")):
+        if snake in status:
+            status[camel] = status.pop(snake)
     return {
         "session_id": session_id,
         "character_id": state.character_id,
+        "username": state.username or "default",
+        "status": status,
         "sse_url": f"/api/game/{session_id}/stream",
     }
 
@@ -1137,11 +1183,9 @@ async def delete_spell_api(spell_id: str, username: str = "default"):
 
 
 @app.post("/api/game/{session_id}/translate-srd")
-async def translate_srd_spells_api(session_id: str, payload: dict):
+async def translate_srd_spells_api(session_id: str, payload: dict, username: str = "default"):
     """使用当前会话的 LLM 配置，批量机翻 SRD 法术为简体中文（名称+描述）。"""
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    state = _get_session_for_user(session_id, username)
     try:
         api_key = ensure_valid_api_key(state.api_key)
     except ValueError as e:
@@ -1177,6 +1221,7 @@ async def translate_srd_spells_api(session_id: str, payload: dict):
                 {"name": s["name"], "description": s.get("description", "")} for s in batch
             ], ensure_ascii=False)
         )
+        prompt = sanitize_user_text(prompt)
         try:
             resp = await client.chat.completions.create(
                 model=model,
@@ -1187,12 +1232,12 @@ async def translate_srd_spells_api(session_id: str, payload: dict):
             text = (resp.choices[0].message.content or "").strip()
             text = text.replace("```json", "").replace("```", "").strip()
             try:
-                data = json.loads(text)
+                data = extract_json_array(text)
             except Exception:
-                from json_repair import repair_json
-                data = json.loads(repair_json(text, return_objects=False))
-            if isinstance(data, dict):
-                data = data.get("spells") or data.get("translations") or []
+                try:
+                    data = extract_json_object(text).get("spells") or extract_json_object(text).get("translations") or []
+                except Exception:
+                    continue
             if not isinstance(data, list):
                 continue
             for i, spell in enumerate(batch):
@@ -1219,14 +1264,12 @@ async def translate_srd_spells_api(session_id: str, payload: dict):
 
 
 @app.post("/api/game/{session_id}/translate-media")
-async def translate_media_api(session_id: str, payload: dict):
+async def translate_media_api(session_id: str, payload: dict, username: str = "default"):
     """使用当前会话 LLM 批量机翻地点/生物描述（description_zh）。"""
     kind = str(payload.get("kind", ""))
     if kind not in ("locations", "bestiary"):
         raise HTTPException(status_code=400, detail="kind 仅支持 locations 或 bestiary")
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    state = _get_session_for_user(session_id, username)
     try:
         api_key = ensure_valid_api_key(state.api_key)
     except ValueError as e:
@@ -1262,6 +1305,7 @@ async def translate_media_api(session_id: str, payload: dict):
             "保留专有名词（可音译），不要改变结构。只输出 JSON 数组：[{\"description\":\"中文\"}]。\n"
             + json.dumps([{"name": i.get("name", ""), "description": i.get("description", "")} for i in batch], ensure_ascii=False)
         )
+        prompt = sanitize_user_text(prompt)
         try:
             resp = await client.chat.completions.create(
                 model=model, messages=[{"role": "user", "content": prompt}],
@@ -1269,10 +1313,9 @@ async def translate_media_api(session_id: str, payload: dict):
             )
             text = (resp.choices[0].message.content or "").strip().replace("```json", "").replace("```", "").strip()
             try:
-                data = json.loads(text)
+                data = extract_json_array(text)
             except Exception:
-                from json_repair import repair_json
-                data = json.loads(repair_json(text, return_objects=False))
+                continue
             if not isinstance(data, list):
                 continue
             for i, item in enumerate(batch):
@@ -1387,12 +1430,10 @@ async def upload_character_image_pre(username: str = Form("default"), file: Uplo
 
 
 @app.post("/api/game/{session_id}/image")
-async def upload_character_image(session_id: str, file: UploadFile = File(...)):
+async def upload_character_image(session_id: str, file: UploadFile = File(...), username: str = Form("default")):
     """上传当前角色图片。"""
     from backend.media_manager import save_image
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    state = _get_session_for_user(session_id, username)
     data = await file.read()
     image_path = save_image(state.username, data, file.filename or "character.png")
     state.character_info["character_image"] = image_path
@@ -1401,11 +1442,9 @@ async def upload_character_image(session_id: str, file: UploadFile = File(...)):
 
 
 @app.post("/api/game/{session_id}/npc")
-async def add_npc_api(session_id: str, payload: dict):
+async def add_npc_api(session_id: str, payload: dict, username: str = "default"):
     """DM 手动为当前剧本新增一个 NPC/角色。"""
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    state = _get_session_for_user(session_id, username)
     from backend.engine.world_state import NpcEntry, WorldState
     ws = getattr(state, "world_state", None) or WorldState(session_id=session_id)
     npc = NpcEntry(
@@ -1429,11 +1468,9 @@ async def add_npc_api(session_id: str, payload: dict):
 
 
 @app.post("/api/game/{session_id}/npc/image")
-async def upload_npc_image(session_id: str, npc_name: str = Form(...), file: UploadFile = File(...)):
+async def upload_npc_image(session_id: str, npc_name: str = Form(...), file: UploadFile = File(...), username: str = Form("default")):
     """为当前剧本中的 NPC 上传自定义图片。"""
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    state = _get_session_for_user(session_id, username)
     from backend.media_manager import save_image
     from backend.engine.world_state import WorldState
     ws = getattr(state, "world_state", None) or WorldState(session_id=session_id)
@@ -1483,6 +1520,132 @@ async def fetch_models(payload: dict):
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"获取模型列表失败: {e}") from e
+
+
+@app.post("/api/models/download-bge")
+async def download_bge_model(payload: dict):
+    """按用户点击下载可选 BGE 模型：自动安装依赖并下载模型。仅手动触发，不自动拉取。"""
+    from pathlib import Path
+    from backend.model_setup import (
+        ensure_bge_dependencies,
+        ensure_reranker_dependencies,
+        download_hf_repo,
+    )
+
+    kind = str(payload.get("kind") or "").strip()
+    if kind not in ("embedding", "reranker"):
+        raise HTTPException(status_code=400, detail="kind 仅支持 embedding 或 reranker")
+
+    try:
+        if kind == "embedding":
+            await ensure_bge_dependencies()
+            target_dir = str(settings.BGE_M3_DIR)
+            collected = []
+            async def _cb(pct, path):
+                collected.append((pct, path))
+            await download_hf_repo(settings.BGE_M3_REPO, target_dir, _cb)
+            size = sum(f.stat().st_size for f in Path(target_dir).rglob("*") if f.is_file())
+            return {
+                "ok": True,
+                "kind": "embedding",
+                "path": target_dir,
+                "size": size,
+                "message": f"BGE-M3 已下载到 {target_dir}",
+            }
+        else:
+            await ensure_reranker_dependencies()
+            target_dir = str(settings.BGE_RERANKER_PATH)
+            collected = []
+            async def _cb(pct, path):
+                collected.append((pct, path))
+            await download_hf_repo(settings.BGE_RERANKER_REPO, target_dir, _cb)
+            size = sum(f.stat().st_size for f in Path(target_dir).rglob("*") if f.is_file())
+            return {
+                "ok": True,
+                "kind": "reranker",
+                "path": target_dir,
+                "size": size,
+                "message": f"BGE-reranker-base 已下载到 {target_dir}",
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"下载失败: {e}") from e
+
+
+@app.post("/api/models/download-bge/stream")
+async def download_bge_model_stream(payload: dict):
+    """SSE 流式下载可选 BGE 模型：自动安装依赖 + 下载模型，实时进度。"""
+    from pathlib import Path
+    from fastapi.responses import StreamingResponse
+    from backend.model_setup import (
+        ensure_bge_dependencies,
+        ensure_reranker_dependencies,
+        download_hf_repo,
+    )
+
+    kind = str(payload.get("kind") or "").strip()
+    if kind not in ("embedding", "reranker"):
+        raise HTTPException(status_code=400, detail="kind 仅支持 embedding 或 reranker")
+
+    async def event_stream():
+        try:
+            if kind == "embedding":
+                yield f"data: {json.dumps({'type':'status','msg':'正在安装 BGE-M3 依赖（首次可能需要几分钟）...'}, ensure_ascii=False)}\n\n"
+                await ensure_bge_dependencies()
+                target_dir = str(settings.BGE_M3_DIR)
+                yield f"data: {json.dumps({'type':'status','msg':'依赖安装完成，开始下载 BGE-M3 模型...'}, ensure_ascii=False)}\n\n"
+
+                q: asyncio.Queue = asyncio.Queue()
+                async def _cb(pct, path):
+                    await q.put((pct, path))
+
+                task = asyncio.create_task(download_hf_repo(settings.BGE_M3_REPO, target_dir, _cb))
+                while True:
+                    if task.done():
+                        while not q.empty():
+                            pct, path = q.get_nowait()
+                            yield f"data: {json.dumps({'type':'progress','percent':pct,'file':path}, ensure_ascii=False)}\n\n"
+                        break
+                    try:
+                        pct, path = await asyncio.wait_for(q.get(), timeout=0.2)
+                        yield f"data: {json.dumps({'type':'progress','percent':pct,'file':path}, ensure_ascii=False)}\n\n"
+                    except asyncio.TimeoutError:
+                        continue
+                await task
+
+                size = sum(f.stat().st_size for f in Path(target_dir).rglob("*") if f.is_file())
+                yield f"data: {json.dumps({'type':'complete','kind':'embedding','path':target_dir,'size':size}, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps({'type':'status','msg':'正在安装重排模型依赖（首次可能需要几分钟）...'}, ensure_ascii=False)}\n\n"
+                await ensure_reranker_dependencies()
+                target_dir = str(settings.BGE_RERANKER_PATH)
+                yield f"data: {json.dumps({'type':'status','msg':'依赖安装完成，开始下载 BGE-reranker 模型...'}, ensure_ascii=False)}\n\n"
+
+                q: asyncio.Queue = asyncio.Queue()
+                async def _cb(pct, path):
+                    await q.put((pct, path))
+
+                task = asyncio.create_task(download_hf_repo(settings.BGE_RERANKER_REPO, target_dir, _cb))
+                while True:
+                    if task.done():
+                        while not q.empty():
+                            pct, path = q.get_nowait()
+                            yield f"data: {json.dumps({'type':'progress','percent':pct,'file':path}, ensure_ascii=False)}\n\n"
+                        break
+                    try:
+                        pct, path = await asyncio.wait_for(q.get(), timeout=0.2)
+                        yield f"data: {json.dumps({'type':'progress','percent':pct,'file':path}, ensure_ascii=False)}\n\n"
+                    except asyncio.TimeoutError:
+                        continue
+                await task
+
+                size = sum(f.stat().st_size for f in Path(target_dir).rglob("*") if f.is_file())
+                yield f"data: {json.dumps({'type':'complete','kind':'reranker','path':target_dir,'size':size}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','msg':str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/api/health")
@@ -1686,6 +1849,7 @@ async def generate_character(request: GenerateAttributesRequest):
 
 只返回JSON: {{"str":数字,"dex":数字,"con":数字,"int":数字,"wis":数字,"cha":数字,"backstory":"..."}}"""
 
+    user_prompt = sanitize_user_text(user_prompt)
     try:
         import asyncio as _asyncio
         last_err = None
@@ -1726,11 +1890,9 @@ async def generate_character(request: GenerateAttributesRequest):
                 text = text[:-3]
             text = text.strip()
         try:
-            result = json.loads(text)
+            result = extract_json_object(text)
         except Exception:
-            from json_repair import repair_json
-            text = repair_json(text, return_objects=False)
-            result = json.loads(text)
+            raise HTTPException(status_code=502, detail="角色生成返回的不是合法JSON")
 
         # 验证属性
         required = ["str", "dex", "con", "int", "wis", "cha"]
@@ -2149,23 +2311,44 @@ async def create_new_game(request: NewGameRequest):
 
         await db.commit()
 
+    # 返回可直接用于前端状态恢复的 status（含正确 username 与 camelCase 字段）
+    _status_keys = [
+        "hp", "max_hp", "mp", "max_mp", "xp", "gold", "level", "ac", "inventory", "attributes",
+        "character_name", "race", "char_class", "gender", "game_system", "username",
+        "character_image", "scenario_id", "backstory", "skill_proficiencies", "skills", "saves",
+        "passive_perception", "feats", "custom_classes", "custom_skills", "extra_attributes",
+        "race_traits", "class_proficiencies", "hit_die", "san", "max_san", "luck",
+        "healing_surges", "max_healing_surges", "surge_value", "speed", "proficiency_bonus",
+        "spell_slots", "class_resources", "known_spells", "action_points", "fortitude",
+        "reflex", "will", "damage_bonus", "build",
+    ]
+    _status = {k: character_info.get(k) for k in _status_keys if k in character_info}
+    _status["username"] = request.username or "default"
+    _status["character_name"] = char_name or _status.get("character_name", "")
+    # 兼容后端历史格式：inventory 可能是 {"items":[...]}，前端需要数组
+    if isinstance(_status.get("inventory"), dict):
+        _status["inventory"] = _status["inventory"].get("items") or []
+    for snake, camel in (("max_hp", "maxHp"), ("max_mp", "maxMp"), ("max_san", "maxSan")):
+        if snake in _status:
+            _status[camel] = _status.pop(snake)
+
     return NewGameResponse(
         session_id=session.id,
         character_id=character.id,
+        username=request.username or "default",
+        status=_status,
         sse_url=f"/api/game/{session.id}/stream",
     )
 
 
 @app.post("/api/game/{session_id}/action", response_model=ActionAcceptedResponse)
-async def submit_action(session_id: str, request: ActionRequest):
+async def submit_action(session_id: str, request: ActionRequest, username: str = "default"):
     """提交玩家行动——触发 AI DM 处理并生成叙事。
 
     处理是异步的：此端点立即返回 accepted:true，
     实际的叙事生成在后台进行，通过 SSE 推送给前端。
     """
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+    state = _get_session_for_user(session_id, username)
 
     if not state.check_rate_limit():
         raise HTTPException(status_code=429, detail="操作太快，请稍等片刻再行动")
@@ -2194,15 +2377,13 @@ async def _handle_player_action(state: GameSessionState, player_input: str):
 
 
 @app.get("/api/game/{session_id}/stream")
-async def stream_events(session_id: str, last_event_seq: int = 0):
+async def stream_events(session_id: str, last_event_seq: int = 0, username: str = "default"):
     """SSE 长连接——推送游戏事件流。
 
     前端通过 EventSource 连接此端点，接收实时叙事、骰子结果、状态更新等事件。
     支持通过 last_event_seq 参数进行断线重连。
     """
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+    state = _get_session_for_user(session_id, username)
 
     return StreamingResponse(
         sse_event_generator(state),
@@ -2216,7 +2397,7 @@ async def stream_events(session_id: str, last_event_seq: int = 0):
 
 
 @app.get("/api/game/{session_id}/journal")
-async def get_player_journal(session_id: str):
+async def get_player_journal(session_id: str, username: str = "default"):
     """获取玩家笔记——侧边栏显示当前场景、NPC(可见信息)、剧情进度。
 
     这个端点返回仅对玩家可见的信息：
@@ -2225,9 +2406,7 @@ async def get_player_journal(session_id: str):
     - 剧情旗标
     - 已发现地点
     """
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+    state = _get_session_for_user(session_id, username)
 
     ws = getattr(state, 'world_state', None)
     if ws is None:
@@ -2240,40 +2419,42 @@ async def get_player_journal(session_id: str):
 
 @app.get("/api/game/{session_id}/graph")
 async def get_game_graph(session_id: str, query: str | None = None,
-                         name: str | None = None, depth: int = 1):
-    """返回当前会话的知识图谱（完整图或局部子图），供主持人可视化与检索。"""
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+                         name: str | None = None, depth: int = 1, username: str = "default",
+                         view: str = "player"):
+    """返回当前会话的知识图谱（默认玩家安全视图，未暴露信息用 ??? 代替；view=dm 返回完整图）。"""
+    state = _get_session_for_user(session_id, username)
     ws = getattr(state, "world_state", None)
     if ws is None:
         return {"graph": {"nodes": [], "edges": []}, "search": []}
-    from backend.engine.knowledge_graph import build_knowledge_graph, get_local_subgraph, search_graph_nodes
-    if name:
-        graph = get_local_subgraph(ws, name, depth=depth)
+    from backend.engine.knowledge_graph import (
+        build_knowledge_graph, build_player_graph, get_local_subgraph,
+        get_local_subgraph_from_graph, search_graph_nodes,
+    )
+    if view == "dm":
+        if name:
+            graph = get_local_subgraph(ws, name, depth=depth)
+        else:
+            graph = build_knowledge_graph(ws)
     else:
-        graph = build_knowledge_graph(ws)
+        player_full = build_player_graph(ws)
+        graph = get_local_subgraph_from_graph(player_full, name, depth=depth) if name else player_full
     search = search_graph_nodes(graph, query) if query else []
     return {"graph": graph, "search": search}
 
 
 @app.post("/api/game/{session_id}/equip")
-async def equip_item_api(session_id: str, payload: dict):
+async def equip_item_api(session_id: str, payload: dict, username: str = "default"):
     """玩家/前端手动装备或卸下物品，实时推送状态更新。"""
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+    state = _get_session_for_user(session_id, username)
     from backend.engine.dm_agent import _exec_equip_item
     result = await _exec_equip_item(payload, state)
     return {"result": result}
 
 
 @app.post("/api/game/{session_id}/abort")
-async def abort_generation(session_id: str):
+async def abort_generation(session_id: str, username: str = "default"):
     """中断当前 AI 生成——玩家点击"跳过"按钮时调用。"""
-    state = session_manager.get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+    state = _get_session_for_user(session_id, username)
 
     state.request_abort()
     await push_narrative_flush(state, "[生成已中断]")

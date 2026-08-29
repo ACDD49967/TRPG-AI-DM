@@ -980,6 +980,7 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "get_location_card": _exec_get_location_card,
         "get_entity_graph": _exec_get_entity_graph,
         "update_knowledge_graph": _exec_update_knowledge_graph,
+        "get_graph_path": _exec_get_graph_path,
     }
     fn = handlers.get(name)
     if fn is None:
@@ -1762,9 +1763,27 @@ async def _exec_rest(args: dict, state: GameSessionState) -> str:
 
 
 async def _exec_suggest_choices(args: dict, state: GameSessionState) -> str:
-    opts = args.get("options", [])
-    await push_event(state, "choices", {"options": opts})
-    return f"建议: {', '.join(opts)}"
+    """加强建议格式：清洗 Markdown/编号/换行，强制 2-4 个纯文本短选项。"""
+    import re
+    raw = args.get("options", [])
+    if isinstance(raw, str):
+        raw = [raw]
+    cleaned: list[str] = []
+    for o in raw:
+        s = str(o or "").strip()
+        s = re.sub(r'^[-*•]\s*', '', s)
+        s = re.sub(r'^\d+[\.\)、]\s*', '', s)
+        s = s.replace('**', '').replace('`', '').replace('*', '')
+        s = re.sub(r'\s+', ' ', s).strip(' "\'“”‘’')
+        if len(s) > 25:
+            s = s[:24].rstrip() + '…'
+        if s and s not in cleaned:
+            cleaned.append(s)
+    if len(cleaned) < 2:
+        return "[suggest_choices 格式错误] 请提供2-4个纯文本选项，每个不超过25字，不要使用Markdown、编号或换行。"
+    cleaned = cleaned[:4]
+    await push_event(state, "choices", {"options": cleaned})
+    return f"建议: {', '.join(cleaned)}"
 
 
 async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
@@ -2535,6 +2554,34 @@ async def _call_knowledge_graph_agent(state: GameSessionState, text: str, hint: 
     return data
 
 
+async def _exec_get_graph_path(args: dict, state: GameSessionState) -> str:
+    """查询两个实体之间的最短关系路径。"""
+    ws = getattr(state, "world_state", None)
+    if ws is None:
+        return "无世界状态"
+    source = str(args.get("source", "") or "").strip()
+    target = str(args.get("target", "") or "").strip()
+    if not source or not target:
+        return "⚠ 需要 source 与 target"
+    try:
+        max_depth = max(1, min(6, int(args.get("max_depth", 4) or 4)))
+    except (TypeError, ValueError):
+        max_depth = 4
+    from backend.engine.knowledge_graph import get_graph_path
+    path = get_graph_path(ws, source, target, max_depth=max_depth)
+    if not path:
+        return f"⚠ 未找到 {source} -> {target} 的路径（深度≤{max_depth}）"
+    lines = [f"## 关系路径: {source} -> {target}"]
+    for i, e in enumerate(path):
+        extra = ""
+        if e.get("strength") is not None:
+            extra += f" 亲密度{e['strength']}"
+        if e.get("confidence") is not None:
+            extra += f" 置信度{e['confidence']}"
+        lines.append(f"{i + 1}. {e['source']} --{e['relation']}--> {e['target']}{extra}")
+    return "\n".join(lines)
+
+
 async def _exec_update_knowledge_graph(args: dict, state: GameSessionState) -> str:
     """DM识别到图谱应变化时调用：子AGENT识别并更新关系，结果/错误回传给DM。"""
     ws = getattr(state, "world_state", None)
@@ -2761,6 +2808,7 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
 
 
 async def _process_player_action_inner(state: GameSessionState, player_input: str) -> str:
+    from backend.engine.prompt_guard import sanitize_user_text
     state.reset_abort()
     # P0-1修复（双保险）：确保WorldState始终存在，即使create_new_game漏初始化
     if getattr(state, 'world_state', None) is None:
@@ -2769,6 +2817,12 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
     skill = get_skill(_game_system(state))
     state.memory.max_active_turns = 5 if lite else skill.history_rounds
     state.memory.summary_trigger = state.memory.max_active_turns + 1
+
+    # 提示注入防护：先清洗玩家输入，再进入缓存/检索/LLM
+    sanitized = sanitize_user_text(player_input)
+    if sanitized != player_input.strip():
+        await push_event(state, "game_event", {"description": "已拦截输入中的提示注入尝试"})
+    player_input = sanitized or "[系统已拦截可疑指令]"
 
     # 重复信息问题直接返回缓存，避免重复调用 LLM
     cache_key = re.sub(r"\s+", " ", player_input.strip().lower())
@@ -2791,7 +2845,7 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
     messages = [{"role":"system","content":sp}]
     active_turns = state.memory.turns[-5 if lite else -skill.history_rounds:]
     for t in active_turns:
-        messages.append({"role":"user","content":t.player_input})
+        messages.append({"role":"user","content":sanitize_user_text(t.player_input) or t.player_input})
         if t.dm_response: messages.append({"role":"assistant","content":t.dm_response})
     messages.append({"role":"user","content":player_input})
 

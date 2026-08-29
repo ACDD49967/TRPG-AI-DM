@@ -130,6 +130,87 @@ def build_knowledge_graph(ws: Any) -> dict:
     }
 
 
+def _resolve_player_node(ws: Any, node: dict) -> tuple[str, str]:
+    """返回 (label, extra) 的玩家安全版本；未暴露信息一律用 ??? 代替。"""
+    name = str(node.get("id", "")).strip()
+    kind = str(node.get("type", "")).strip()
+
+    # NPC：未发现或名字隐藏时显示 ???
+    for n in getattr(ws, "npcs", []) or []:
+        if n.name == name:
+            if not getattr(n, "discovered", True):
+                return "???", "???"
+            v = n.to_player_view()
+            label = v.get("name") or "???"
+            role = v.get("role") or "???"
+            attitude = str(getattr(n, "attitude", "") or "")
+            extra = f"{role} · {attitude}" if role != "???" else "???"
+            return label, extra
+
+    # 地点：未发现时显示 ???
+    for l in getattr(ws, "locations", []) or []:
+        if l.name == name:
+            if not getattr(l, "discovered", True):
+                return "???", "未知"
+            v = l.to_player_view()
+            t = str(v.get("type", "") or "")
+            st = str(v.get("status", "") or "")
+            extra = " · ".join(x for x in (t, st) if x)
+            return v.get("name") or "???", extra or ""
+
+    # 剧情旗标：暗线/隐藏时显示 ???
+    for f in getattr(ws, "plot_flags", []) or []:
+        if f.key == name:
+            if not getattr(f, "visible", True):
+                return "???", "???"
+            return f.key, str(f.status or "")
+
+    # 生物/其他实体：暂未提供玩家可见度标记，一律按未暴露处理
+    return "???", "???"
+
+
+def build_player_graph(ws: Any) -> dict:
+    """生成只暴露玩家已知信息的图谱；隐藏但必须显示的节点/边用 ??? 代替，且不泄露原始 id。"""
+    full = build_knowledge_graph(ws)
+    exposed: set[str] = set()
+    id_map: dict[str, str] = {}
+    nodes = []
+    hidden_idx = 0
+    for n in full.get("nodes", []):
+        original_id = str(n.get("id", ""))
+        label, extra = _resolve_player_node(ws, n)
+        if label != "???":
+            safe_id = original_id
+            exposed.add(original_id)
+        else:
+            hidden_idx += 1
+            safe_id = f"???{hidden_idx}"
+        id_map[original_id] = safe_id
+        nodes.append({**n, "id": safe_id, "label": label, "extra": extra})
+
+    edges = []
+    for e in full.get("edges", []):
+        src = str(e.get("source", ""))
+        tgt = str(e.get("target", ""))
+        src_exposed = src in exposed
+        tgt_exposed = tgt in exposed
+        if src_exposed and tgt_exposed:
+            edges.append({
+                "source": id_map.get(src, src),
+                "target": id_map.get(tgt, tgt),
+                "relation": e.get("relation", "related"),
+                **({k: v for k, v in e.items() if k not in ("source", "target", "relation") and v is not None}),
+            })
+        else:
+            edges.append({
+                "source": id_map.get(src, src),
+                "target": id_map.get(tgt, tgt),
+                "relation": "???",
+            })
+
+    return {"nodes": nodes, "edges": edges}
+
+
 def get_local_subgraph(ws: Any, name: str, depth: int = 1) -> dict:
     """返回以某实体为中心的局部子图（BFS，按深度扩展）。"""
     name = (name or "").strip()
@@ -159,6 +240,74 @@ def get_local_subgraph(ws: Any, name: str, depth: int = 1) -> dict:
     nodes = [n for n in full["nodes"] if n["id"] in keep_nodes]
     edges = [full["edges"][i] for i in sorted(keep_edges)]
     return {"nodes": nodes, "edges": edges}
+
+
+def get_local_subgraph_from_graph(graph: dict, name: str, depth: int = 1) -> dict:
+    """从已构建（可已掩码）的图谱中提取以某实体为中心的局部子图。"""
+    name = (name or "").strip()
+    if not name or not graph.get("nodes"):
+        return {"nodes": [], "edges": []}
+    adjacency: dict[str, list[int]] = {}
+    for i, e in enumerate(graph.get("edges", [])):
+        adjacency.setdefault(e["source"], []).append(i)
+        adjacency.setdefault(e["target"], []).append(i)
+
+    keep_nodes: set[str] = {name}
+    keep_edges: set[int] = set()
+    frontier = {name}
+    for _ in range(max(1, min(2, int(depth or 1)))):
+        next_frontier: set[str] = set()
+        for node in frontier:
+            for ei in adjacency.get(node, []):
+                keep_edges.add(ei)
+                e = graph["edges"][ei]
+                other = e["target"] if e["source"] == node else e["source"]
+                if other not in keep_nodes:
+                    next_frontier.add(other)
+        keep_nodes.update(next_frontier)
+        frontier = next_frontier
+
+    nodes = [n for n in graph["nodes"] if n["id"] in keep_nodes]
+    edges = [graph["edges"][i] for i in sorted(keep_edges)]
+    return {"nodes": nodes, "edges": edges}
+
+
+def get_graph_path(ws: Any, source: str, target: str, max_depth: int = 4) -> list[dict]:
+    """返回 source -> target 的最短路径（边列表），找不到返回空列表。"""
+    source = (source or "").strip()
+    target = (target or "").strip()
+    if not source or not target or source == target:
+        return []
+    full = build_knowledge_graph(ws)
+    adjacency: dict[str, list[tuple[str, dict]]] = {}
+    for e in full["edges"]:
+        adjacency.setdefault(e["source"], []).append((e["target"], e))
+        adjacency.setdefault(e["target"], []).append((e["source"], e))
+
+    from collections import deque
+    queue = deque([source])
+    parent: dict[str, tuple[str, dict] | None] = {source: None}
+    visited = {source}
+    for _ in range(max(1, min(6, int(max_depth or 1)))):
+        for _ in range(len(queue)):
+            cur = queue.popleft()
+            for nxt, edge in adjacency.get(cur, []):
+                if nxt in visited:
+                    continue
+                visited.add(nxt)
+                parent[nxt] = (cur, edge)
+                if nxt == target:
+                    # 重建路径
+                    path: list[dict] = []
+                    node = target
+                    while node != source:
+                        prev, edge = parent[node]
+                        path.append(edge)
+                        node = prev
+                    path.reverse()
+                    return path
+                queue.append(nxt)
+    return []
 
 
 def _tokenize(text: str) -> list[str]:

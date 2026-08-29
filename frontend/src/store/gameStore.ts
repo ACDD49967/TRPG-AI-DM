@@ -344,9 +344,18 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   updateStatus: (update) =>
-    set((s) => ({
-      status: { ...s.status, ...update },
-    })),
+    set((s) => {
+      const u: Partial<CharacterStatus> = { ...update };
+      // 兼容后端历史格式：inventory 可能是 {items:[...]}，统一转为数组
+      const inv = u.inventory as unknown;
+      if (inv && typeof inv === 'object' && !Array.isArray(inv)) {
+        const rec = inv as Record<string, unknown>;
+        if (Array.isArray(rec.items)) {
+          u.inventory = rec.items as CharacterStatus['inventory'];
+        }
+      }
+      return { status: { ...s.status, ...u } };
+    }),
 
   setChoices: (options) => set({ choices: options }),
 
