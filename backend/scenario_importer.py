@@ -351,7 +351,14 @@ async def llm_split_text(
             timeout=120,
         )
         content = ""
-        async for chunk in stream:
+        while True:
+            try:
+                chunk = await asyncio.wait_for(stream.__anext__(), timeout=60)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                print("[ScenarioImporter] LLM切分流式空闲超时(60s无新数据)")
+                raise RuntimeError("流式响应空闲超时")
             d = chunk.choices[0].delta if chunk.choices else None
             if d and d.content:
                 content += d.content
@@ -461,7 +468,14 @@ async def generate_summary(
                 timeout=120,
             )
             summary = ""
-            async for chunk in stream:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(stream.__anext__(), timeout=60)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    print(f"[ScenarioImporter] 总结流式空闲超时(60s无新数据)")
+                    raise RuntimeError("流式响应空闲超时")
                 d = chunk.choices[0].delta if chunk.choices else None
                 if d and d.content:
                     summary += d.content

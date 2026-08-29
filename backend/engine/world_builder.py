@@ -282,7 +282,14 @@ async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
             )
             content = ""
             last_chunk = None
-            async for chunk in stream:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(stream.__anext__(), timeout=60)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    print(f"[WorldBuilder] LLM流式调用第{attempt}次空闲超时(60s无新数据)")
+                    raise RuntimeError("流式响应空闲超时")
                 last_chunk = chunk
                 d = chunk.choices[0].delta if chunk.choices else None
                 if d and d.content:
