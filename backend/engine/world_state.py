@@ -548,7 +548,8 @@ class WorldState:
                 "allies": allies,
                 "enemies": enemies,
                 "neutrals": neutrals,
-                "total": len(self.npcs),
+                # 只统计对玩家可见/已发现的角色，隐藏角色不计入数量
+                "total": len(allies) + len(enemies) + len(neutrals),
             },
             "plot_flags": [p.to_player_view() for p in self.plot_flags if p.visible],
             "locations": [l.to_player_view() for l in self.locations if l.discovered],
