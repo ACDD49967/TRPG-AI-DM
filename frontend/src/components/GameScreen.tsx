@@ -69,6 +69,9 @@ export default function GameScreen() {
   const [mediaTranslate, setMediaTranslate] = useState<{kind:'locations'|'bestiary'; done:number; total:number} | null>(null);
   const [showSpellBuilder, setShowSpellBuilder] = useState(false);
   const [showDmTools, setShowDmTools] = useState(false);
+  const [showGraph, setShowGraph] = useState(false);
+  const [graphData, setGraphData] = useState<{nodes:Array<{id:string;type:string;label:string;extra?:string}>; edges:Array<{source:string;target:string;relation:string;strength?:number;confidence?:number;notes?:string}>} | null>(null);
+  const [graphQuery, setGraphQuery] = useState('');
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
   const [dmMap, setDmMap] = useState({ name: '', description: '', type: '', status: '', culture: '', districts: '', notable_figures: '', dangers: '', secret: '', locationsText: '' });
   const [dmBeast, setDmBeast] = useState({ name: '', description: '', ac: '', hp: '', speed: '', str: '', dex: '', con: '', int: '', wis: '', cha: '', skills: '', traits: '', actions: '', habits: '', habitat: '', lore: '', weakness: '', tags: '' });
@@ -94,6 +97,20 @@ export default function GameScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label: '手动存档' }),
       });
+    } catch {}
+  };
+
+  const openGraph = async (name?: string) => {
+    if (!sessionId) return;
+    try {
+      const params = new URLSearchParams();
+      if (name) params.set('name', name);
+      if (graphQuery) params.set('query', graphQuery);
+      const r = await fetch(`/api/game/${sessionId}/graph?${params.toString()}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      setGraphData(d.graph || { nodes: [], edges: [] });
+      setShowGraph(true);
     } catch {}
   };
 
@@ -354,6 +371,7 @@ export default function GameScreen() {
           <button onClick={()=>setShowRulebook(true)} className="text-xs text-indigo-500 hover:text-indigo-700 transition-colors">说明书</button>
           <button onClick={()=>setShowCharSheet(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">角色卡</button>
           <button onClick={()=>setShowDmTools(true)} className="text-xs text-amber-600 hover:text-amber-800 transition-colors">DM</button>
+          <button onClick={()=>openGraph()} className="text-xs text-emerald-600 hover:text-emerald-800 transition-colors">图谱</button>
           <button onClick={()=>setShowMap(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">地图</button>
           <button onClick={()=>setShowBeast(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">图鉴</button>
           <button onClick={()=>setShowSpells(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">法术</button>

@@ -2042,6 +2042,13 @@ async def create_new_game(request: NewGameRequest):
             from backend.scenario_store import Scenario
             saved = Scenario.load(request.scenario_id, request.username)
             if saved:
+                # 角色系统绑定剧本系统：5e角色只能用5e剧本，4e角色只能用4e剧本……
+                scenario_system = (saved.meta.system or "dnd5e")
+                if scenario_system != request.game_system:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"剧本系统与角色系统不匹配：剧本为 {scenario_system}，角色为 {request.game_system}。请选择相同系统的剧本。",
+                    )
                 character_info["world_outline"] = saved.world_outline or character_info["world_outline"]
                 character_info["world_state_json"] = saved.world_state_json or character_info["world_state_json"]
                 character_info["scenario_id"] = request.scenario_id
@@ -2229,6 +2236,25 @@ async def get_player_journal(session_id: str):
                 "plot_flags": [], "locations": []}
 
     return ws.to_player_journal()
+
+
+@app.get("/api/game/{session_id}/graph")
+async def get_game_graph(session_id: str, query: str | None = None,
+                         name: str | None = None, depth: int = 1):
+    """返回当前会话的知识图谱（完整图或局部子图），供主持人可视化与检索。"""
+    state = session_manager.get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在或已结束")
+    ws = getattr(state, "world_state", None)
+    if ws is None:
+        return {"graph": {"nodes": [], "edges": []}, "search": []}
+    from backend.engine.knowledge_graph import build_knowledge_graph, get_local_subgraph, search_graph_nodes
+    if name:
+        graph = get_local_subgraph(ws, name, depth=depth)
+    else:
+        graph = build_knowledge_graph(ws)
+    search = search_graph_nodes(graph, query) if query else []
+    return {"graph": graph, "search": search}
 
 
 @app.post("/api/game/{session_id}/equip")

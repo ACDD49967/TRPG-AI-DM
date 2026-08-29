@@ -21,13 +21,14 @@ export default function RulebookModal({ onClose }: { onClose: () => void }) {
           <section>
             <h3 className="font-bold text-indigo-700 mb-1">二、规则系统</h3>
             <p>支持 D&D 5e、D&D 4e、克苏鲁的呼唤 7e 与自定义规则。</p>
-            <p>角色系统与剧本系统相互独立，可自由搭配。</p>
+            <p>角色系统与剧本系统必须一致：5e 角色使用 5e 剧本，4e 使用 4e，COC 使用 COC。</p>
+            <p>角色卡库不绑定剧本：同一张 5e 角色卡可以用于任何 5e 剧本。</p>
             <p>规则细节通过本地知识库 RAG 按需检索，不占用大量上下文。</p>
           </section>
 
           <section>
             <h3 className="font-bold text-indigo-700 mb-1">三、角色卡</h3>
-            <p>角色卡包含：属性、HP/MP/SAN/AC、技能、特长、背景、头像。</p>
+            <p>角色卡包含：属性、HP/AC（COC 额外 MP/SAN/幸运）、技能、特长、背景、头像。</p>
             <p>COC 使用 STR/CON/DEX/INT/POW/CHA/SIZ/EDU 与 HP/MP/SAN/幸运。</p>
             <p>D&D 4e 额外显示回复力与四类防御。</p>
           </section>

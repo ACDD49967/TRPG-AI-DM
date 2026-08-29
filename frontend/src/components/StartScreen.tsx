@@ -272,6 +272,15 @@ export default function StartScreen(){
   // 切换职业/种族时清空已选法术，避免带入不合法选项
   useEffect(()=>{setSpellPicks([]);},[charClass,race,gameSystem]);
 
+  // 角色系统绑定剧本系统：切换规则系统时，清掉不匹配的已选剧本
+  useEffect(()=>{
+    if(!selectedScenario) return;
+    const s = savedScenarios.find(x=>x.id===selectedScenario);
+    if(s && s.system && s.system!==gameSystem){
+      setSelectedScenario(''); setScenarioId('');
+    }
+  },[gameSystem, selectedScenario, savedScenarios]);
+
   // 自动保持配置（每次关键字段变化）
   useEffect(()=>{saveConfig({apiKey,modelName,baseUrl,username});},[apiKey,modelName,baseUrl,username]);
   useEffect(()=>{localStorage.setItem('dnd_thinking', JSON.stringify(thinkingStrength));},[thinkingStrength]);
@@ -469,6 +478,17 @@ export default function StartScreen(){
               if(data.summary)setScenarioSummary(data.summary);
               if(data.system)setScenarioSystem(data.system as GameSystem);
               if(data.source_chunks)setSourceChunks(data.source_chunks);
+              // 生成完成即自动保存一次（确保后续编辑前的基线已落库）
+              if(data.scenario_id){
+                updateScenario({
+                  world_outline:data.content,
+                  summary:data.summary||'',
+                  custom_rules:customRules,
+                  custom_classes:customClasses,
+                  custom_skills:customSkills,
+                  extra_attributes:extraAttributes,
+                }, data.scenario_id);
+              }
               setWorldGenStage(WORLD_STAGES.length-1);
               setWorldGenDetail('');
             }else if(data.type==='error'){
@@ -495,7 +515,7 @@ export default function StartScreen(){
       setCustomClassesText((d.custom_classes||[]).join(', '));
       setCustomSkillsText((d.custom_skills||[]).join(', '));
       setExtraAttributesText(Object.entries(d.extra_attributes||{}).map(([k,v])=>`${k}:${v}`).join('\n'));
-      if(d.meta?.system||d.system)setScenarioSystem((d.meta?.system||d.system) as GameSystem);
+      if(d.meta?.system||d.system){const sys=(d.meta?.system||d.system) as GameSystem; setScenarioSystem(sys); setGameSystem(sys);}
       setScenarioId(sid);setSelectedScenario(sid);setShowScenarioList(false);
       setWorldScore(d.meta?.score||null);
     }catch{}
@@ -510,16 +530,20 @@ export default function StartScreen(){
     }catch{}
   };
 
-  const updateScenario=async()=>{
-    if(!scenarioId)return;
+  const updateScenario=async(overrides?:{
+    world_outline?:string; summary?:string; custom_rules?:string;
+    custom_classes?:string[]; custom_skills?:string[]; extra_attributes?:Record<string,string>;
+  }, sidArg?:string)=>{
+    const sid = sidArg || scenarioId;
+    if(!sid)return;
     try{
-      const r=await fetch(`/api/scenarios/${scenarioId}?username=${encodeURIComponent(username||'default')}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-        summary: scenarioSummary,
-        world_outline: worldOutline,
-        custom_rules: customRules,
-        custom_classes: customClasses,
-        custom_skills: customSkills,
-        extra_attributes: extraAttributes,
+      const r=await fetch(`/api/scenarios/${sid}?username=${encodeURIComponent(username||'default')}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        summary: overrides?.summary ?? scenarioSummary,
+        world_outline: overrides?.world_outline ?? worldOutline,
+        custom_rules: overrides?.custom_rules ?? customRules,
+        custom_classes: overrides?.custom_classes ?? customClasses,
+        custom_skills: overrides?.custom_skills ?? customSkills,
+        extra_attributes: overrides?.extra_attributes ?? extraAttributes,
       })});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'保存失败');}
       fetch(`/api/scenarios?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
@@ -570,9 +594,20 @@ export default function StartScreen(){
               setWorldStateJson(data.world_state_json||'');
               setScenarioId(data.scenario_id);
               setScenarioSummary(data.summary||'');
-              if(data.system)setScenarioSystem(data.system as GameSystem);
+              if(data.system){const sys=data.system as GameSystem; setScenarioSystem(sys); setGameSystem(sys);}
               setSourceChunks(data.source_chunks||[]);
               setSelectedScenario(data.scenario_id);setShowScenarioList(false);
+              // 导入完成即自动保存一次（保证基线落库）
+              if(data.scenario_id){
+                updateScenario({
+                  world_outline:data.content,
+                  summary:data.summary||'',
+                  custom_rules:customRules,
+                  custom_classes:customClasses,
+                  custom_skills:customSkills,
+                  extra_attributes:extraAttributes,
+                }, data.scenario_id);
+              }
               setImportProgress(100);
             }else if(data.type==='error'){
               throw new Error(data.msg||'导入失败');
@@ -870,6 +905,8 @@ export default function StartScreen(){
     if(!charName.trim()){setError('请输入角色名称');return;}
     setLoading(true);setError('');
     try{
+      // 开局前自动保存当前剧本编辑，避免丢失修改
+      if(scenarioId){ await updateScenario(); }
       const isDnd = gameSystem==='dnd5e'||gameSystem==='dnd4e';
       const r=await fetch('/api/game/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         username:username||'冒险者',character_name:charName,
@@ -1050,8 +1087,7 @@ export default function StartScreen(){
           {step===2&&(
             <div className="space-y-5">
               <p className="text-[10px] text-gray-400 bg-gray-50 rounded-lg p-2 border border-gray-200">
-                剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]} ｜ 角色系统：{GAME_SYSTEM_LABELS[gameSystem]}
-                <span className="text-emerald-600">（角色不绑定剧本，可自由选择）</span>
+                剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]} ｜ 角色系统：自动跟随剧本系统
               </p>
 
               {/* 角色卡库 */}
@@ -1063,9 +1099,12 @@ export default function StartScreen(){
                     <button onClick={saveCharCard} className="btn-secondary text-xs px-2 py-1 whitespace-nowrap">保存当前</button>
                   </div>
                 </div>
-                {charCards.length===0 ? (
-                  <p className="text-[10px] text-gray-400">暂无角色卡。填写完角色后可保存，方便下次新游戏直接复用。</p>
-                ) : charCards.map(card=>(
+                {(() => {
+                  const visibleCards = charCards.filter(card => !card.game_system || card.game_system === gameSystem);
+                  if (visibleCards.length === 0) {
+                    return <p className="text-[10px] text-gray-400">{charCards.length === 0 ? '暂无角色卡。填写完角色后可保存，方便下次新游戏直接复用。' : `当前规则系统（${GAME_SYSTEM_LABELS[gameSystem]}）下没有角色卡，请先保存一张或切换规则。`}</p>;
+                  }
+                  return visibleCards.map(card=>(
                   <div key={card.id} className="flex items-center justify-between bg-white rounded-lg p-2 border border-gray-200">
                     <div className="min-w-0">
                       <p className="text-xs font-medium text-gray-800 truncate">{card.name}</p>
@@ -1076,7 +1115,8 @@ export default function StartScreen(){
                       <button onClick={()=>deleteCharCard(card.id)} className="text-[10px] px-2 py-1 bg-red-50 text-red-600 rounded-lg border border-red-200 hover:bg-red-100">删除</button>
                     </div>
                   </div>
-                ))}
+                  ));
+                })()}
               </div>
 
               {/* 基础信息 */}
@@ -1471,14 +1511,14 @@ export default function StartScreen(){
                 <div className="card p-3 bg-indigo-50/50 border-indigo-200">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-medium text-indigo-700">已有剧本可直接使用（跳过世界生成）</span>
-                    <button onClick={()=>setShowScenarioList(!showScenarioList)} className="text-[10px] text-indigo-500 hover:text-indigo-700">{showScenarioList?'收起':'展开'}({savedScenarios.length}个)</button>
+                    <button onClick={()=>setShowScenarioList(!showScenarioList)} className="text-[10px] text-indigo-500 hover:text-indigo-700">{showScenarioList?'收起':'展开'}({savedScenarios.filter(s=>!s.system||s.system===gameSystem).length}个)</button>
                   </div>
                   {!showScenarioList&&selectedScenario&&(
                     <p className="text-[10px] text-indigo-600">已选择: {savedScenarios.find(s=>s.id===selectedScenario)?.title||''}</p>
                   )}
                   {showScenarioList&&(
                     <div className="space-y-1 max-h-48 overflow-y-auto">
-                      {savedScenarios.map(s=>(
+                      {savedScenarios.filter(s=>!s.system||s.system===gameSystem).map(s=>(
                         <div key={s.id} className={`rounded-lg border text-xs transition-all ${selectedScenario===s.id?'border-indigo-400 bg-indigo-100 ring-1 ring-indigo-300':'border-gray-200 bg-white hover:border-gray-300'}`}>
                           <button onClick={()=>loadScenario(s.id)} className="w-full text-left p-2.5">
                             <div className="flex justify-between items-center">
@@ -1573,9 +1613,9 @@ export default function StartScreen(){
                 </div>
               )}
 
-              {scenarioMode!=='existing'&&(
+              {scenarioMode==='generate'&&(
                 <div className="bg-indigo-50/40 rounded-lg p-3 border border-indigo-100 space-y-2">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">角色规则系统（独立于剧本系统）</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">剧本规则系统（角色系统自动跟随）</label>
                   <div className="grid grid-cols-2 gap-1.5">
                     {GAME_SYSTEM_OPTIONS.map(opt=>(
                       <button key={opt.id} onClick={()=>setGameSystem(opt.id)} className={`p-2 rounded-lg border text-left text-xs transition-all ${
@@ -1592,7 +1632,7 @@ export default function StartScreen(){
                       <textarea value={customRules} onChange={e=>setCustomRules(e.target.value)} placeholder="粘贴你的自定义规则，例如属性名称、判定方式、特殊机制..." rows={3} className="input-field resize-none" />
                     </div>
                   )}
-                  <p className="text-[10px] text-gray-400">生成时使用此规则系统；导入文件时也可让后端自动识别。</p>
+                  <p className="text-[10px] text-gray-400">生成时按此规则系统创建剧本；角色系统由剧本系统决定，角色卡库不绑定具体剧本。</p>
                 </div>
               )}
 
@@ -1695,7 +1735,7 @@ export default function StartScreen(){
                     <div className="space-y-2">
                       <label className="text-[10px] text-gray-500 font-medium">编辑剧本大纲（会保存到剧本）</label>
                       <textarea value={worldOutline} onChange={e=>setWorldOutline(e.target.value)} rows={8} className="input-field text-xs resize-y" />
-                      <button onClick={updateScenario} className="text-[10px] px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">保存修改</button>
+                      <button onClick={()=>updateScenario()} className="text-[10px] px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">保存修改</button>
                     </div>
                   ) : (
                     <details className="bg-gray-50 rounded-lg p-3 border border-gray-200">

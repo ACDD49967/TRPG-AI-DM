@@ -72,6 +72,8 @@ RECORD_PLOT_MEMORY_TOOL = _tool("record_plot_memory",
      "status": {"type":"string","enum":["未触发","进行中","已完成","已失败"],"description":"暗线状态，默认未触发"},
      "related_npcs": {"type":"array","items":{"type":"string"}},
      "related_locations": {"type":"array","items":{"type":"string"}},
+     "strength": {"type":"number","minimum":0,"maximum":100,"description":"关系亲密度 0-100（可选）"},
+     "confidence": {"type":"number","minimum":0,"maximum":1,"description":"关系置信度 0-1（可选）"},
      "visible_to_players": {"type":"boolean","description":"暗线是否对玩家可见，默认 false"}},
     ["kind","title"])
 
@@ -113,7 +115,10 @@ ADD_CHARACTER_NOTE_TOOL = _tool("add_character_note",
      "target_type": {"type":"string","enum":["npc","event","quest","location"],
                      "description":"笔记类型：npc=人物评价, event=事件记录, quest=任务线索, location=地点印象"},
      "comment": {"type":"string","description":"角色视角的简短评价(1-2句,第一人称,符合角色性格)"},
-     "clue": {"type":"string","description":"相关线索或推论(如有,可选)"}},
+     "clue": {"type":"string","description":"相关线索或推论(如有,可选)"},
+     "related_npcs": {"type":"array","items":{"type":"string"},"description":"与该目标产生关联的其他NPC名（用于更新关系图谱）"},
+     "strength": {"type":"number","minimum":0,"maximum":100,"description":"关系亲密度 0-100（可选）"},
+     "confidence": {"type":"number","minimum":0,"maximum":1,"description":"关系置信度 0-1（可选）"}},
     ["target","target_type","comment"])
 
 UPDATE_BESTIARY_TOOL = _tool("update_bestiary_entry",
@@ -288,6 +293,18 @@ GET_LOCATION_CARD_TOOL = _tool("get_location_card",
     {"name": {"type": "string", "description": "地点名称或ID"}},
     ["name"])
 
+GET_ENTITY_GRAPH_TOOL = _tool("get_entity_graph",
+    "查询某角色/地点/生物/剧情的局部知识图谱子图，返回相关节点与关系（含亲密度/置信度）。用于确认人物关系、势力网络或剧情关联。",
+    {"name": {"type": "string", "description": "实体名称（NPC/地点/生物/剧情旗标）"},
+     "depth": {"type": "integer", "minimum": 1, "maximum": 2, "description": "关系深度，默认1"}},
+    ["name"])
+
+UPDATE_KNOWLEDGE_GRAPH_TOOL = _tool("update_knowledge_graph",
+    "当剧情导致知识图谱应当变化时调用：由知识图谱子AGENT从文本中识别实体与关系并更新（结盟/敌对/信任/位置关联/共同卷入等），返回更新结果或错误。",
+    {"text": {"type": "string", "description": "描述本次关系变化的文本（叙事片段/事件说明）"},
+     "hint": {"type": "string", "description": "可选：提示应关注的关系类型或实体"}},
+    ["text"])
+
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, EQUIP_ITEM_TOOL, ADD_MEMORY_TOOL, RECORD_PLOT_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
@@ -299,4 +316,5 @@ DM_TOOLS = [
     GET_CHARACTER_STATE_TOOL, ADJUST_RESOURCE_TOOL, CAST_SPELL_TOOL,
     LEARN_SPELL_TOOL, FORGET_SPELL_TOOL, SEARCH_NPC_TOOL, ADJUST_NPC_TOOL,
     ADJUST_BESTIARY_TOOL, PROMOTE_NPC_TOOL, GET_BESTIARY_CARD_TOOL, GET_LOCATION_CARD_TOOL,
+    GET_ENTITY_GRAPH_TOOL, UPDATE_KNOWLEDGE_GRAPH_TOOL,
 ]

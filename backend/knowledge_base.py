@@ -30,6 +30,7 @@ from backend.engine.game_systems import (
     get_system,
 )
 from backend.scenario_importer import split_text
+from backend.engine.rag_utils import embed_text, cosine as dense_cosine
 
 DEFAULT_KB_PATH = Path("knowledge_base/documents.json")
 
@@ -100,6 +101,8 @@ class KnowledgeBase:
         self.path = Path(path)
         self.documents: list[dict[str, Any]] = []
         self._loaded = False
+        # 稠密向量缓存：{(doc_id, chunk_index, content_md5): vector}
+        self._vec_cache: dict[tuple[str, int, str], list[float]] = {}
 
     def load(self) -> "KnowledgeBase":
         if self._loaded:
@@ -280,10 +283,22 @@ class KnowledgeBase:
         tfidf_norm = _norm(tfidf_scores)
         bm25_norm = _norm(bm25_scores)
 
+        # 稠密向量检索（本地哈希嵌入，缓存加速）
+        dense_scores: list[float] = []
+        q_vec = embed_text(query)
+        for doc, idx, chunk in candidates:
+            key = (doc["id"], idx, hashlib.md5(chunk.encode("utf-8", errors="replace")).hexdigest())
+            vec = self._vec_cache.get(key)
+            if vec is None:
+                vec = embed_text(chunk)
+                self._vec_cache[key] = vec
+            dense_scores.append(max(0.0, dense_cosine(q_vec, vec)))
+        dense_norm = _norm(dense_scores)
+
         scored = []
-        for (doc, idx, chunk), tfidf_v, bm25_v in zip(candidates, tfidf_norm, bm25_norm):
-            # 0.6 TF-IDF + 0.4 BM25 融合
-            final = 0.6 * tfidf_v + 0.4 * bm25_v
+        for (doc, idx, chunk), tfidf_v, bm25_v, dense_v in zip(candidates, tfidf_norm, bm25_norm, dense_norm):
+            # 0.45 稠密向量 + 0.3 TF-IDF + 0.25 BM25 三路融合
+            final = 0.45 * dense_v + 0.3 * tfidf_v + 0.25 * bm25_v
             if final > 0:
                 scored.append({
                     "doc_id": doc["id"],

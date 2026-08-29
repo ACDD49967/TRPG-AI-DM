@@ -79,7 +79,7 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
         </p>
       </div>
 
-      {/* HP + MP */}
+      {/* HP / 状态 */}
       <div className="space-y-1.5">
         <div>
           <div className="flex justify-between text-[9px] mb-0.5">

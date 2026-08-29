@@ -26,6 +26,7 @@ from openai import AsyncOpenAI
 
 from backend.config import ensure_valid_api_key, settings
 from backend.engine.game_systems import detect_game_system
+from backend.engine.rag_utils import embed_text, cosine as dense_cosine
 from backend.engine.llm_utils import strip_refusal as _strip_refusal
 
 
@@ -249,25 +250,35 @@ def split_text_semantic(
     chunks: list[str] = []
     current: list[str] = []
     current_len = 0
-    current_vec: dict[str, int] | None = None
+    current_emb: list[float] | None = None
+    current_count = 0
 
     def flush():
-        nonlocal current, current_len, current_vec
+        nonlocal current, current_len, current_emb, current_count
         if current:
             chunks.append(_join_chunk(current))
         current = []
         current_len = 0
-        current_vec = None
+        current_emb = None
+        current_count = 0
 
     for sent in raw_sentences:
-        vec = _vec(sent)
-        if current and current_len >= min_chunk_size:
-            sim = _cosine(current_vec or {}, vec)
+        emb = embed_text(sent)
+        if current and current_len >= min_chunk_size and current_emb:
+            mean = [v / current_count for v in current_emb]
+            sim = dense_cosine(mean, emb)
             if sim < similarity_threshold or current_len + len(sent) > max_chunk_size:
                 flush()
         current.append(sent)
         current_len += len(sent)
-        current_vec = vec if current_vec is None else _merge_vec(current_vec, vec)
+        if current_emb is None:
+            current_emb = list(emb)
+            current_count = 1
+        else:
+            for i, v in enumerate(emb):
+                if i < len(current_emb):
+                    current_emb[i] += v
+            current_count += 1
 
     flush()
     # 极长块保护：语义切分结果中若仍有超过 max_chunk_size 的块，用硬切补齐

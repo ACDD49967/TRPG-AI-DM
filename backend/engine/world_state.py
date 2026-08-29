@@ -254,6 +254,9 @@ class WorldState:
     # 幕后剧情事件：玩家不在场时世界仍在推进
     background_events: list[dict] = field(default_factory=list)
 
+    # 显式关系边（类知识图谱）：source/target/relation/strength/confidence/notes
+    relations: list[dict] = field(default_factory=list)
+
     change_log: list[dict] = field(default_factory=list)
     _storage_dir: str = field(default="world_states", repr=False)
 
@@ -306,6 +309,7 @@ class WorldState:
             ]
             ws.turn_count = data.get("turn_count", 0)
             ws.background_events = data.get("background_events", [])
+            ws.relations = data.get("relations", [])
             return ws
         return cls(session_id=session_id, _storage_dir=storage_dir)
 
@@ -325,6 +329,7 @@ class WorldState:
             "character_notes": [asdict(cn) for cn in self.character_notes],
             "turn_count": self.turn_count,
             "background_events": self.background_events,
+            "relations": self.relations,
             "change_log": self.change_log,
         }
         with open(path, "w", encoding="utf-8") as f:
@@ -448,6 +453,59 @@ class WorldState:
         if len(self.background_events) > 100:
             self.background_events = self.background_events[-100:]
         self.save()
+
+    def add_or_update_relation(
+        self,
+        source: str,
+        target: str,
+        relation: str = "related",
+        strength: float | None = None,
+        confidence: float | None = None,
+        notes: str = "",
+    ) -> dict:
+        """新增/更新一条显式关系边（亲密度 0-100，置信度 0-1）。"""
+        source = (source or "").strip()
+        target = (target or "").strip()
+        if not source or not target or source == target:
+            return {}
+        relation = (relation or "related").strip()
+        try:
+            strength = None if strength is None else max(0.0, min(100.0, float(strength)))
+        except (TypeError, ValueError):
+            strength = None
+        try:
+            confidence = None if confidence is None else max(0.0, min(1.0, float(confidence)))
+        except (TypeError, ValueError):
+            confidence = None
+        for rel in self.relations:
+            if rel.get("source") == source and rel.get("target") == target and rel.get("relation") == relation:
+                if strength is not None:
+                    rel["strength"] = strength
+                if confidence is not None:
+                    rel["confidence"] = confidence
+                if notes:
+                    rel["notes"] = notes
+                self.save()
+                return rel
+        rel = {
+            "source": source,
+            "target": target,
+            "relation": relation,
+            "strength": strength if strength is not None else 50.0,
+            "confidence": confidence if confidence is not None else 0.5,
+            "notes": notes or "",
+        }
+        self.relations.append(rel)
+        self.save()
+        return rel
+
+    def get_relations_for(self, name: str) -> list[dict]:
+        """返回与某实体相关的所有显式关系边。"""
+        name = (name or "").strip()
+        if not name:
+            return []
+        return [r for r in self.relations
+                if r.get("source") == name or r.get("target") == name]
 
     def advance_turn(self):
         """推进轮数。"""
