@@ -312,7 +312,8 @@ LLM_SPLIT_PROMPT = """你是 TRPG 模组编辑。请把以下剧本/知识文本
 1. 按场景、章节、主题、事件边界切分，不要生硬按字数截断。
 2. 每段 600-1200 字；若原文极长可多分段。
 3. 保留标题、专有名词、规则关键词；不要改写内容。
-4. 只输出 JSON 数组，每个元素是字符串片段，不要解释和代码块。
+4. 只输出一个 JSON 对象，格式必须严格为：{"chunks": ["片段1", "片段2", ...]}
+5. 不要输出 Markdown 代码块、不要解释、不要其他文字。
 
 文本：
 {text}
@@ -339,17 +340,29 @@ async def llm_split_text(
         progress_callback("LLM 智能切分", 5, "正在调用 LLM 划分语义片段...")
     text = sanitize_user_text(text)
     try:
-        mult = 1.8 if thinking_strength == "high" else (0.6 if thinking_strength == "low" else 1.0)
-        max_tokens = min(8000, int(4000 * mult))
+        # 切分任务直接给足输出上限，避免 reasoning 模型把 token 花在思考上导致 content 为空
+        max_tokens = 8000
         # 统一流式：超时只等待首个响应头，避免长文本生成中途被掐断
-        stream = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": LLM_SPLIT_PROMPT.format(text=text[:24000])}],
-                max_tokens=max_tokens, temperature=0.3, stream=True,
-            ),
-            timeout=120,
-        )
+        # 优先使用 JSON 输出模式（部分服务商支持）；不支持时自动降级为普通模式
+        try:
+            stream = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": LLM_SPLIT_PROMPT.format(text=text[:24000])}],
+                    max_tokens=max_tokens, temperature=0.1, stream=True,
+                    response_format={"type": "json_object"},
+                ),
+                timeout=120,
+            )
+        except Exception:
+            stream = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": LLM_SPLIT_PROMPT.format(text=text[:24000])}],
+                    max_tokens=max_tokens, temperature=0.1, stream=True,
+                ),
+                timeout=120,
+            )
         content = ""
         while True:
             try:
@@ -363,7 +376,17 @@ async def llm_split_text(
             if d and d.content:
                 content += d.content
         content = content.strip()
-        data = extract_json_array(content)
+
+        # 优先按 {"chunks":[...]} 解析，兼容旧版直接返回数组
+        data = None
+        try:
+            obj = extract_json_object(content)
+            data = obj.get("chunks") or obj.get("segments") or obj.get("data") or []
+        except Exception:
+            try:
+                data = extract_json_array(content)
+            except Exception:
+                data = None
         if isinstance(data, list):
             chunks = [str(x.get("content") if isinstance(x, dict) else x).strip() for x in data if str(x.get("content") if isinstance(x, dict) else x).strip()]
             if chunks:
