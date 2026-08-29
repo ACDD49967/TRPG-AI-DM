@@ -368,10 +368,12 @@ async def llm_split_text(
             chunks = [str(x.get("content") if isinstance(x, dict) else x).strip() for x in data if str(x.get("content") if isinstance(x, dict) else x).strip()]
             if chunks:
                 return chunks
-    except Exception:
-        pass
-    if progress_callback:
-        progress_callback("LLM 切分失败，回退本地切分", 5, "使用本地切分器继续")
+    except Exception as e:
+        if progress_callback:
+            progress_callback("LLM 切分失败", 5, f"LLM出错: {e}；回退本地切分")
+    else:
+        if progress_callback:
+            progress_callback("LLM 切分失败", 5, "LLM未返回有效结构；回退本地切分")
     return split_text_naive(text, chunk_size=900)
 
 
@@ -442,6 +444,7 @@ async def generate_summary(
     source_text: str,
     max_chars: int = 450,
     token_callback=None,
+    error_callback=None,
 ) -> str:
     """调用 LLM 生成剧本总结；失败时使用结构化降级摘要，而不是简单截断。"""
     import asyncio
@@ -493,6 +496,8 @@ async def generate_summary(
             print(f"[ScenarioImporter] 总结生成第{attempt}次失败: {e}")
         await asyncio.sleep(1)
     print(f"[ScenarioImporter] 总结生成最终失败: {last_err}，使用结构化降级摘要")
+    if error_callback is not None:
+        error_callback(last_err or "未知错误")
     return _fallback_summary(outline, max_chars)
 
 
@@ -588,7 +593,10 @@ async def generate_scenario_from_text(
 
     if progress_callback:
         progress_callback("生成剧本总结", 88, "正在生成约400字剧本总结...")
-    summary = await generate_summary(client, model, outline_text, source_text, token_callback=token_callback)
+    summary = await generate_summary(
+        client, model, outline_text, source_text, token_callback=token_callback,
+        error_callback=lambda msg: progress_callback("LLM警告", 0, f"总结生成出错: {msg}") if progress_callback else None,
+    )
     if progress_callback:
         progress_callback("保存剧本与知识库", 94, "正在保存剧本并写入知识库...")
 

@@ -650,6 +650,9 @@ export default function StartScreen(){
             if(data.type==='gen_token'){ setImportLive(prev=>prev+data.token); }
             else if(data.type==='progress'){
               setImportProgress(Math.min(99, data.percent||0));
+              if(data.detail && /出错|错误|失败|警告/.test(String(data.detail))){
+                setImportErr(prev => prev ? `${prev}\n${data.detail}` : String(data.detail));
+              }
             }else if(data.type==='complete'){
               setWorldOutline(data.content);setWorldScore(data.score);
               setWorldStateJson(data.world_state_json||'');

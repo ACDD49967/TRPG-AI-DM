@@ -257,7 +257,7 @@ def _validate_extracted_state(data: dict) -> list[str]:
 
 async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
                max_tokens: int = 4000, temp: float = 0.85, timeout: float = 180.0,
-               thinking_strength: str = "medium", token_callback=None) -> str:
+               thinking_strength: str = "medium", token_callback=None, error_callback=None) -> str:
     """单次LLM调用，统一使用流式输出。
 
     流式模式下超时只作用于“等待首个响应头”，不会在模型长文本生成中途掐断，
@@ -313,6 +313,8 @@ async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
             print(f"[WorldBuilder] LLM调用第{attempt}次失败: {e}")
         await asyncio.sleep(1)
     print(f"[WorldBuilder] LLM调用最终失败: {last_err}，降级处理")
+    if error_callback is not None:
+        error_callback(last_err or "未知错误")
     return ""
 
 
@@ -417,6 +419,11 @@ async def build_world(
     if extra_attributes:
         extra_attributes = {str(k): sanitize_user_text(str(v)) for k, v in extra_attributes.items()}
 
+    # LLM 出错时把原因回传给上层（前端可显示）
+    def _llm_error(msg: str):
+        if progress_callback is not None:
+            progress_callback("LLM警告", 0, f"LLM出错: {msg}")
+
     # P2修复：为世界生成增加宽松的评分基线，避免无限修订循环
 
     ref = f"\n## 参考剧本\n{reference_script}" if reference_script.strip() else ""
@@ -446,7 +453,7 @@ async def build_world(
     step1 = await _llm(client, model,
         "你是一位获奖奇幻小说家。创作深刻、独特的世界观。",
         _with_knowledge(STEP1_CONFLICT.format(style_directive=style_directive, player_input=pi, reference=ref), "世界观 冲突 势力 阵营 魔法 社会", game_system, 3, username),
-        max_tokens=3000, temp=0.9, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+        max_tokens=3000, temp=0.9, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback, error_callback=_llm_error)
     if not step1:
         raise RuntimeError("世界生成失败：模型调用多次超时，请检查模型/网络后重试")
 
@@ -456,7 +463,7 @@ async def build_world(
     step2 = await _llm(client, model,
         "你是一位TRPG冒险设计师。设计引人入胜的三幕结构。",
         _with_knowledge(STEP2_PLOT.format(style_directive=style_directive, world_context=step1), "三幕结构 剧情节点 转折 结局", game_system, 3, username),
-        max_tokens=4000, temp=0.85, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+        max_tokens=4000, temp=0.85, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback, error_callback=_llm_error)
     if not step2:
         step2 = "主线采用经典三幕结构：第一幕引入冲突，第二幕遭遇转折与背叛，第三幕迎来高潮与结局。具体情节建议结合世界观继续细化。"
 
@@ -466,7 +473,7 @@ async def build_world(
     step3 = await _llm(client, model,
         "你是一位角色设计大师。创造有深度的NPC网络。",
         _with_knowledge(STEP3_NPC.format(style_directive=style_directive, world_context=step1, plot_context=step2), "NPC 反派 动机 支线 关系", game_system, 3, username),
-        max_tokens=3500, temp=0.9, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+        max_tokens=3500, temp=0.9, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback, error_callback=_llm_error)
     if not step3:
         step3 = "关键NPC网络：围绕核心冲突设置至少五名角色，包含盟友、对手与隐藏敌意的中立者，并安排两条与主线隐性关联的支线。"
 
@@ -476,7 +483,7 @@ async def build_world(
     step4 = await _llm(client, model,
         "你是一位TRPG遭遇设计师。设计挑战与秘密。",
         _with_knowledge(STEP4_ENCOUNTERS.format(style_directive=style_directive, world_context=step1, plot_context=step2, npc_context=step3), "遭遇 战斗 陷阱 魔法物品 秘密", game_system, 3, username),
-        max_tokens=3500, temp=0.85, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+        max_tokens=3500, temp=0.85, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback, error_callback=_llm_error)
     if not step4:
         step4 = "遭遇与隐藏内容：设计五场类型各异的遭遇（战斗、社交、探索、陷阱），三处秘密区域，以及一件带有背景故事的独特宝物。"
 
@@ -487,7 +494,7 @@ async def build_world(
     merge_result = await _llm(client, model,
         "你是一位TRPG模组主编。诚实评分，合理打分，不要过分苛刻。",
         MERGE_PROMPT.format(style_directive=style_directive, step1=step1, step2=step2, step3=step3, step4=step4),
-        max_tokens=5000, temp=0.4, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+        max_tokens=5000, temp=0.4, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback, error_callback=_llm_error)
 
     try:
         scored = _extract_json(merge_result)
@@ -521,7 +528,7 @@ async def build_world(
                     "issues": scored.get("issues", []),
                     "suggestions": scored.get("suggestions", []),
                 }, ensure_ascii=False)),
-            max_tokens=6000, temp=0.5, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+            max_tokens=6000, temp=0.5, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback, error_callback=_llm_error)
 
         try:
             rev_data = _extract_json(rev_result)
@@ -537,7 +544,7 @@ async def build_world(
         rescore = await _llm(client, model,
             "你是一位公平的TRPG模组评委。诚实评价，不过分苛刻也不故意放水。",
             f"新大纲:\n{outline[:4000]}\n\n请输出JSON: {{\"total_score\":数字(0-100)}}",
-            max_tokens=1200, temp=0.3, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+            max_tokens=1200, temp=0.3, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback, error_callback=_llm_error)
         try:
             rescore_data = _extract_json(rescore)
             new_score = rescore_data.get("total_score", score)
@@ -571,7 +578,7 @@ async def build_world(
         result = await _llm(client, model,
             "你是一位专门抽取TRPG角色、地点与剧情旗标的专家。只返回JSON。",
             EXTRACT_STATE_FALLBACK_PROMPT.format(outline=outline[:20000]),
-            max_tokens=2500, temp=0.2, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+            max_tokens=2500, temp=0.2, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback, error_callback=_llm_error)
         if not result:
             return {"npcs": [], "locations": [], "plot_flags": [], "world_rules": ""}
         try:
@@ -591,7 +598,7 @@ async def build_world(
         result = await _llm(client, model,
             "你是专业TRPG字段校验员。根据错误修正JSON。只输出修正后的完整JSON。",
             fix_prompt,
-            max_tokens=2500, temp=0.1, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback)
+            max_tokens=2500, temp=0.1, timeout=180, thinking_strength=thinking_strength, token_callback=token_callback, error_callback=_llm_error)
         if not result:
             return data
         try:
