@@ -3019,15 +3019,35 @@ async def generate_opening_scene(state: GameSessionState) -> str:
     for attempt in range(1, 3):
         current_max_tokens = max_tokens if attempt == 1 else min(max_tokens * 2, 8000)
         try:
-            stream = await client.chat.completions.create(
-                model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],
-                max_tokens=current_max_tokens, temperature=temp, stream=True,
-            )
-            full = ""
-            async for chunk in stream:
-                if state.aborted: await stream.close(); break
-                d = chunk.choices[0].delta if chunk.choices else None
-                if d and d.content: full += d.content; await push_narrative_token(state, d.content)
+            if attempt == 1:
+                # 第一次流式，带 60s 空闲超时，防止卡死
+                stream = await client.chat.completions.create(
+                    model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],
+                    max_tokens=current_max_tokens, temperature=temp, stream=True,
+                )
+                full = ""
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(stream.__anext__(), timeout=60)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        print(f"[Opening] 第{attempt}次流式空闲超时(60s无新数据)")
+                        raise RuntimeError("流式响应空闲超时")
+                    if state.aborted:
+                        await stream.close()
+                        break
+                    d = chunk.choices[0].delta if chunk.choices else None
+                    if d and d.content:
+                        full += d.content
+                        await push_narrative_token(state, d.content)
+            else:
+                # 第二次非流式，避免部分服务商流式返回空
+                resp = await client.chat.completions.create(
+                    model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],
+                    max_tokens=current_max_tokens, temperature=temp,
+                )
+                full = resp.choices[0].message.content or ""
 
             full = sanitize_narrative(full)
             if full:
