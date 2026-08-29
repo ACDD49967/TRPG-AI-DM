@@ -370,7 +370,11 @@ async def llm_split_text(
                 return chunks
     except Exception as e:
         if progress_callback:
-            progress_callback("LLM 切分失败", 5, f"LLM出错: {e}；回退本地切分")
+            if isinstance(e, json.JSONDecodeError):
+                detail = "LLM未返回有效JSON（输出为空或被截断），回退本地切分"
+            else:
+                detail = f"LLM出错: {e}；回退本地切分"
+            progress_callback("LLM 切分失败", 5, detail)
     else:
         if progress_callback:
             progress_callback("LLM 切分失败", 5, "LLM未返回有效结构；回退本地切分")
