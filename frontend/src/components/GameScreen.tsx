@@ -125,9 +125,16 @@ export default function GameScreen() {
     return { x: 200 + radius * Math.cos(angle), y: 200 + radius * Math.sin(angle) };
   });
   const currentSid = status.scenario_id || '';
-  const scopedMaps = showGlobalRef || !currentSid ? maps : maps.filter(m => m.scenario_id === currentSid);
-  const scopedBestiary = showGlobalRef || !currentSid ? bestiary : bestiary.filter(b => b.scenario_id === currentSid);
-  const scopedSpells = showGlobalRef || !currentSid ? spells : spells.filter(s => s.scenario_id === currentSid);
+  const scenarioMaps = maps.filter(m => m.scenario_id === currentSid);
+  const globalMaps = maps.filter(m => !m.scenario_id);
+  const scenarioBestiary = bestiary.filter(b => b.scenario_id === currentSid);
+  const globalBestiary = bestiary.filter(b => !b.scenario_id);
+  const scenarioSpells = spells.filter(s => s.scenario_id === currentSid);
+  const globalSpells = spells.filter(s => !s.scenario_id);
+  // 默认优先显示当前剧本内容；若当前剧本没有条目，则回退显示通用参考，避免图鉴空白
+  const scopedMaps = showGlobalRef || !currentSid ? maps : (scenarioMaps.length > 0 ? scenarioMaps : globalMaps);
+  const scopedBestiary = showGlobalRef || !currentSid ? bestiary : (scenarioBestiary.length > 0 ? scenarioBestiary : globalBestiary);
+  const scopedSpells = showGlobalRef || !currentSid ? spells : (scenarioSpells.length > 0 ? scenarioSpells : globalSpells);
   const filteredMaps = scopedMaps.filter(m => !mapQuery || q(`${m.name} ${m.description_zh||''} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')} ${m.details?.type||''} ${m.details?.status||''} ${m.details?.culture||''} ${m.details?.notable_figures||''} ${m.details?.dangers||''}`).includes(q(mapQuery)));
   const filteredBestiary = scopedBestiary.filter(b => !beastQuery || q(`${b.name} ${b.description_zh||''} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''} ${b.details?.lore||''}`).includes(q(beastQuery)));
 

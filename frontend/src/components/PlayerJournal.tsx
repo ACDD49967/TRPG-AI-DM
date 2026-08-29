@@ -146,9 +146,12 @@ export default function PlayerJournal(){
     const sid=status.scenario_id||'';
     fetch(`/api/maps?username=${encodeURIComponent(u)}&scenario_id=${encodeURIComponent(sid)}`)
       .then(r=>r.json()).then(d=>{
-        // 右侧边栏只关联当前剧本内的地点，剧本外通用内容不注入玩家视图
+        // 右侧边栏优先关联当前剧本地点；若剧本无地点，则回退显示通用参考地点，避免空白
         const all = d.maps||[];
-        setMapsDetail(sid ? all.filter((m: {scenario_id?:string})=>m.scenario_id===sid) : []);
+        if (!sid) { setMapsDetail([]); return; }
+        const scenario = all.filter((m: {scenario_id?:string})=>m.scenario_id===sid);
+        const global = all.filter((m: {scenario_id?:string})=>!m.scenario_id);
+        setMapsDetail(scenario.length > 0 ? scenario : global);
       }).catch(()=>{});
   },[status.username,status.scenario_id]);
 
