@@ -104,6 +104,7 @@ export default function GameScreen() {
     if (!sessionId) return;
     try {
       const params = new URLSearchParams();
+      params.set('username', status.username || 'default');
       if (name) params.set('name', name);
       if (graphQuery) params.set('query', graphQuery);
       const r = await fetch(`/api/game/${sessionId}/graph?${params.toString()}`);

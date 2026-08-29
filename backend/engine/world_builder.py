@@ -273,37 +273,50 @@ async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
     for attempt in range(1, 3):
         current_max_tokens = max_tokens if attempt == 1 else min(max(max_tokens * 2, 8000), 8000)
         try:
-            stream = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=model,
-                    messages=[{"role":"system","content":system},{"role":"user","content":user}],
-                    max_tokens=current_max_tokens, temperature=temp, stream=True),
-                timeout=timeout,
-            )
-            content = ""
-            last_chunk = None
-            while True:
-                try:
-                    chunk = await asyncio.wait_for(stream.__anext__(), timeout=60)
-                except StopAsyncIteration:
-                    break
-                except asyncio.TimeoutError:
-                    print(f"[WorldBuilder] LLM流式调用第{attempt}次空闲超时(60s无新数据)")
-                    raise RuntimeError("流式响应空闲超时")
-                last_chunk = chunk
-                d = chunk.choices[0].delta if chunk.choices else None
-                if d and d.content:
-                    content += d.content
-                    if token_callback is not None:
-                        token_callback(d.content)
+            if attempt == 1:
+                # 第一次优先流式：避免长文本生成中途被掐断
+                stream = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=model,
+                        messages=[{"role":"system","content":system},{"role":"user","content":user}],
+                        max_tokens=current_max_tokens, temperature=temp, stream=True),
+                    timeout=timeout,
+                )
+                content = ""
+                last_chunk = None
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(stream.__anext__(), timeout=60)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        print(f"[WorldBuilder] LLM流式调用第{attempt}次空闲超时(60s无新数据)")
+                        raise RuntimeError("流式响应空闲超时")
+                    last_chunk = chunk
+                    d = chunk.choices[0].delta if chunk.choices else None
+                    if d and d.content:
+                        content += d.content
+                        if token_callback is not None:
+                            token_callback(d.content)
+                reasoning = ""
+                if last_chunk is not None and last_chunk.choices:
+                    delta = getattr(last_chunk.choices[0], "delta", None)
+                    reasoning = getattr(delta, "reasoning_content", None) if delta is not None else None
+            else:
+                # 第二次改用非流式：部分服务商流式可能返回空，非流式更稳
+                resp = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=model,
+                        messages=[{"role":"system","content":system},{"role":"user","content":user}],
+                        max_tokens=current_max_tokens, temperature=temp),
+                    timeout=timeout,
+                )
+                content = resp.choices[0].message.content or ""
+                reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
             content = _strip_refusal(content)
             if content:
                 return content
-            reasoning = ""
-            if last_chunk is not None and last_chunk.choices:
-                delta = getattr(last_chunk.choices[0], "delta", None)
-                reasoning = getattr(delta, "reasoning_content", None) if delta is not None else None
-            print(f"[WorldBuilder] LLM流式调用第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
+            print(f"[WorldBuilder] LLM调用第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
             raise RuntimeError("空响应")
         except asyncio.TimeoutError:
             last_err = f"超时({timeout}s，等待首个响应)"
