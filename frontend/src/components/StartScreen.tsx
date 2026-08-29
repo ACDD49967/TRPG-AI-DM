@@ -143,7 +143,7 @@ export default function StartScreen(){
   const [bgeRerankerDownloaded,setBgeRerankerDownloaded]=useState(false);
   const [modelInputMode,setModelInputMode]=useState<'select'|'manual'>('manual');
   const [thinkingStrength,setThinkingStrength]=useState<'low'|'medium'|'high'>(()=>{try{const v=JSON.parse(localStorage.getItem('dnd_thinking')||'\"medium\"');return v==='low'||v==='high'?v:'medium';}catch{return 'medium';}});
-  const [endpointPresets,setEndpointPresets]=useState<Array<{name:string;baseUrl:string}>>(()=>{try{return JSON.parse(localStorage.getItem('dnd_endpoints')||'[]')}catch{return[]}});
+  const [endpointPresets,setEndpointPresets]=useState<Array<{name:string;baseUrl:string;apiKey?:string;modelName?:string}>>(()=>{try{return JSON.parse(localStorage.getItem('dnd_endpoints')||'[]')}catch{return[]}});
   const [endpointName,setEndpointName]=useState('');
   const [scenarioMode,setScenarioMode]=useState<'existing'|'split'|'generate'>('generate');
   const [username,setUsername]=useState(cfg.username);
@@ -314,7 +314,12 @@ export default function StartScreen(){
   const saveEndpointPreset=()=>{
     const name=endpointName.trim();
     if(!name||!baseUrl.trim())return;
-    setEndpointPresets([...endpointPresets.filter(e=>e.name!==name),{name,baseUrl:baseUrl.trim()}]);
+    setEndpointPresets([...endpointPresets.filter(e=>e.name!==name),{
+      name,
+      baseUrl:baseUrl.trim(),
+      apiKey:apiKey.trim() || undefined,
+      modelName:modelName.trim() || undefined,
+    }]);
     setEndpointName('');
   };
   const deleteEndpointPreset=(name:string)=>{
@@ -1036,7 +1041,11 @@ export default function StartScreen(){
                   const name=e.target.value;
                   if(!name)return;
                   const p=endpointPresets.find(x=>x.name===name);
-                  if(p)setBaseUrl(p.baseUrl);
+                  if(p){
+                    setBaseUrl(p.baseUrl);
+                    if(p.apiKey) setApiKey(p.apiKey);
+                    if(p.modelName) setModelName(p.modelName);
+                  }
                 }}
                 className="input-field text-xs py-1 px-2 w-36"
               >
