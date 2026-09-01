@@ -833,18 +833,30 @@ async def knowledge_llm_process(payload: dict):
 async def get_knowledge_vector_mode():
     from backend.knowledge_base import get_knowledge_base
     kb = get_knowledge_base()
-    return {"mode": kb.get_vector_mode(), "model_ready": kb.model_ready(), "reranker_ready": kb.reranker_ready()}
+    return {
+        "mode": kb.get_vector_mode(),
+        "model_ready": kb.model_ready(),
+        "small_ready": bool((settings.SMALL_EMBEDDING_DIR or "").strip() and _os.path.isdir(settings.SMALL_EMBEDDING_DIR)),
+        "bge_ready": bool((settings.BGE_M3_DIR or "").strip() and _os.path.isdir(settings.BGE_M3_DIR)) or bool((settings.BGE_MODEL_PATH or "").strip() and _os.path.exists(settings.BGE_MODEL_PATH)),
+        "reranker_ready": kb.reranker_ready(),
+    }
 
 
 @app.post("/api/knowledge/vector-mode")
 async def set_knowledge_vector_mode(payload: dict):
     from backend.knowledge_base import get_knowledge_base
     mode = str(payload.get("mode") or "local")
-    if mode not in ("local", "bge"):
-        raise HTTPException(status_code=400, detail="mode 仅支持 local 或 bge")
+    if mode not in ("local", "small", "bge"):
+        raise HTTPException(status_code=400, detail="mode 仅支持 local、small 或 bge")
     kb = get_knowledge_base()
     kb.set_vector_mode(mode)
-    return {"mode": kb.get_vector_mode(), "model_ready": kb.model_ready(), "reranker_ready": kb.reranker_ready()}
+    return {
+        "mode": kb.get_vector_mode(),
+        "model_ready": kb.model_ready(),
+        "small_ready": bool((settings.SMALL_EMBEDDING_DIR or "").strip() and _os.path.isdir(settings.SMALL_EMBEDDING_DIR)),
+        "bge_ready": bool((settings.BGE_M3_DIR or "").strip() and _os.path.isdir(settings.BGE_M3_DIR)) or bool((settings.BGE_MODEL_PATH or "").strip() and _os.path.exists(settings.BGE_MODEL_PATH)),
+        "reranker_ready": kb.reranker_ready(),
+    }
 
 
 @app.post("/api/knowledge/seed")
@@ -1642,6 +1654,65 @@ async def download_bge_model_stream(payload: dict):
 
                 size = sum(f.stat().st_size for f in Path(target_dir).rglob("*") if f.is_file())
                 yield f"data: {json.dumps({'type':'complete','kind':'reranker','path':target_dir,'size':size}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','msg':str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/api/models/download-small/stream")
+async def download_small_models_stream():
+    """一键安装并下载小中文向量模型 + 小重排模型（可作为 BGE 的轻量基底）。"""
+    from pathlib import Path
+    from fastapi.responses import StreamingResponse
+    from backend.model_setup import ensure_small_dependencies, download_hf_repo
+
+    async def event_stream():
+        try:
+            yield f"data: {json.dumps({'type':'status','msg':'正在安装小模型依赖（sentence-transformers 等）...'}, ensure_ascii=False)}\n\n"
+            await ensure_small_dependencies()
+            yield f"data: {json.dumps({'type':'status','msg':'依赖安装完成，开始下载小中文向量模型...'}, ensure_ascii=False)}\n\n"
+
+            # 下载小向量模型
+            q: asyncio.Queue = asyncio.Queue()
+            async def _cb(pct, path):
+                await q.put((pct, path))
+            task = asyncio.create_task(download_hf_repo(settings.SMALL_EMBEDDING_REPO, str(settings.SMALL_EMBEDDING_DIR), _cb))
+            while True:
+                if task.done():
+                    while not q.empty():
+                        pct, path = q.get_nowait()
+                        yield f"data: {json.dumps({'type':'progress','percent':pct,'file':path}, ensure_ascii=False)}\n\n"
+                    break
+                try:
+                    pct, path = await asyncio.wait_for(q.get(), timeout=0.2)
+                    yield f"data: {json.dumps({'type':'progress','percent':pct,'file':path}, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    continue
+            await task
+
+            # 如果重排模型还没下载，则一并下载小重排模型
+            reranker_dir = str(settings.SMALL_RERANKER_DIR or settings.BGE_RERANKER_PATH or "")
+            if not reranker_dir or not Path(reranker_dir).exists():
+                yield f"data: {json.dumps({'type':'status','msg':'正在下载小重排模型...'}, ensure_ascii=False)}\n\n"
+                q2: asyncio.Queue = asyncio.Queue()
+                async def _cb2(pct, path):
+                    await q2.put((pct, path))
+                task2 = asyncio.create_task(download_hf_repo(settings.SMALL_RERANKER_REPO, reranker_dir, _cb2))
+                while True:
+                    if task2.done():
+                        while not q2.empty():
+                            pct, path = q2.get_nowait()
+                            yield f"data: {json.dumps({'type':'progress','percent':pct,'file':path}, ensure_ascii=False)}\n\n"
+                        break
+                    try:
+                        pct, path = await asyncio.wait_for(q2.get(), timeout=0.2)
+                        yield f"data: {json.dumps({'type':'progress','percent':pct,'file':path}, ensure_ascii=False)}\n\n"
+                    except asyncio.TimeoutError:
+                        continue
+                await task2
+
+            yield f"data: {json.dumps({'type':'complete','kind':'small','embedding_dir':str(settings.SMALL_EMBEDDING_DIR),'reranker_dir':reranker_dir}, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type':'error','msg':str(e)}, ensure_ascii=False)}\n\n"
 

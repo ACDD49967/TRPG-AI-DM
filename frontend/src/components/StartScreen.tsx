@@ -138,9 +138,13 @@ export default function StartScreen(){
   const [bgeBusy,setBgeBusy]=useState<'embedding'|'reranker'|null>(null);
   const [bgeStatus,setBgeStatus]=useState('');
   const [bgeProgress,setBgeProgress]=useState<number|null>(null);
-  const [vectorMode,setVectorMode]=useState<'local'|'bge'>('local');
+  const [vectorMode,setVectorMode]=useState<'local'|'small'|'bge'>('local');
   const [bgeDownloaded,setBgeDownloaded]=useState(false);
   const [bgeRerankerDownloaded,setBgeRerankerDownloaded]=useState(false);
+  const [smallDownloaded,setSmallDownloaded]=useState(false);
+  const [smallBusy,setSmallBusy]=useState(false);
+  const [smallProgress,setSmallProgress]=useState<number|null>(null);
+  const [smallStatus,setSmallStatus]=useState('');
   const [modelInputMode,setModelInputMode]=useState<'select'|'manual'>('manual');
   const [thinkingStrength,setThinkingStrength]=useState<'low'|'medium'|'high'>(()=>{try{const v=JSON.parse(localStorage.getItem('dnd_thinking')||'\"medium\"');return v==='low'||v==='high'?v:'medium';}catch{return 'medium';}});
   const [endpointPresets,setEndpointPresets]=useState<Array<{name:string;baseUrl:string;apiKey?:string;modelName?:string}>>(()=>{try{return JSON.parse(localStorage.getItem('dnd_endpoints')||'[]')}catch{return[]}});
@@ -344,14 +348,15 @@ export default function StartScreen(){
       const r=await fetch('/api/knowledge/vector-mode');
       if(!r.ok)return;
       const d=await r.json();
-      setVectorMode(d.mode==='bge' && !!d.model_ready ? 'bge' : 'local');
-      setBgeDownloaded(!!d.model_ready);
+      setVectorMode(d.mode==='bge' && !!d.bge_ready ? 'bge' : d.mode==='small' && !!d.small_ready ? 'small' : 'local');
+      setBgeDownloaded(!!d.bge_ready);
+      setSmallDownloaded(!!d.small_ready);
       setBgeRerankerDownloaded(!!d.reranker_ready);
     }catch{}
   };
   useEffect(()=>{fetchVectorMode();},[]);
 
-  const setVectorModeNow=async(mode:'local'|'bge')=>{
+  const setVectorModeNow=async(mode:'local'|'small'|'bge')=>{
     try{
       await fetch('/api/knowledge/vector-mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
       setVectorMode(mode);
@@ -391,6 +396,41 @@ export default function StartScreen(){
       }
     }catch(e:unknown){setBgeStatus(`下载失败：${e instanceof Error?e.message:'未知错误'}`);}
     finally{setBgeBusy(null);setBgeProgress(null);}
+  };
+
+  const downloadSmall=async()=>{
+    setSmallBusy(true);setSmallStatus('');setSmallProgress(null);
+    try{
+      const r=await fetch('/api/models/download-small/stream',{method:'POST'});
+      if(!r.ok || !r.body){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'下载失败');}
+      const reader=r.body.getReader();
+      const decoder=new TextDecoder();
+      let buffer='';
+      while(true){
+        const {done,value}=await reader.read();
+        if(done)break;
+        buffer+=decoder.decode(value,{stream:true});
+        const events=buffer.split('\n\n');
+        buffer=events.pop()||'';
+        for(const evt of events){
+          const line=evt.split('\n').find(l=>l.startsWith('data: '));
+          if(!line)continue;
+          const data=JSON.parse(line.slice(6));
+          if(data.type==='status'){
+            setSmallStatus(data.msg || '');
+          }else if(data.type==='progress'){
+            if(typeof data.percent==='number')setSmallProgress(data.percent);
+          }else if(data.type==='complete'){
+            setSmallStatus('小模型基底下载完成');
+            setSmallDownloaded(true);
+            setVectorModeNow('small');
+          }else if(data.type==='error'){
+            throw new Error(data.msg||'下载失败');
+          }
+        }
+      }
+    }catch(e:unknown){setSmallStatus(`下载失败：${e instanceof Error?e.message:'未知错误'}`);}
+    finally{setSmallBusy(false);setSmallProgress(null);}
   };
 
   const pb = pointBuyConfig(gameSystem);
@@ -1990,14 +2030,34 @@ export default function StartScreen(){
                 </div>
               </div>
 
-              {/* 本地/模型向量模式切换 */}
+              {/* 本地/小模型/BGE 向量模式切换 */}
               <div className="bg-white rounded-lg p-3 border border-gray-200 space-y-2">
                 <p className="text-xs font-medium text-gray-700">向量检索模式</p>
-                <div className="flex gap-2">
-                  <button onClick={()=>setVectorModeNow('local')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='local'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>本地向量</button>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={()=>setVectorModeNow('local')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='local'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>本地哈希</button>
+                  <button onClick={()=>setVectorModeNow('small')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='small'?'border-sky-400 bg-sky-50 text-sky-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`} disabled={!smallDownloaded}>小模型（中文）</button>
                   <button onClick={()=>setVectorModeNow('bge')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='bge'?'border-emerald-400 bg-emerald-50 text-emerald-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`} disabled={!bgeDownloaded}>模型向量（BGE）</button>
                 </div>
-                <p className="text-[10px] text-gray-400">本地向量与模型向量使用独立缓存；模型未下载时“模型向量”不可用。</p>
+                <p className="text-[10px] text-gray-400">本地哈希零依赖；小模型为轻量中文基底；BGE 为更高质量替换。不同模式使用独立缓存。</p>
+
+                {!smallDownloaded && (
+                  <div className="pt-2 border-t border-gray-100 space-y-1.5">
+                    <p className="text-[10px] font-medium text-gray-500">下载小模型基底（m3e-small + bge-reranker-base，点击后自动安装）</p>
+                    <button onClick={downloadSmall} disabled={smallBusy} className="btn-secondary text-xs px-3 whitespace-nowrap">
+                      {smallBusy ? '下载中...' : '下载小模型基底'}
+                    </button>
+                    {smallBusy && (
+                      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        {smallProgress !== null ? (
+                          <div className="h-full bg-sky-500 transition-all" style={{width:`${smallProgress}%`}} />
+                        ) : (
+                          <div className="h-full bg-sky-500 animate-pulse" style={{width:'100%'}} />
+                        )}
+                      </div>
+                    )}
+                    {smallStatus && <p className={`text-[10px] ${smallStatus.startsWith('下载失败')?'text-red-500':'text-sky-600'}`}>{smallStatus}</p>}
+                  </div>
+                )}
               </div>
 
               {kbErr&&<p className="text-red-500 text-xs">{kbErr}</p>}

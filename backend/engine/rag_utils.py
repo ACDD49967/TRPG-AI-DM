@@ -24,15 +24,17 @@ _bge_m3 = None
 _bge_m3_tried = False
 _bge_llm = None
 _bge_tried = False
+_small_embedder = None
+_small_embedder_tried = False
 _reranker = None
 _reranker_tried = False
-_current_provider = settings.EMBEDDING_PROVIDER if settings.EMBEDDING_PROVIDER in ("local", "bge") else "local"
+_current_provider = settings.EMBEDDING_PROVIDER if settings.EMBEDDING_PROVIDER in ("local", "small", "bge") else "local"
 
 
 def set_provider(mode: str):
-    """运行时切换向量生成模式：local | bge（bge 不可用时自动回退 local）。"""
+    """运行时切换向量生成模式：local | small | bge（模型不可用时自动回退 local）。"""
     global _current_provider
-    _current_provider = mode if mode in ("local", "bge") else "local"
+    _current_provider = mode if mode in ("local", "small", "bge") else "local"
 
 
 def get_provider() -> str:
@@ -40,7 +42,10 @@ def get_provider() -> str:
 
 
 def model_ready() -> bool:
-    """BGE-M3 模型是否已就绪（目录或旧版 GGUF 文件存在，不加载）。"""
+    """任一向量模型是否已就绪（小模型 / BGE-M3 / 旧版 GGUF，仅检查路径）。"""
+    small_dir = (settings.SMALL_EMBEDDING_DIR or "").strip()
+    if small_dir and os.path.isdir(small_dir):
+        return True
     dir_path = (settings.BGE_M3_DIR or "").strip()
     if dir_path and os.path.isdir(dir_path):
         return True
@@ -49,7 +54,10 @@ def model_ready() -> bool:
 
 
 def reranker_ready() -> bool:
-    """BGE-reranker 模型目录是否已就绪（仅检查路径存在，不加载）。"""
+    """重排模型是否已就绪（小模型重排 / BGE-reranker，仅检查路径）。"""
+    small_path = (settings.SMALL_RERANKER_DIR or "").strip()
+    if small_path and os.path.exists(small_path):
+        return True
     path = (settings.BGE_RERANKER_PATH or "").strip()
     return bool(path and os.path.exists(path))
 
@@ -144,9 +152,37 @@ def _load_bge_gguf() -> Any | None:
     return _bge_llm
 
 
+def _load_small_embedder() -> Any | None:
+    """惰性加载小中文向量模型（sentence-transformers，如 m3e-small）。"""
+    global _small_embedder, _small_embedder_tried
+    if _small_embedder_tried:
+        return _small_embedder
+    _small_embedder_tried = True
+    path = (settings.SMALL_EMBEDDING_DIR or "").strip()
+    if _current_provider != "small" or not path or not os.path.isdir(path):
+        return None
+    try:
+        from sentence_transformers import SentenceTransformer
+        _small_embedder = SentenceTransformer(path)
+    except Exception as e:
+        print(f"[RAG] 小模型加载失败，回退本地哈希: {e}")
+        _small_embedder = None
+    return _small_embedder
+
+
 def embed_text(text: str) -> list[float]:
-    """返回归一化稠密向量；优先 BGE-M3 完整模型，其次 GGUF，最后本地哈希。"""
+    """返回归一化稠密向量；按 provider 优先小模型 / BGE-M3 / GGUF，最后本地哈希。"""
     text = str(text or "")
+
+    small = _load_small_embedder()
+    if small is not None:
+        try:
+            emb = small.encode([text], normalize_embeddings=True)[0]
+            if emb is not None:
+                return [float(v) for v in emb]
+        except Exception as e:
+            print(f"[RAG] 小模型 dense 失败，尝试 BGE/本地: {e}")
+
     model = _load_bge_m3()
     if model is not None:
         try:
@@ -171,6 +207,13 @@ def embed_text(text: str) -> list[float]:
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
+    small = _load_small_embedder()
+    if small is not None:
+        try:
+            embs = small.encode(list(texts), normalize_embeddings=True)
+            return [list(map(float, v)) for v in embs]
+        except Exception as e:
+            print(f"[RAG] 小模型 batch dense 失败，逐个回退: {e}")
     model = _load_bge_m3()
     if model is not None:
         try:
@@ -223,7 +266,9 @@ def _load_reranker() -> Callable[[str, list[str]], list[float]] | None:
     if _reranker_tried:
         return _reranker
     _reranker_tried = True
-    path = (settings.BGE_RERANKER_PATH or "").strip()
+    path = (settings.SMALL_RERANKER_DIR or "").strip() if _current_provider == "small" else ""
+    if not path or not os.path.exists(path):
+        path = (settings.BGE_RERANKER_PATH or "").strip()
     if not path or not os.path.exists(path):
         return None
     try:

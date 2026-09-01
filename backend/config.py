@@ -50,7 +50,11 @@ class Settings:
     ).split(",")
 
     # ── 可选 RAG 向量/重排模型（默认关闭，不会自动下载）──
-    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")  # local | bge
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")  # local | small | bge
+    SMALL_EMBEDDING_DIR: str = os.getenv("SMALL_EMBEDDING_DIR", "models/m3e-small")
+    SMALL_EMBEDDING_REPO: str = os.getenv("SMALL_EMBEDDING_REPO", "moka-ai/m3e-small")
+    SMALL_RERANKER_DIR: str = os.getenv("SMALL_RERANKER_DIR", "models/bge-reranker-base")
+    SMALL_RERANKER_REPO: str = os.getenv("SMALL_RERANKER_REPO", "BAAI/bge-reranker-base")
     BGE_MODEL_PATH: str = os.getenv("BGE_MODEL_PATH", "models/bge-m3-q4_k_m.gguf")
     BGE_M3_DIR: str = os.getenv("BGE_M3_DIR", "models/bge-m3")
     BGE_M3_REPO: str = os.getenv("BGE_M3_REPO", "BAAI/bge-m3")

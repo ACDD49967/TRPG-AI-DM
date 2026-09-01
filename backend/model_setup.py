@@ -23,6 +23,11 @@ async def ensure_bge_dependencies() -> None:
     await asyncio.to_thread(_run_pip, ["FlagEmbedding", "huggingface_hub"])
 
 
+async def ensure_small_dependencies() -> None:
+    """安装小中文向量模型所需依赖（sentence-transformers + FlagEmbedding + huggingface_hub）。"""
+    await asyncio.to_thread(_run_pip, ["sentence-transformers", "FlagEmbedding", "huggingface_hub"])
+
+
 async def ensure_reranker_dependencies() -> None:
     """安装 BGE-reranker 所需依赖（与向量模型相同）。"""
     await asyncio.to_thread(_run_pip, ["FlagEmbedding", "huggingface_hub"])
