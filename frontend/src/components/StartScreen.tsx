@@ -141,6 +141,11 @@ export default function StartScreen(){
   const [vectorMode,setVectorMode]=useState<'local'|'bge'>('local');
   const [bgeDownloaded,setBgeDownloaded]=useState(false);
   const [bgeRerankerDownloaded,setBgeRerankerDownloaded]=useState(false);
+  const [smallDownloaded,setSmallDownloaded]=useState(false);
+  const [smallBusy,setSmallBusy]=useState(false);
+  const [smallProgress,setSmallProgress]=useState<number|null>(null);
+  const [smallStatus,setSmallStatus]=useState('');
+  const [smallDeclined,setSmallDeclined]=useState(false);
   const [modelInputMode,setModelInputMode]=useState<'select'|'manual'>('manual');
   const [thinkingStrength,setThinkingStrength]=useState<'low'|'medium'|'high'>(()=>{try{const v=JSON.parse(localStorage.getItem('dnd_thinking')||'\"medium\"');return v==='low'||v==='high'?v:'medium';}catch{return 'medium';}});
   const [endpointPresets,setEndpointPresets]=useState<Array<{name:string;baseUrl:string;apiKey?:string;modelName?:string}>>(()=>{try{return JSON.parse(localStorage.getItem('dnd_endpoints')||'[]')}catch{return[]}});
@@ -346,6 +351,7 @@ export default function StartScreen(){
       const d=await r.json();
       setVectorMode(d.mode==='bge' && !!d.bge_ready ? 'bge' : 'local');
       setBgeDownloaded(!!d.bge_ready);
+      setSmallDownloaded(!!d.small_ready);
       setBgeRerankerDownloaded(!!d.reranker_ready);
     }catch{}
   };
@@ -391,6 +397,41 @@ export default function StartScreen(){
       }
     }catch(e:unknown){setBgeStatus(`下载失败：${e instanceof Error?e.message:'未知错误'}`);}
     finally{setBgeBusy(null);setBgeProgress(null);}
+  };
+
+  const downloadSmall=async()=>{
+    setSmallBusy(true);setSmallStatus('');setSmallProgress(null);
+    try{
+      const r=await fetch('/api/models/download-small/stream',{method:'POST'});
+      if(!r.ok || !r.body){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'下载失败');}
+      const reader=r.body.getReader();
+      const decoder=new TextDecoder();
+      let buffer='';
+      while(true){
+        const {done,value}=await reader.read();
+        if(done)break;
+        buffer+=decoder.decode(value,{stream:true});
+        const events=buffer.split('\n\n');
+        buffer=events.pop()||'';
+        for(const evt of events){
+          const line=evt.split('\n').find(l=>l.startsWith('data: '));
+          if(!line)continue;
+          const data=JSON.parse(line.slice(6));
+          if(data.type==='status'){
+            setSmallStatus(data.msg || '');
+          }else if(data.type==='progress'){
+            if(typeof data.percent==='number')setSmallProgress(data.percent);
+          }else if(data.type==='complete'){
+            setSmallStatus('基底模型下载完成');
+            setSmallDownloaded(true);
+            setSmallDeclined(false);
+          }else if(data.type==='error'){
+            throw new Error(data.msg||'下载失败');
+          }
+        }
+      }
+    }catch(e:unknown){setSmallStatus(`下载失败：${e instanceof Error?e.message:'未知错误'}`);}
+    finally{setSmallBusy(false);setSmallProgress(null);}
   };
 
   const pb = pointBuyConfig(gameSystem);
@@ -1989,6 +2030,31 @@ export default function StartScreen(){
                   </button>
                 </div>
               </div>
+
+              {/* 基底模型安装确认：进入 setup 后运行时确认是否下载，避免静默占用磁盘/内存 */}
+              {!smallDownloaded && !bgeDownloaded && !smallDeclined && !smallBusy && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                  <p className="text-xs font-medium text-amber-800">检测到尚未安装基底模型</p>
+                  <p className="text-[10px] text-amber-700">轻量中文向量模型 + 重排模型约占用 1GB+ 磁盘空间，运行时还会占用一定内存。是否现在下载？</p>
+                  <div className="flex gap-2">
+                    <button onClick={downloadSmall} className="text-xs px-3 py-1.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600">确认下载</button>
+                    <button onClick={()=>setSmallDeclined(true)} className="text-xs px-3 py-1.5 bg-white text-gray-500 rounded-lg border border-gray-200 hover:bg-gray-50">暂不</button>
+                  </div>
+                </div>
+              )}
+              {smallBusy && (
+                <div className="bg-sky-50 border border-sky-200 rounded-lg p-3 space-y-2">
+                  <p className="text-xs font-medium text-sky-700">正在下载基底模型...</p>
+                  <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                    {smallProgress !== null ? (
+                      <div className="h-full bg-sky-500 transition-all" style={{width:`${smallProgress}%`}} />
+                    ) : (
+                      <div className="h-full bg-sky-500 animate-pulse" style={{width:'100%'}} />
+                    )}
+                  </div>
+                  {smallStatus && <p className="text-[10px] text-sky-600">{smallStatus}</p>}
+                </div>
+              )}
 
               {/* 向量检索模式：小模型为固定基底，BGE 下载后自动替换 */}
               <div className="bg-white rounded-lg p-3 border border-gray-200 space-y-2">
