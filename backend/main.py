@@ -55,6 +55,27 @@ async def lifespan(app: FastAPI):
     print(f"[AI-DM] Server started at http://{settings.HOST}:{settings.PORT}")
     print(f"[AI-DM] Database: {settings.DATABASE_URL}")
     print(f"[AI-DM] Model: {settings.MODEL_NAME}")
+
+    # 小模型作为固定基底：如果未安装且 BGE 也未下载，则后台自动安装/下载，无需用户选择
+    async def _auto_ensure_small_baseline():
+        try:
+            small_ready = bool((settings.SMALL_EMBEDDING_DIR or "").strip() and _os.path.isdir(settings.SMALL_EMBEDDING_DIR))
+            bge_ready = bool((settings.BGE_M3_DIR or "").strip() and _os.path.isdir(settings.BGE_M3_DIR)) or bool((settings.BGE_MODEL_PATH or "").strip() and _os.path.exists(settings.BGE_MODEL_PATH))
+            if small_ready or bge_ready:
+                return
+            from backend.model_setup import ensure_small_dependencies, download_hf_repo
+            await ensure_small_dependencies()
+            async def _noop(pct, path):
+                pass
+            await download_hf_repo(settings.SMALL_EMBEDDING_REPO, str(settings.SMALL_EMBEDDING_DIR), _noop)
+            reranker_dir = str(settings.SMALL_RERANKER_DIR or "")
+            if reranker_dir and not _os.path.exists(reranker_dir):
+                await download_hf_repo(settings.SMALL_RERANKER_REPO, reranker_dir, _noop)
+            print("[AI-DM] 小模型基底已自动安装完成")
+        except Exception as e:
+            print(f"[AI-DM] 小模型基底自动安装失败（将回退本地哈希）: {e}")
+
+    asyncio.create_task(_auto_ensure_small_baseline())
     yield
     # 关闭时：清理资源（如有需要）
 
