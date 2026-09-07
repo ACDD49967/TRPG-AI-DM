@@ -206,7 +206,7 @@ export default function StartScreen(){
   const [cocPerInc,setCocPerInc]=useState<Record<string,number>>(()=>Object.fromEntries(COC_SKILLS.map(s=>[s,0])));
   const [cocLuck,setCocLuck]=useState<number>(()=>rollCocLuck());
   const [customAttrs,setCustomAttrs]=useState<Record<string,number>>({str:10,dex:10,con:10,int:10,wis:10,cha:10});
-  const [splitter,setSplitter]=useState<'semantic'|'llm'>('semantic');
+  const [splitter,setSplitter]=useState<'semantic'|'llm'|'recursive'>('recursive');
   const [chunkSize,setChunkSize]=useState(900);
   const [scenarioSummary,setScenarioSummary]=useState('');
   const [sourceChunks,setSourceChunks]=useState<string[]>([]);
@@ -226,6 +226,7 @@ export default function StartScreen(){
   const [kbLlmBusy,setKbLlmBusy]=useState(false);
   const [kbErr,setKbErr]=useState('');
   const [kbUploadFile,setKbUploadFile]=useState<File|null>(null);
+  const [kbProgress,setKbProgress]=useState<{phase:string;message:string;progress:number;current:number;total:number}|null>(null);
 
   // 扩展包与存档
   const [extList,setExtList]=useState<Array<{id:string;name:string;description:string;system:string;tags:string[];source:string;created_at:string}>>([]);
@@ -761,7 +762,7 @@ export default function StartScreen(){
   };
 
   const uploadKb=async(file:File)=>{
-    setKbBusy(true);setKbErr('');
+    setKbBusy(true);setKbErr('');setKbProgress(null);
     try{
       const fd=new FormData();
       fd.append('file',file);
@@ -771,12 +772,25 @@ export default function StartScreen(){
       fd.append('tags',kbTags);
       fd.append('username',username||'default');
       fd.append('splitter',splitter);
-      const r=await fetch('/api/knowledge/upload',{method:'POST',body:fd});
+      const r=await fetch('/api/tasks/upload-document',{method:'POST',body:fd});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'上传失败');}
+      const d=await r.json() as {events_url:string};
+      await new Promise<void>((resolve,reject)=>{
+        const es=new EventSource(d.events_url);
+        es.onmessage=(ev)=>{
+          try{
+            const t=JSON.parse(ev.data) as {phase:string;message:string;progress:number;current:number;total:number;status:string;error?:string};
+            setKbProgress({phase:t.phase,message:t.message,progress:t.progress,current:t.current,total:t.total});
+            if(t.status==='completed'){es.close();resolve();}
+            else if(t.status==='failed'||t.status==='cancelled'){es.close();reject(new Error(t.error||'上传失败'));}
+          }catch{/* event type 与 data 分隔时忽略 */}
+        };
+        es.onerror=()=>{es.close();reject(new Error('进度连接中断'));};
+      });
       setKbTitle('');setKbTags('');setKbUploadFile(null);
       await loadKb();
     }catch(e:unknown){setKbErr(e instanceof Error?e.message:'上传失败');}
-    finally{setKbBusy(false);}
+    finally{setKbBusy(false);setKbProgress(null);}
   };
 
   const deleteKb=async(id:string)=>{
@@ -1771,7 +1785,7 @@ export default function StartScreen(){
                   <label className="block text-xs font-medium text-gray-600 mb-1">上传剧本文件（pdf / txt / docx / doc / md）</label>
                   <input
                     type="file"
-                    accept=".txt,.md,.markdown,.pdf,.doc,.docx"
+                    accept=".txt,.md,.markdown,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp"
                     onChange={e=>{
                       const f=e.target.files?.[0];
                       if(f)importScenario(f);
@@ -1978,7 +1992,7 @@ export default function StartScreen(){
                   <p className="text-xs font-medium text-gray-700">上传 PDF/DOCX/TXT/MD</p>
                   <input
                     type="file"
-                    accept=".txt,.md,.markdown,.pdf,.doc,.docx"
+                    accept=".txt,.md,.markdown,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp"
                     onChange={e=>setKbUploadFile(e.target.files?.[0]||null)}
                     className="block w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:text-xs file:font-medium"
                   />
@@ -1989,7 +2003,8 @@ export default function StartScreen(){
                   <input value={kbTags} onChange={e=>setKbTags(e.target.value)} placeholder="标签，用逗号分隔" className="input-field text-xs" />
                   <div>
                     <label className="block text-[10px] text-gray-500 mb-1">切分方式</label>
-                    <select value={splitter} onChange={e=>setSplitter(e.target.value as 'semantic'|'llm')} className="input-field text-xs">
+                    <select value={splitter} onChange={e=>setSplitter(e.target.value as 'semantic'|'llm'|'recursive')} className="input-field text-xs">
+                      <option value="recursive">递归快速切分（不依赖LLM）</option>
                       <option value="semantic">语义切分（更连贯）</option>
                       <option value="llm">LLM 智能切分（更准确）</option>
                     </select>
@@ -2028,6 +2043,17 @@ export default function StartScreen(){
                   <button onClick={()=>kbUploadFile&&uploadKb(kbUploadFile)} disabled={kbBusy || !kbUploadFile} className="w-full py-2 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium disabled:opacity-50">
                     {kbBusy?'处理中...':'上传到知识库'}
                   </button>
+                  {kbProgress&&(
+                    <div className="space-y-1">
+                      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500 transition-all" style={{width:`${Math.max(2,Math.min(100,kbProgress.progress||5))}%`}} />
+                      </div>
+                      <p className="text-[10px] text-gray-500">
+                        {kbProgress.phase}：{kbProgress.message||'处理中'}
+                        {kbProgress.total>0&&(` (${kbProgress.current}/${kbProgress.total})`)}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 

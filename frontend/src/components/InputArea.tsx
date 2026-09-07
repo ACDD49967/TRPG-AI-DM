@@ -15,6 +15,7 @@ export default function InputArea() {
     const store = useGameStore.getState();
     store.addPlayerMessage(text);
     store.setProcessing(true); store.setChoices([]); store.setDecisionSuggestions([]);
+    store.setJournalStatus('syncing');
     setInput('');
     try {
       const r = await fetch(`/api/game/${sessionId}/action?username=${encodeURIComponent(useGameStore.getState().status.username||'default')}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_input: text }) });

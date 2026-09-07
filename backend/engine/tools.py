@@ -35,12 +35,23 @@ COMBAT_ROUND_TOOL = _tool("combat_round",
     {"player_action": {"type":"string", "description": "玩家本轮动作"},
      "player_attack_modifier": {"type":"integer", "description": "可选，缺省自动按角色卡属性+熟练计算"},
      "player_damage_dice": {"type":"string", "description": "可选，缺省自动取背包武器伤害"},
-     "enemy_name": {"type":"string", "description": "必须与NPC卡/图鉴卡名称一致"},
+     "enemy_name": {"type":"string", "description": "必须与NPC卡/图鉴卡名称一致（本轮玩家实际攻击目标）"},
+     "enemy_names": {"type":"array", "items":{"type":"string"}, "description": "可选，当前战斗中所有敌人名单；用于前端展示各敌人HP，玩家本轮实际攻击目标仍是 enemy_name"},
      "enemy_ac": {"type":"integer", "description": "可选，缺省取实体卡AC"},
      "enemy_attack_modifier": {"type":"integer", "description": "可选，缺省按实体卡属性计算"},
      "enemy_damage_dice": {"type":"string", "description": "可选，缺省从实体卡特性/动作解析"},
-     "enemy_hp": {"type":"integer", "description": "可选，缺省取实体卡当前HP"}},
+     "enemy_hp": {"type":"integer", "description": "可选，缺省取实体卡当前HP"},
+     "enemy_can_act": {"type":"boolean", "description": "敌人本轮能否主动行动/反击。被绑、失去意识、跪地、无力、濒死等应为 false，避免待宰羔羊反杀"},
+     "enemy_condition": {"type":"string", "description": "可选，敌人当前状态描述，用于判断能否行动"}},
     ["player_action", "enemy_name"])
+
+ENEMY_ATTACK_TOOL = _tool("enemy_attack",
+    "【敌人回合】在敌人自己的回合/剧情中主动攻击玩家。不要把它当作玩家攻击后的自动反伤；玩家攻击回合只调用 combat_round。",
+    {"enemy_name": {"type":"string", "description": "敌人/NPC名称"},
+     "enemy_attack_modifier": {"type":"integer", "description": "可选，缺省取实体卡"},
+     "enemy_damage_dice": {"type":"string", "description": "可选，缺省从实体卡解析"},
+     "player_ac": {"type":"integer", "description": "可选，缺省取玩家角色卡AC"}},
+    ["enemy_name"])
 
 DEATH_SAVE_TOOL = _tool("death_saving_throw",
     "角色HP≤0时每回合必须掷死亡豁免。d20≥10=成功, 自然20=恢复1HP, 自然1=2次失败。累计3成功=稳定, 3失败=死亡。",
@@ -85,8 +96,8 @@ SUGGEST_CHOICES_TOOL = _tool("suggest_choices",
 # ── 世界状态工具 ──
 
 UPDATE_WORLD_STATE_TOOL = _tool("update_world_state",
-    "修改持久化世界状态——仅在玩家行动已被检定/判定生效后调用。更新NPC/旗标/地点。",
-    {"action": {"type":"string","enum":["update_npc","add_npc","set_flag","add_location","set_world_rule"]},
+    "修改持久化世界状态——仅在玩家行动已被检定/判定生效后调用。可新增/更新/删除NPC、地点、旗标，也可更新世界规则。",
+    {"action": {"type":"string","enum":["update_npc","add_npc","set_flag","add_location","update_location","set_world_rule","remove_npc","remove_location","remove_flag"]},
      "target": {"type":"string"},
      "changes": {"type":"object"},
      "reason": {"type":"string"}},
@@ -313,7 +324,7 @@ GET_GRAPH_PATH_TOOL = _tool("get_graph_path",
     ["source", "target"])
 
 DM_TOOLS = [
-    DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL,
+    DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL, ENEMY_ATTACK_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, EQUIP_ITEM_TOOL, ADD_MEMORY_TOOL, RECORD_PLOT_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
     UPDATE_WORLD_STATE_TOOL, REVEAL_INFO_TOOL, UPDATE_SCENE_TOOL,
     ADD_CHARACTER_NOTE_TOOL, UPDATE_BESTIARY_TOOL, UPDATE_CITY_TOOL,

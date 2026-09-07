@@ -85,6 +85,10 @@ if ! "$PYTHON" -c "import fastapi,uvicorn,openai,sqlalchemy,aiosqlite,pydantic,d
 else
     echo "[OK] Python dependencies ready"
 fi
+echo "[..] Optional dependencies/models (not installed by default):"
+echo "       python scripts/install_runtime_deps.py --bge"
+echo "       python scripts/install_runtime_deps.py --layout"
+echo "       python scripts/install_runtime_deps.py --pgvector"
 
 # ── 5. Frontend ──
 echo ""

@@ -29,6 +29,7 @@ class GameSessionState:
     base_url: str | None = None
     thinking_strength: str = "medium"
     resumed: bool = False
+    opening_text: str = ""
 
     # 事件流 —— 通过 asyncio.Queue 跨协程传递 SSE 事件
     event_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
@@ -56,6 +57,9 @@ class GameSessionState:
     # 游戏内临时覆写（生物/城市），不影响知识库
     bestiary_overrides: dict[str, dict] = field(default_factory=dict, repr=False)
     city_overrides: dict[str, dict] = field(default_factory=dict, repr=False)
+
+    # 本轮已行动敌人记录：防止同一敌人一个回合被 enemy_attack 重复结算
+    enemy_attack_log: dict[str, int] = field(default_factory=dict, repr=False)
 
     # 每会话串行锁：防止同一会话的多个玩家行动并发修改世界状态
     action_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -160,6 +164,9 @@ async def sse_event_generator(
             {"player_input": t.player_input, "dm_response": t.dm_response}
             for t in state.memory.turns
         ]
+        # 读档不丢失开场白：将保存的开场白作为首条 DM 叙述恢复
+        if getattr(state, "opening_text", "").strip():
+            turns.insert(0, {"player_input": "", "dm_response": state.opening_text})
         await push_event(state, "history", {"turns": turns})
         # consumed once: later system prompts should not keep claiming resumed
         state.resumed = False

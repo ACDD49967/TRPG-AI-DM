@@ -30,6 +30,7 @@ from backend.engine.game_systems import (
     build_system_rule_block,
     get_system,
 )
+from backend.local_vector_store import load_vector, save_vector
 from backend.scenario_importer import split_text
 from backend.engine.rag_utils import embed_text, cosine as dense_cosine, rerank as rag_rerank, get_provider, set_provider, model_ready, reranker_ready, sparse_embed, sparse_cosine, sparse_ready
 
@@ -191,15 +192,42 @@ class KnowledgeBase:
         chunk_size: int = 900,
         username: str | None = None,
         splitter: str = "semantic",
+        parent_chunks: list | None = None,
+        child_chunks: list | None = None,
+        images: list | None = None,
+        tables: list | None = None,
+        doc_id: str | None = None,
+        scenario_id: str = "",
     ) -> dict:
         self.load()
         content = _clean_content(content)
-        mode = "semantic" if splitter in ("semantic", "llm") else "naive"
+        if splitter == "semantic":
+            mode = "semantic"
+        elif splitter == "recursive":
+            mode = "recursive"
+        else:
+            mode = "semantic" if splitter == "llm" else "naive"
         chunks = split_text(content, mode=mode, chunk_size=chunk_size)
+        if child_chunks:
+            # 父子块优先：检索索引使用子块，父块/图片/表格一并保存
+            chunks = [c.content for c in child_chunks if getattr(c, "content", "")]
         if not chunks:
             chunks = [content.strip()] if content.strip() else []
+        final_doc_id = doc_id or uuid.uuid4().hex[:16]
+        if child_chunks is None and parent_chunks is None and chunks:
+            # 纯文本备注也统一生成父子块，保证所有入库文档都有父块回填能力
+            parent_id = uuid.uuid4().hex[:16]
+            parent_chunks = [{
+                "id": parent_id, "doc_id": final_doc_id, "role": "parent",
+                "content": content, "type": "text", "page_no": 1, "metadata": {},
+            }]
+            child_chunks = [{
+                "id": uuid.uuid4().hex[:16], "doc_id": final_doc_id,
+                "parent_id": parent_id, "role": "child", "content": c,
+                "context": c, "type": "text", "page_no": 1, "metadata": {},
+            } for c in chunks]
         doc = {
-            "id": uuid.uuid4().hex[:16],
+            "id": final_doc_id,
             "title": _safe_title(title),
             "content": content,
             "chunks": chunks,
@@ -207,8 +235,17 @@ class KnowledgeBase:
             "system": system,
             "tags": tags or [],
             "owner": (username or "").strip(),
+            "scenario_id": scenario_id or "",
             "created_at": datetime.now().isoformat(),
         }
+        if parent_chunks is not None:
+            doc["parent_chunks"] = [vars(c) if hasattr(c, "__dict__") else c for c in parent_chunks]
+        if child_chunks is not None:
+            doc["child_chunks"] = [vars(c) if hasattr(c, "__dict__") else c for c in child_chunks]
+        if images is not None:
+            doc["images"] = [vars(i) if hasattr(i, "__dict__") else i for i in images]
+        if tables is not None:
+            doc["tables"] = [vars(t) if hasattr(t, "__dict__") else t for t in tables]
         self.documents.append(doc)
         self.save()
         return doc
@@ -227,13 +264,23 @@ class KnowledgeBase:
         ]
         changed = len(self.documents) != before
         if changed:
+            from backend.local_vector_store import delete_doc_vectors
+            try:
+                delete_doc_vectors(doc_id)
+            except Exception:
+                pass
             self.save()
         return changed
 
-    def list_documents(self, username: str | None = None) -> list[dict]:
+    def list_documents(self, username: str | None = None, include_scenario: bool = False) -> list[dict]:
         self.load()
-        return [
-            {
+        out = []
+        for d in self.documents:
+            if not self._visible_to(d, username):
+                continue
+            if not include_scenario and d.get("scenario_id"):
+                continue
+            out.append({
                 "id": d["id"],
                 "title": _safe_title(d.get("title", "")),
                 "source": _safe_source(d.get("source", "")),
@@ -241,9 +288,9 @@ class KnowledgeBase:
                 "tags": d.get("tags", []),
                 "chunk_count": len(d.get("chunks", [])),
                 "created_at": d.get("created_at", ""),
-            }
-            for d in self.documents if self._visible_to(d, username)
-        ]
+                "scenario_id": d.get("scenario_id", ""),
+            })
+        return out
 
     def get_document(self, doc_id: str, username: str | None = None) -> dict | None:
         self.load()
@@ -268,8 +315,8 @@ class KnowledgeBase:
         return reranker_ready()
 
     def retrieve(self, query: str, system: str | None = None, top_k: int = 5,
-                 username: str | None = None) -> list[dict]:
-        """基于字符 bigram 的本地 TF-IDF 检索，返回相关片段（按用户名隔离）。"""
+                 username: str | None = None, scenario_id: str | None = None) -> list[dict]:
+        """混合检索（按用户名隔离；scenario_id 非空时只看该剧本+全局资料）。"""
         self.load()
         q_terms = _tokenize(query)
         if not q_terms:
@@ -281,6 +328,15 @@ class KnowledgeBase:
                 continue
             if system and doc.get("system") not in ("custom", system):
                 continue
+            doc_scenario = str(doc.get("scenario_id") or "")
+            if scenario_id:
+                # 剧本模式：包含该剧本资料与全局资料，但不包含其它剧本资料
+                if doc_scenario and doc_scenario != scenario_id:
+                    continue
+            else:
+                # 全局模式：剧本内资料默认不污染总知识库
+                if doc_scenario:
+                    continue
             for idx, chunk in enumerate(doc.get("chunks", [])):
                 candidates.append((doc, idx, chunk))
 
@@ -332,7 +388,12 @@ class KnowledgeBase:
             key = (doc["id"], idx, hashlib.md5(chunk.encode("utf-8", errors="replace")).hexdigest())
             vec = cache.get(key)
             if vec is None:
-                vec = embed_text(chunk)
+                stored = load_vector(provider, doc["id"], idx, key[2])
+                if stored is not None:
+                    vec = stored[0]
+                if vec is None:
+                    vec = embed_text(chunk)
+                    save_vector(provider, doc["id"], idx, key[2], vec, None)
                 cache[key] = vec
             dense_scores.append(max(0.0, dense_cosine(q_vec, vec)))
         dense_norm = _norm(dense_scores)
@@ -348,7 +409,12 @@ class KnowledgeBase:
                 key = (doc["id"], idx, hashlib.md5(chunk.encode("utf-8", errors="replace")).hexdigest())
                 svec = sparse_cache.get(key)
                 if svec is None:
-                    svec = sparse_embed(chunk)
+                    stored = load_vector(provider, doc["id"], idx, key[2])
+                    if stored is not None:
+                        svec = stored[1]
+                    if svec is None:
+                        svec = sparse_embed(chunk)
+                        save_vector(provider, doc["id"], idx, key[2], None, svec)
                     sparse_cache[key] = svec
                 bge_sparse_scores.append(sparse_cosine(q_sparse, svec))
             bge_sparse_norm = _norm(bge_sparse_scores)
@@ -376,6 +442,20 @@ class KnowledgeBase:
             sparse_v = bge_sparse_norm[i] if sparse_on else 0.0
             final = w_dense * dense_v + w_sparse * sparse_v + w_tfidf * tfidf_v + w_bm25 * bm25_v
             if final > 0:
+                # 父子块：检索命中子块时回填父块内容，供前端/DM 获取完整上下文
+                parent_id = ""
+                parent_content = ""
+                child_chunks = doc.get("child_chunks") or []
+                if child_chunks and isinstance(child_chunks, list):
+                    for cc in child_chunks:
+                        if cc.get("content") == chunk:
+                            parent_id = str(cc.get("parent_id", ""))
+                            break
+                    if parent_id:
+                        for pc in doc.get("parent_chunks") or []:
+                            if pc.get("id") == parent_id:
+                                parent_content = pc.get("content", "")
+                                break
                 scored.append({
                     "doc_id": doc["id"],
                     "title": _safe_title(doc.get("title", "")),
@@ -383,6 +463,10 @@ class KnowledgeBase:
                     "system": doc.get("system", ""),
                     "chunk_index": idx,
                     "text": chunk,
+                    "parent_id": parent_id,
+                    "parent_content": parent_content,
+                    "images": doc.get("images", []),
+                    "tables": doc.get("tables", []),
                     "score": round(final, 4),
                 })
 

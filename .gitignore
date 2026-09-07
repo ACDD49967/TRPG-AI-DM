@@ -56,6 +56,10 @@ npm-debug.log*
 eval_results/*.json
 eval_results/samples/
 
+# 开发文档与模型（不进入 git 提交列表）
+docs/
+models/
+
 # 用户知识库数据（保留目录）
 knowledge_base/*.json
 

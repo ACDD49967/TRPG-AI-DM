@@ -105,6 +105,7 @@ def create_save(state: GameSessionState, label: str = "手动存档", auto: bool
             "memory": _serialize_memory(state),
             "world_state": _serialize_world_state(state),
             "response_cache": dict(state.response_cache),
+            "opening_text": getattr(state, "opening_text", ""),
             "play_mode": state.character_info.get("play_mode", "deep"),
             "game_system": state.character_info.get("game_system", "dnd5e"),
             "scenario_id": state.character_info.get("scenario_id", ""),
@@ -185,6 +186,7 @@ def restore_state_from_save(save_data: dict) -> tuple[GameSessionState, dict]:
         username=save_data.get("username", "default"),
     )
     state.response_cache = dict(session.get("response_cache", {}))
+    state.opening_text = session.get("opening_text", "")
     state.api_key = session.get("api_key")
     state.model_name = session.get("model_name")
     state.base_url = session.get("base_url")

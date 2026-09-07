@@ -203,6 +203,56 @@ class MemorySystem:
         if len(self.character_impacts) > 60:
             self.character_impacts = self.character_impacts[-60:]
 
+    def build_essential_context(self) -> str:
+        """构建不包含“最近发生的事”的核心记忆上下文。
+
+        用于模块化 DM 回合：
+        - 保留摘要、大事件、暗线、人物影响与世界事实；
+        - 不重复注入最近对话（这些已经作为 messages 注入）；
+        - 在显著减少 tokens 的同时避免剧情记忆缺失。
+        """
+        parts: list[str] = []
+
+        if self.summary:
+            parts.append(f"## 之前的故事摘要\n{self.summary}")
+
+        if self.major_events:
+            parts.append("## 大事件记忆")
+            for ev in self.major_events[-8:]:
+                line = f"- [第{ev.get('turn', 0)}轮] {ev.get('title', '')}"
+                if ev.get("description"):
+                    line += f"：{ev['description']}"
+                if ev.get("impact"):
+                    line += f"（影响：{ev['impact']}）"
+                parts.append(line)
+
+        active_threads = [h for h in self.hidden_threads
+                          if h.get("status") in ("未触发", "进行中")]
+        if active_threads:
+            parts.append("## 暗线进度")
+            for h in active_threads[-6:]:
+                line = f"- {h.get('key', '')} [{h.get('status', '未触发')}]"
+                if h.get("description"):
+                    line += f"：{h['description']}"
+                if h.get("progress"):
+                    line += f"（最近：{h['progress']}）"
+                parts.append(line)
+
+        if self.character_impacts:
+            parts.append("## 重要人物影响")
+            for c in self.character_impacts[-10:]:
+                line = f"- {c.get('name', '')}"
+                if c.get("impact"):
+                    line += f"：{c['impact']}"
+                if c.get("event"):
+                    line += f"（事件：{c['event']}）"
+                parts.append(line)
+
+        if self.world_facts:
+            parts.append("## 重要世界事实\n" + "\n".join(f"- {f}" for f in self.world_facts))
+
+        return "\n".join(parts)
+
     def build_context(self) -> str:
         """拼接完整的记忆上下文，用于注入 System Prompt。"""
         parts: list[str] = []

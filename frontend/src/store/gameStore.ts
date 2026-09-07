@@ -1,6 +1,7 @@
 /** Zustand游戏状态管理 —— 全局状态与操作 */
 
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 /** 角色状态 */
 export interface CharacterStatus {
@@ -65,6 +66,15 @@ export interface SceneInfo {
   npcs_here: string[];
 }
 
+/** 战斗日志条目 */
+export interface CombatLogEntry {
+  id: number;
+  kind: 'combat' | 'enemy' | 'dice';
+  text: string;
+  extra?: Record<string, unknown>;
+  time: string;
+}
+
 /** 一条叙事行（文本 + 可选的骰子/事件标签） */
 export interface NarrativeLine {
   id: number;
@@ -113,12 +123,17 @@ interface GameState {
     modifier: number;
     result: string;
   } | null;
-  /** 战斗中的敌人信息 */
+  /** 战斗中的敌人信息（enemies 支持多敌） */
   combat: {
     active: boolean;
     enemyName: string;
     enemyHp: number;
+    enemies?: Array<{ name: string; hp: number }>;
   } | null;
+  /** 战斗记录面板 */
+  combatLog: CombatLogEntry[];
+  /** 冒险笔记同步状态 */
+  journalStatus: 'idle' | 'syncing' | 'synced';
 
   /** 世界大纲 */
   worldOutline: string | null;
@@ -167,6 +182,12 @@ interface GameState {
   setLatestDiceRoll: (data: GameState['latestDiceRoll']) => void;
   /** 更新战斗状态 */
   setCombat: (combat: GameState['combat']) => void;
+  /** 追加战斗日志 */
+  appendCombatLog: (entry: Omit<CombatLogEntry, 'id' | 'time'>) => void;
+  /** 设置冒险笔记同步状态 */
+  setJournalStatus: (status: GameState['journalStatus']) => void;
+  /** 清空战斗日志 */
+  clearCombatLog: () => void;
   /** 设置世界大纲 */
   setWorldOutline: (outline: string) => void;
   /** 设置决策建议 */
@@ -206,7 +227,7 @@ const initialScene: SceneInfo = {
   npcs_here: [],
 };
 
-export const useGameStore = create<GameState>((set, get) => ({
+export const useGameStore = create<GameState>()(persist((set, get) => ({
   sessionId: null,
   screen: 'start',
   narrative: [],
@@ -217,6 +238,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   isProcessing: false,
   latestDiceRoll: null,
   combat: null,
+  combatLog: [],
+  journalStatus: 'idle',
   worldOutline: null,
   decisionSuggestions: [],
   journalData: null,
@@ -365,6 +388,22 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   setCombat: (combat) => set({ combat }),
 
+  appendCombatLog: (entry) =>
+    set((s) => ({
+      combatLog: [
+        ...s.combatLog,
+        {
+          ...entry,
+          id: s.combatLog.length ? s.combatLog[s.combatLog.length - 1].id + 1 : 0,
+          time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        },
+      ].slice(-80),
+    })),
+
+  setJournalStatus: (status) => set({ journalStatus: status }),
+
+  clearCombatLog: () => set({ combatLog: [] }),
+
   reset: () =>
     set({
       narrative: [],
@@ -375,6 +414,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       isProcessing: false,
       latestDiceRoll: null,
       combat: null,
+      combatLog: [],
+      journalStatus: 'idle',
       worldOutline: null,
       decisionSuggestions: [],
       journalData: null,
@@ -400,4 +441,25 @@ export const useGameStore = create<GameState>((set, get) => ({
       mediaVersion: 0,
       sceneInfo: { ...initialScene },
     }),
+}), {
+  name: 'dnd-game-state',
+  partialize: (state) => ({
+    sessionId: state.sessionId,
+    screen: state.screen,
+    narrative: state.narrative,
+    currentTokenBuffer: state.currentTokenBuffer,
+    narrativeId: state.narrativeId,
+    status: state.status,
+    choices: state.choices,
+    isProcessing: state.isProcessing,
+    latestDiceRoll: state.latestDiceRoll,
+    combat: state.combat,
+    combatLog: state.combatLog,
+    journalStatus: state.journalStatus,
+    worldOutline: state.worldOutline,
+    decisionSuggestions: state.decisionSuggestions,
+    journalData: state.journalData,
+    mediaVersion: state.mediaVersion,
+    sceneInfo: state.sceneInfo,
+  }),
 }));

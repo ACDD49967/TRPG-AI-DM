@@ -224,6 +224,10 @@ if errorlevel 1 (
     "%PYTHON%" -m pip install openai httpx json-repair jieba rank-bm25 numpy langgraph fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette -q -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 )
 echo [OK] Installed
+echo [..] Optional dependencies/models (not installed by default):
+echo        python scripts\install_runtime_deps.py --bge
+echo        python scripts\install_runtime_deps.py --layout
+echo        python scripts\install_runtime_deps.py --pgvector
 
 :: =============================================================
 :: Step 5 — Frontend

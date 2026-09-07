@@ -123,6 +123,7 @@ function Row({k,v,c}:{k:string;v:string;c?:string}){
 export default function PlayerJournal(){
   const storeJournalData = useGameStore(s => s.journalData);
   const {sessionId,isProcessing,status}=useGameStore();
+  const journalStatus = useGameStore(s=>s.journalStatus);
   const [j,setJ]=useState<JournalData|null>(null);
   const [tab,setTab]=useState<'npcs'|'plot'|'places'|'notes'>('npcs');
   const [mapsDetail,setMapsDetail]=useState<Array<{name:string;description?:string;details?:{type?:string;status?:string;culture?:string;districts?:string[];notable_figures?:string;dangers?:string}}>>([]);
@@ -146,12 +147,10 @@ export default function PlayerJournal(){
     const sid=status.scenario_id||'';
     fetch(`/api/maps?username=${encodeURIComponent(u)}&scenario_id=${encodeURIComponent(sid)}`)
       .then(r=>r.json()).then(d=>{
-        // 右侧边栏优先关联当前剧本地点；若剧本无地点，则回退显示通用参考地点，避免空白
+        // 显示当前剧本关联地点 + 通用参考地点；隐藏其它剧本
         const all = d.maps||[];
         if (!sid) { setMapsDetail([]); return; }
-        const scenario = all.filter((m: {scenario_id?:string})=>m.scenario_id===sid);
-        const global = all.filter((m: {scenario_id?:string})=>!m.scenario_id);
-        setMapsDetail(scenario.length > 0 ? scenario : global);
+        setMapsDetail(all.filter((m: {scenario_id?:string})=>!m.scenario_id || m.scenario_id===sid));
       }).catch(()=>{});
   },[status.username,status.scenario_id]);
 
@@ -165,6 +164,9 @@ export default function PlayerJournal(){
         <div className="flex items-center gap-1.5 text-[10px]">
           <span className="text-indigo-600 font-bold">冒险笔记</span>
           {j.turn_count>0&&<span className="text-gray-400">第{j.turn_count}轮</span>}
+          {journalStatus==='syncing' && <span className="ml-auto text-[9px] text-amber-500 animate-pulse">同步中...</span>}
+          {journalStatus==='synced' && <span className="ml-auto text-[9px] text-emerald-500">已同步</span>}
+          {!(journalStatus==='syncing'||journalStatus==='synced') && <span className="ml-auto text-[9px] text-gray-300">待同步</span>}
         </div>
         {j.scene?.atmosphere && <p className="text-[9px] text-gray-400 italic mt-0.5">{j.scene.atmosphere}</p>}
       </div>

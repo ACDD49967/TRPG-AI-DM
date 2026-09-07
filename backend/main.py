@@ -26,6 +26,7 @@ from backend.engine.session import (
     sse_event_generator,
 )
 from backend.models import Character, GameSession, User
+from backend.task_center import task_manager, task_progress_callback, task_sse_generator
 from backend.schemas import (
     ActionAcceptedResponse,
     ActionRequest,
@@ -46,6 +47,12 @@ async def lifespan(app: FastAPI):
     """应用启动/关闭时的生命周期管理。"""
     # 启动时：创建数据库表
     await init_db()
+    # RAG 预热：初始化 jieba / reranker，避免每次对话首次调用时重复加载
+    try:
+        from backend.engine.rag_utils import warmup_rag
+        await asyncio.to_thread(warmup_rag)
+    except Exception:
+        pass
     # 自动清理无用的运行期 world_state 文件（存档内含快照，可安全清理）
     try:
         from backend.engine.world_state import cleanup_world_states
@@ -66,7 +73,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="TRPG AI 跑团主持",
     description="由大语言模型驱动的单人 TRPG 跑团主持",
-    version="0.1.0",
+    version="0.2.7",
     lifespan=lifespan,
 )
 
@@ -195,7 +202,8 @@ async def generate_world(request: WorldGenRequest):
             "npcs": [{"name":n.name,"race":n.race,"role":n.role,"location":n.location,
                        "attitude":n.attitude,"alive":n.alive,"personality":n.personality,
                        "motivation":n.motivation,"secret":n.secret,
-                       "relation_to_plot":n.relation_to_plot,"discovered":n.discovered} for n in world_state.npcs],
+                       "relation_to_plot":n.relation_to_plot,"visibility":n.visibility.to_dict(),
+                       "discovered":n.discovered} for n in world_state.npcs],
             "plot_flags": [{"key":f.key,"status":f.status,"description":f.description,"consequence":f.consequence,"visible":f.visible} for f in world_state.plot_flags],
             "locations": [{"name":l.name,"description":l.description,"status":l.status,"type":l.type,"culture":l.culture,"notable_figures":l.notable_figures,"dangers":l.dangers,"secrets":l.secrets,"secret_revealed":l.secret_revealed,"related_locations":l.related_locations,"related_npcs":l.related_npcs,"related_creatures":l.related_creatures,"discovered":l.discovered} for l in world_state.locations],
         }, ensure_ascii=False),
@@ -391,8 +399,8 @@ async def import_scenario(
     )
     from backend.engine.game_systems import SYSTEM_TYPES
 
-    if splitter not in ("naive", "semantic", "llm"):
-        raise HTTPException(status_code=400, detail="splitter 仅支持 naive、semantic 或 llm")
+    if splitter not in ("naive", "recursive", "semantic", "llm"):
+        raise HTTPException(status_code=400, detail="splitter 仅支持 naive、recursive、semantic 或 llm")
     if chunk_size < 200 or chunk_size > 4000:
         raise HTTPException(status_code=400, detail="chunk_size 需在 200-4000 之间")
 
@@ -404,6 +412,19 @@ async def import_scenario(
         text = extract_text(file.filename or "", data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # 使用统一文档管线提取/清洗文本（支持表格合并、页眉页脚清洗、图片上下文）
+    _pipeline_result = None
+    try:
+        from backend.document_pipeline import run_document_pipeline
+        _pipeline_result = run_document_pipeline(
+            data, file.filename or "", doc_id="scenario_import", username=username,
+            splitter=splitter,
+        )
+        if _pipeline_result.cleaned_text.strip():
+            text = _pipeline_result.cleaned_text
+    except Exception:
+        pass
 
     if not text.strip():
         raise HTTPException(status_code=400, detail="文件中没有可用的剧本文本")
@@ -464,6 +485,41 @@ async def import_scenario(
                 progress_callback=progress,
                 token_callback=stream_token,
             )
+            # 把复合剧本中的图片/地图/生物图谱关联到该剧本，而不是全局知识库
+            if _pipeline_result is not None and _pipeline_result.images:
+                try:
+                    from backend.document_pipeline.image_processor import auto_register_media_images
+                    auto_register_media_images(username, str(result.get("scenario_id") or ""),
+                                               _pipeline_result.images, system=system)
+                except Exception:
+                    pass
+
+            # 剧本原件绑定到该剧本知识库：采用知识库父子块/图片/表格方法，修订剧本仍保存为使用剧本
+            if _pipeline_result is not None:
+                try:
+                    from backend.knowledge_base import get_knowledge_base
+                    kb = get_knowledge_base()
+                    scenario_id_new = str(result.get("scenario_id") or "")
+                    scenario_kb_source = f"scenario:{scenario_id_new}"
+                    for d in kb.list_documents(username, include_scenario=True):
+                        if d.get("source") == scenario_kb_source or d.get("scenario_id") == scenario_id_new:
+                            kb.remove_document(d["id"], username)
+                    kb.add_document(
+                        title=f"剧本原件：{title or '导入剧本'}",
+                        content=_pipeline_result.cleaned_text or text,
+                        source=scenario_kb_source,
+                        system=system,
+                        tags=["剧本原件", system, splitter],
+                        username=username,
+                        parent_chunks=_pipeline_result.parent_chunks,
+                        child_chunks=_pipeline_result.child_chunks,
+                        images=_pipeline_result.images,
+                        tables=_pipeline_result.tables,
+                        scenario_id=scenario_id_new,
+                    )
+                except Exception as e:
+                    print(f"[Scenario] 剧本原件知识库绑定失败（不影响剧本生成）: {e}")
+
             queue.put_nowait({"type": "__complete__", "data": result})
         except Exception as e:
             queue.put_nowait({"type": "__error__", "msg": f"剧本生成失败: {e}"})
@@ -634,11 +690,12 @@ async def add_knowledge(payload: dict):
     tags = payload.get("tags") or []
     username = str(payload.get("username") or "default")
     splitter = str(payload.get("splitter") or "semantic")
+    scenario_id = str(payload.get("scenario_id") or "")
     if not content.strip():
         raise HTTPException(status_code=400, detail="内容不能为空")
     doc = get_knowledge_base().add_document(
         title=title, content=content, source=source, system=system, tags=tags,
-        username=username, splitter=splitter,
+        username=username, splitter=splitter, scenario_id=scenario_id,
     )
     return {"doc": doc}
 
@@ -652,18 +709,47 @@ async def upload_knowledge(
     tags: str = Form(""),
     username: str = Form("default"),
     splitter: str = Form("semantic"),
+    max_ocr_pages: int = Form(20),
+    ocr_enabled: bool = Form(True),
+    region_fusion: bool = Form(True),
+    scenario_id: str = Form(""),
 ):
     """上传 PDF/DOCX/TXT/MD 到知识库（按用户名隔离）。"""
+    import uuid
     from backend.knowledge_base import get_knowledge_base
     from backend.scenario_importer import extract_text
+    from backend.document_pipeline import run_document_pipeline
+    from backend.document_pipeline.image_processor import auto_register_media_images
 
     data = await file.read()
     if len(data) > 30 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="文件不能超过 30MB")
     try:
-        content = extract_text(file.filename or "", data)
+        fallback_content = extract_text(file.filename or "", data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+    doc_id = uuid.uuid4().hex[:16]
+    try:
+        result = run_document_pipeline(data, file.filename or "", doc_id=doc_id,
+                                       username=username, max_ocr_pages=max_ocr_pages,
+                                       ocr_enabled=ocr_enabled, splitter=splitter,
+                                       region_fusion=region_fusion)
+        content = result.cleaned_text or fallback_content
+        parents = result.parent_chunks
+        children = result.child_chunks
+        images = result.images
+        tables = result.tables
+        try:
+            auto_register_media_images(username, scenario_id, images, system=system)
+        except Exception:
+            pass
+    except Exception:
+        # 管线失败时回退到旧逻辑，保证上传可用
+        result = None
+        content = fallback_content
+        parents = children = images = tables = None
+
     doc = get_knowledge_base().add_document(
         title=title or file.filename or "上传资料",
         content=content,
@@ -671,8 +757,236 @@ async def upload_knowledge(
         system=system,
         tags=[t.strip() for t in tags.split(",") if t.strip()],
         username=username, splitter=splitter,
+        parent_chunks=parents, child_chunks=children,
+        images=images, tables=tables, doc_id=doc_id, scenario_id=scenario_id,
     )
-    return {"doc": doc}
+    return {"doc": doc, "pipeline": result.metadata if result else None}
+
+
+# ── 长时间任务 / SSE 进度 ─────────────────────────────────────
+
+async def _run_knowledge_upload_task(
+    task_id: str,
+    data: bytes,
+    filename: str,
+    title: str,
+    system: str,
+    source: str,
+    tags: str,
+    username: str,
+    splitter: str,
+    max_ocr_pages: int,
+    ocr_enabled: bool,
+    region_fusion: bool = True,
+    scenario_id: str = "",
+):
+    import uuid
+    from backend.knowledge_base import get_knowledge_base
+    from backend.scenario_importer import extract_text
+    from backend.document_pipeline import run_document_pipeline
+    from backend.document_pipeline.image_processor import auto_register_media_images
+
+    task_manager.update(task_id, status="running", phase="prepare", message="读取文件与旧逻辑回退文本")
+    try:
+        fallback_content = await asyncio.to_thread(extract_text, filename, data)
+    except Exception as e:
+        task_manager.update(task_id, status="failed", phase="prepare", error=str(e))
+        return
+
+    doc_id = uuid.uuid4().hex[:16]
+    kb = get_knowledge_base()
+    try:
+        task_manager.update(task_id, status="running", phase="pipeline", message="文档识别/切分中")
+        cb = task_progress_callback(task_id, "pipeline")
+        result = await asyncio.to_thread(
+            run_document_pipeline,
+            data, filename, doc_id=doc_id, username=username,
+            max_ocr_pages=max_ocr_pages, ocr_enabled=ocr_enabled,
+            progress_callback=cb, splitter=splitter, region_fusion=region_fusion,
+        )
+        content = result.cleaned_text or fallback_content
+        parents = result.parent_chunks
+        children = result.child_chunks
+        images = result.images
+        tables = result.tables
+        try:
+            await asyncio.to_thread(auto_register_media_images, username, scenario_id, images, system=system)
+        except Exception:
+            pass
+        pipeline_meta = result.metadata
+        warning = ""
+    except Exception as e:
+        # 管线失败时回退旧逻辑，保证上传可用
+        content = fallback_content
+        parents = children = images = tables = None
+        pipeline_meta = None
+        warning = str(e)
+        task_manager.update(task_id, status="running", phase="fallback", message=f"管线失败，使用旧文本回退：{warning}")
+
+    task_manager.update(task_id, status="running", phase="store", message="写入知识库")
+    try:
+        doc = await asyncio.to_thread(
+            kb.add_document,
+            title=title or filename or "上传资料",
+            content=content,
+            source=source,
+            system=system,
+            tags=[t.strip() for t in tags.split(",") if t.strip()],
+            username=username,
+            splitter=splitter,
+            parent_chunks=parents,
+            child_chunks=children,
+            images=images,
+            tables=tables,
+            doc_id=doc_id,
+            scenario_id=scenario_id,
+        )
+    except Exception as e:
+        task_manager.update(task_id, status="failed", phase="store", error=str(e))
+        return
+
+    if children:
+        try:
+            from backend.vector_store import add_document_vectors, pgvector_enabled
+            if pgvector_enabled():
+                await add_document_vectors(doc_id, [
+                    {
+                        "chunk_id": getattr(c, "id", str(i)),
+                        "block_type": getattr(c, "type", "text"),
+                        "content": getattr(c, "content", ""),
+                    }
+                    for i, c in enumerate(children)
+                ])
+        except Exception as e:
+            task_manager.update(task_id, status="running", phase="store",
+                                message=f"pgvector 写入失败（已忽略）：{e}")
+
+    task_manager.update(
+        task_id,
+        status="completed",
+        phase="done",
+        message="上传完成",
+        result={"doc": doc, "pipeline": pipeline_meta, "warning": warning or None},
+    )
+
+
+@app.post("/api/tasks/upload-document")
+async def create_upload_document_task(
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    system: str = Form("custom"),
+    source: str = Form("user"),
+    tags: str = Form(""),
+    username: str = Form("default"),
+    splitter: str = Form("semantic"),
+    max_ocr_pages: int = Form(20),
+    ocr_enabled: bool = Form(True),
+    region_fusion: bool = Form(True),
+    scenario_id: str = Form(""),
+):
+    """创建知识库文档上传后台任务，返回 task_id 后通过 SSE 查看进度。"""
+    data = await file.read()
+    if len(data) > 30 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="文件不能超过 30MB")
+    task = task_manager.create("document_upload", message="任务已创建，等待开始")
+    asyncio.create_task(_run_knowledge_upload_task(
+        task.id, data, file.filename or "", title, system, source, tags,
+        username, splitter, max_ocr_pages, ocr_enabled, region_fusion, scenario_id,
+    ))
+    return {
+        "task_id": task.id,
+        "status": "running",
+        "events_url": f"/api/tasks/{task.id}/events",
+    }
+
+
+@app.get("/api/tasks/{task_id}/events")
+async def task_events(task_id: str):
+    """SSE 实时推送任务进度。"""
+    if task_manager.get(task_id) is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return StreamingResponse(
+        task_sse_generator(task_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task(task_id: str):
+    task = task_manager.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task.to_dict()
+
+
+@app.get("/api/tasks")
+async def list_tasks(limit: int = 50):
+    return {"tasks": [t.to_dict() for t in task_manager.list(limit=limit)]}
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str):
+    if task_manager.request_cancel(task_id):
+        return {"ok": True, "cancel_requested": True}
+    raise HTTPException(status_code=404, detail="任务不存在")
+
+
+async def _run_model_download_task(task_id: str, kind: str):
+    from pathlib import Path
+    from backend.model_setup import (
+        ensure_bge_dependencies,
+        ensure_reranker_dependencies,
+        download_hf_repo,
+    )
+
+    task_manager.update(task_id, status="running", phase="deps", message="正在安装模型依赖")
+    try:
+        if kind == "embedding":
+            await ensure_bge_dependencies()
+            target_dir = str(settings.BGE_M3_DIR)
+            repo = settings.BGE_M3_REPO
+        else:
+            await ensure_reranker_dependencies()
+            target_dir = str(settings.BGE_RERANKER_PATH)
+            repo = settings.BGE_RERANKER_REPO
+
+        task_manager.update(task_id, status="running", phase="download", message="开始下载模型")
+        async def _cb(pct, path):
+            task_manager.update(
+                task_id,
+                status="running",
+                phase="download",
+                progress=pct if pct is not None else 0.0,
+                message=f"下载中：{path}" if path else "下载中",
+            )
+
+        await download_hf_repo(repo, target_dir, _cb)
+        size = sum(f.stat().st_size for f in Path(target_dir).rglob("*") if f.is_file())
+        task_manager.update(
+            task_id,
+            status="completed",
+            phase="done",
+            progress=100.0,
+            message="模型下载完成",
+            result={"kind": kind, "path": target_dir, "size": size},
+        )
+    except Exception as e:
+        task_manager.update(task_id, status="failed", phase="download", error=str(e))
+
+
+@app.post("/api/tasks/model-download")
+async def create_model_download_task(payload: dict):
+    kind = str(payload.get("kind") or "").strip()
+    if kind not in ("embedding", "reranker"):
+        raise HTTPException(status_code=400, detail="kind 仅支持 embedding 或 reranker")
+    task = task_manager.create("model_download", message="任务已创建，等待开始")
+    asyncio.create_task(_run_model_download_task(task.id, kind))
+    return {
+        "task_id": task.id,
+        "status": "running",
+        "events_url": f"/api/tasks/{task.id}/events",
+    }
 
 
 @app.delete("/api/knowledge/{doc_id}")
@@ -691,10 +1005,31 @@ async def retrieve_knowledge(payload: dict):
     system = payload.get("system")
     top_k = int(payload.get("top_k") or 5)
     username = str(payload.get("username") or "default")
+    scenario_id = str(payload.get("scenario_id") or "") or None
     if not query.strip():
         raise HTTPException(status_code=400, detail="查询不能为空")
-    results = get_knowledge_base().retrieve(query, system=system, top_k=top_k, username=username)
+    results = get_knowledge_base().retrieve(query, system=system, top_k=top_k, username=username, scenario_id=scenario_id)
     return {"results": results}
+
+
+@app.post("/api/knowledge/pgvector-search")
+async def pgvector_search(payload: dict):
+    """可选 pgvector 向量检索；未启用时回退本地知识库检索。"""
+    from backend.knowledge_base import get_knowledge_base
+    from backend.vector_store import pgvector_enabled, search_document_vectors
+    query = str(payload.get("query") or "")
+    top_k = int(payload.get("top_k") or 10)
+    system = payload.get("system")
+    username = str(payload.get("username") or "default")
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="查询不能为空")
+    if pgvector_enabled():
+        results = await search_document_vectors(query, top_k=top_k)
+        return {"enabled": True, "results": results}
+    return {
+        "enabled": False,
+        "results": get_knowledge_base().retrieve(query, system=system, top_k=top_k, username=username),
+    }
 
 
 @app.post("/api/knowledge/llm-process")
@@ -2346,13 +2681,16 @@ async def create_new_game(request: NewGameRequest):
                 ws_data = _json.loads(request.world_state_json)
                 ws = WorldState(session_id=session.id, world_outline=ws_data.get("world_outline", ""),
                                  world_rules=ws_data.get("world_rules", ""))
-                from backend.engine.world_state import NpcEntry as NE, PlotFlag as PF, LocationEntry as LE
+                from backend.engine.world_state import NpcEntry as NE, NpcVisibility, PlotFlag as PF, LocationEntry as LE
                 for n in ws_data.get("npcs", []):
-                    ws.npcs.append(NE(**{k: v for k, v in n.items()
-                                         if k in ["name","race","role","location","attitude",
-                                                  "alive","personality","motivation","secret",
-                                                  "relation_to_plot","notes",
-                                                  "level","ac","hp","max_hp","attributes","skills","traits","equipment","related_locations","related_npcs","related_creatures","image_path","importance","discovered"]}))
+                    ne = NE(**{k: v for k, v in n.items()
+                               if k in ["name","race","role","location","attitude",
+                                        "alive","personality","motivation","secret",
+                                        "relation_to_plot","notes",
+                                        "level","ac","hp","max_hp","attributes","skills","traits","equipment","related_locations","related_npcs","related_creatures","image_path","importance","discovered","visibility"]})
+                    if isinstance(ne.visibility, dict):
+                        ne.visibility = NpcVisibility.from_dict(ne.visibility)
+                    ws.npcs.append(ne)
                 for p in ws_data.get("plot_flags", []):
                     ws.plot_flags.append(PF(**{k: v for k, v in p.items()
                                                if k in ["key","status","description","consequence","visible"]}))

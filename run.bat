@@ -105,7 +105,7 @@ echo ============================================================
 set "BS=%~dp0_backend_launch.bat"
 > "!BS!" echo @echo off
 >>"!BS!" echo cd /d "%~dp0"
->>"!BS!" echo "!PYTHON!" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+>>"!BS!" echo "!PYTHON!" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --no-access-log --log-level warning
 start "AI-DM-Backend" /MIN "!BS!"
 echo [OK] Backend launched
 

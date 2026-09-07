@@ -300,10 +300,17 @@ def split_text_semantic(
     return [c.strip() for c in final if c.strip()]
 
 
+def split_text_recursive(text: str, chunk_size: int = 900, overlap: int = 150) -> list[str]:
+    """快速递归切分：按段落/标题/字数切分，带 overlap，不依赖 LLM。"""
+    return split_text_naive(text, chunk_size=chunk_size, overlap=overlap)
+
+
 def split_text(text: str, mode: str = "naive", chunk_size: int = 900) -> list[str]:
-    """对外切分入口。mode: naive | semantic | llm（llm 需走异步 llm_split_text）"""
+    """对外切分入口。mode: naive | recursive | semantic | llm（llm 需走异步 llm_split_text）"""
     if mode == "semantic":
         return split_text_semantic(text, max_chunk_size=max(600, chunk_size))
+    if mode == "recursive":
+        return split_text_recursive(text, chunk_size=chunk_size)
     return split_text_naive(text, chunk_size=chunk_size)
 
 
@@ -694,13 +701,13 @@ async def generate_scenario_from_text(
     except Exception:
         pass
 
-    # 将剧本细节写入本地知识库，供后续 RAG 检索
+    # 将剧本细节写入本地知识库（限定到 scenario_id，避免污染总知识库）
     try:
         from backend.knowledge_base import get_knowledge_base
         kb = get_knowledge_base()
         scenario_source = f"scenario:{saved.id}"
-        for d in kb.list_documents(username):
-            if d.get("source") == scenario_source:
+        for d in kb.list_documents(username, include_scenario=True):
+            if d.get("source") == scenario_source or d.get("scenario_id") == saved.id:
                 kb.remove_document(d["id"], username)
         kb.add_document(
             title=f"剧本：{saved.meta.title}",
@@ -709,6 +716,7 @@ async def generate_scenario_from_text(
             system=system,
             tags=["剧本", system, splitter],
             username=username,
+            scenario_id=saved.id,
         )
     except Exception as e:
         print(f"[ScenarioImporter] 知识库写入失败（不影响剧本生成）: {e}")

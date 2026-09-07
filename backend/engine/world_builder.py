@@ -20,6 +20,122 @@ from backend.engine.prompt_guard import extract_json_object, sanitize_user_text
 from backend.engine.agent_graph import run_extraction_agent
 from backend.knowledge_base import get_knowledge_base
 
+_CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5,
+           "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def _parse_creature_count(name: str) -> tuple[int, str]:
+    """把“两个地精”“3只狼”拆成 (数量, 基础名)。"""
+    s = str(name or "").strip()
+    m = re.match(r"^(\d+)\s*[个只名位]?\s*(.+)$", s)
+    if m:
+        try:
+            count = max(1, int(m.group(1)))
+            return count, m.group(2).strip()
+        except Exception:
+            pass
+    m = re.match(r"^([一二两三四五六七八九十])\s*[个只名位]?\s*(.+)$", s)
+    if m:
+        count = _CN_NUM.get(m.group(1), 1)
+        return count, m.group(2).strip()
+    return 1, s
+
+
+def _derive_npc_stats(n: dict) -> tuple[int, int, int]:
+    """根据重要性/角色关键词为非完整NpcEntry推导合理数值，避免全是 hp10/ac10。"""
+    importance = str(n.get("importance", "minor") or "minor")
+    role = str(n.get("role", "") or "")
+    text = f"{role} {str(n.get('name', ''))}"
+    level = int(n.get("level", 1) or 1)
+    if level <= 1:
+        level = 3 if importance == "major" else (2 if any(k in text for k in ("卫兵", "士兵", "强盗", "战士", "圣武士", "法师")) else 1)
+    ac = int(n.get("ac", 0) or 0)
+    if ac <= 0:
+        ac = 14 if importance == "major" else 12
+        if any(k in text for k in ("战士", "圣武士", "卫兵", "骑士", "重甲")):
+            ac = max(ac, 15)
+        elif any(k in text for k in ("法师", "学者", "商人", "平民")):
+            ac = max(ac, 11)
+    hp = int(n.get("hp", 0) or 0)
+    if hp <= 0:
+        hp = 30 if importance == "major" else 20
+        hp = max(hp, level * 4 + 8)
+    max_hp = int(n.get("max_hp", 0) or 0)
+    if max_hp <= 0:
+        max_hp = hp
+    return max(1, level), ac, hp, max_hp
+
+
+def _enrich_creature_from_bestiary(creature: dict, bestiary: list[dict]) -> dict:
+    """生成生物前先查图鉴：若已有同名生物，优先采用图鉴中的属性/描述/标签。"""
+    if not bestiary or not isinstance(creature, dict):
+        return creature
+    name = str(creature.get("name", "") or "").strip()
+    if not name:
+        return creature
+    base = _parse_creature_count(name)[1] or name
+    found = None
+    for b in bestiary:
+        bname = str(b.get("name", "") or "").strip()
+        if bname == name or bname == base:
+            found = b
+            break
+    if found is None:
+        for b in bestiary:
+            bname = str(b.get("name", "") or "").strip()
+            if base and (base in bname or bname in base):
+                found = b
+                break
+    if found is None:
+        return creature
+    merged = dict(creature)
+    stats = dict(creature.get("stats") or {})
+    for k, v in (found.get("stats") or {}).items():
+        if not stats.get(k):
+            stats[k] = v
+    merged["stats"] = stats
+    if not merged.get("description") and found.get("description"):
+        merged["description"] = found["description"]
+    if not merged.get("tags") and found.get("tags"):
+        merged["tags"] = found["tags"]
+    if not merged.get("image_path") and found.get("image_path"):
+        merged["image_path"] = found["image_path"]
+    merged["bestiary_source"] = found.get("name", base)
+    return merged
+
+
+def _normalize_creature(creature: dict, index: int) -> list[dict]:
+    """规范化生成生物：拆分“两个地精”等复合名称，并补齐缺失属性。"""
+    name = str(creature.get("name", "") or "").strip()
+    count, base = _parse_creature_count(name)
+    stats = dict(creature.get("stats") or {})
+    level = 2
+    try:
+        level = max(1, int(stats.get("等级") or stats.get("level") or creature.get("level") or 2))
+    except Exception:
+        level = 2
+    if not stats.get("HP") and not stats.get("hp"):
+        stats["HP"] = str(max(12, level * 6))
+    if not stats.get("AC") and not stats.get("ac"):
+        stats["AC"] = str(min(22, 10 + level // 2))
+    if not stats.get("速度") and not stats.get("speed"):
+        stats["速度"] = "6"
+    for k in ("力量", "敏捷", "体质", "智力", "感知", "魅力"):
+        if not stats.get(k):
+            stats[k] = "10"
+    out = []
+    real_count = min(count or 1, 12)
+    for i in range(real_count):
+        out.append({
+            **(creature or {}),
+            "name": base if real_count == 1 else f"{base}{i + 1}",
+            "stats": stats,
+            "quantity": real_count,
+            "group_base": base,
+            "group_index": i + 1,
+        })
+    return out
+
 
 # ═══════════════════════════════════════════════════════════════
 # 分步生成 Prompt
@@ -76,6 +192,8 @@ STEP3_NPC = """你是一位角色设计大师。基于以下世界观、剧情�
 - 至少2个支线/副线，每个都与主线有隐性关联
 - 隐藏敌意、秘密、背叛按基调可选，不要强制每局都苦大仇深
 - 所有重要NPC都应能推动故事完整性，避免工具人
+- **世界独立性**：NPC、势力、地点与生物应作为世界的一部分独立存在，拥有自己的目标、生活、历史与计划；玩家是进入这个世界的参与者，而不是所有事件围绕其旋转的绝对中心。
+- 不要为了突出玩家而让所有NPC、敌人、事件都只针对玩家；应留有NPC之间、势力之间自然发生的冲突与推进。
 
 输出格式：直接输出Markdown文本。"""
 
@@ -124,6 +242,7 @@ MERGE_PROMPT = """你是一位TRPG模组主编。请根据风格基调，将以�
 - 确保数据一致（NPC名字、地点名称等）
 - 完整性优先：开头钩子、过程推进、高潮、结局、支线回收、伏笔闭合、NPC弧光完整
 - 参考剧本/备注有明确风格时，必须优先贴合参考风格，不要擅自改回千篇一律的暗黑奇幻
+- **冒险独立性**：世界应有自身的运转逻辑，NPC/势力/生物有独立目标与行动；玩家参与并影响冒险，而不是冒险完全围绕玩家展开。
 
 ## 评分标准（满分100）
 1. 完整性与结构(20分)：是否有完整的开端、发展、高潮、结局，伏笔是否回收
@@ -641,13 +760,13 @@ async def build_world(
     # 应用提取结果
     if state_data:
         for n in state_data.get("npcs", []):
+            level, ac, hp, max_hp = _derive_npc_stats(n)
             ws.npcs.append(NpcEntry(
                 name=n.get("name",""), race=n.get("race",""), role=n.get("role",""),
                 location=n.get("location",""), attitude=n.get("attitude","中立"),
                 personality=n.get("personality",""), motivation=n.get("motivation",""),
                 secret=n.get("secret",""), relation_to_plot=n.get("relation_to_plot",""),
-                level=int(n.get("level", 1) or 1), ac=int(n.get("ac", 10) or 10),
-                hp=int(n.get("hp", 10) or 10), max_hp=int(n.get("max_hp", 10) or 10),
+                level=level, ac=ac, hp=hp, max_hp=max_hp,
                 attributes=n.get("attributes") or {}, skills=n.get("skills") or [],
                 traits=n.get("traits") or [], equipment=n.get("equipment") or [],
                 related_locations=n.get("related_locations", []),
@@ -673,7 +792,16 @@ async def build_world(
                 related_creatures=l.get("related_creatures", []),
                 discovered=False,
             ))
-        ws.creatures = state_data.get("creatures", [])
+        ws.creatures = []
+        bestiary_ref = []
+        try:
+            from backend.media_manager import list_bestiary
+            bestiary_ref = list_bestiary(username) or []
+        except Exception:
+            bestiary_ref = []
+        for ci, c in enumerate(state_data.get("creatures", [])):
+            c = _enrich_creature_from_bestiary(c or {}, bestiary_ref)
+            ws.creatures.extend(_normalize_creature(c, ci))
         ws.spells = state_data.get("spells", [])
         ws.world_rules = state_data.get("world_rules", "")
     if not ws.npcs and not ws.locations:

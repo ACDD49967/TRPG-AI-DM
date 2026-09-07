@@ -235,8 +235,12 @@ export default function StatusPanel({ onOpenSheet }: { onOpenSheet?: () => void 
           className="bg-red-50 border border-red-200 rounded-lg p-1.5"
         >
           <p className="text-[9px] text-red-600 font-bold">战斗中</p>
-          <p className="text-[9px] text-red-700 truncate">{combat.enemyName}</p>
-          <p className="text-[8px] text-gray-500">敌方HP: {combat.enemyHp}</p>
+          {(combat.enemies && combat.enemies.length > 0 ? combat.enemies : [{ name: combat.enemyName, hp: combat.enemyHp }]).map(e => (
+            <div key={e.name} className="flex items-center justify-between gap-1 py-0.5">
+              <span className="text-[9px] text-red-700 truncate">{e.name}</span>
+              <span className="text-[8px] text-gray-500">HP {e.hp}</span>
+            </div>
+          ))}
         </motion.div>
       )}
 

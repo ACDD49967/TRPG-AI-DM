@@ -8,6 +8,7 @@ import StatusPanel from './StatusPanel';
 import PlayerJournal from './PlayerJournal';
 import InputArea from './InputArea';
 import Choices from './Choices';
+import CombatLogPanel from './CombatLogPanel';
 import DiceRollOverlay from './DiceRoll';
 import DecisionPanel from './DecisionPanel';
 import RulebookModal from './RulebookModal';
@@ -131,10 +132,10 @@ export default function GameScreen() {
   const globalBestiary = bestiary.filter(b => !b.scenario_id);
   const scenarioSpells = spells.filter(s => s.scenario_id === currentSid);
   const globalSpells = spells.filter(s => !s.scenario_id);
-  // 默认优先显示当前剧本内容；若当前剧本没有条目，则回退显示通用参考，避免图鉴空白
-  const scopedMaps = showGlobalRef || !currentSid ? maps : (scenarioMaps.length > 0 ? scenarioMaps : globalMaps);
-  const scopedBestiary = showGlobalRef || !currentSid ? bestiary : (scenarioBestiary.length > 0 ? scenarioBestiary : globalBestiary);
-  const scopedSpells = showGlobalRef || !currentSid ? spells : (scenarioSpells.length > 0 ? scenarioSpells : globalSpells);
+  // 图鉴隔离：有当前剧本时显示“当前剧本 + 通用参考”；隐藏其它剧本
+  const scopedMaps = showGlobalRef || !currentSid ? maps : maps.filter(m => !m.scenario_id || m.scenario_id === currentSid);
+  const scopedBestiary = showGlobalRef || !currentSid ? bestiary : bestiary.filter(b => !b.scenario_id || b.scenario_id === currentSid);
+  const scopedSpells = showGlobalRef || !currentSid ? spells : spells.filter(s => !s.scenario_id || s.scenario_id === currentSid);
   const filteredMaps = scopedMaps.filter(m => !mapQuery || q(`${m.name} ${m.description_zh||''} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')} ${m.details?.type||''} ${m.details?.status||''} ${m.details?.culture||''} ${m.details?.notable_figures||''} ${m.details?.dangers||''}`).includes(q(mapQuery)));
   const filteredBestiary = scopedBestiary.filter(b => !beastQuery || q(`${b.name} ${b.description_zh||''} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''} ${b.details?.lore||''}`).includes(q(beastQuery)));
 
@@ -384,6 +385,7 @@ export default function GameScreen() {
             HP {status.hp}/{status.maxHp}
           </span>
           <span className="text-[10px] text-gray-400 font-mono hidden sm:inline">#{sessionId?.slice(0, 6)}</span>
+          {currentSid && <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100">剧本</span>}
           <button onClick={()=>setShowRulebook(true)} className="text-xs text-indigo-500 hover:text-indigo-700 transition-colors">说明书</button>
           <button onClick={()=>setShowCharSheet(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">角色卡</button>
           <button onClick={()=>setShowDmTools(true)} className="text-xs text-amber-600 hover:text-amber-800 transition-colors">DM</button>
@@ -402,6 +404,7 @@ export default function GameScreen() {
           <NarrativeStream />
           <DecisionPanel />
           <Choices />
+          <CombatLogPanel />
           <InputArea />
         </div>
         <PlayerJournal />
@@ -604,7 +607,7 @@ export default function GameScreen() {
                 <button onClick={()=>{addDmMap(); setShowMapBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本地点库</button>
               </div>
             )}
-            {filteredMaps.length===0&&<p className="text-xs text-gray-400">暂无匹配地图。</p>}
+            {filteredMaps.length===0&&<div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">🗺️</p><p>没有找到地图。</p><p className="text-[9px] text-gray-300">可以调整搜索，或先导入剧本 / 上传地图图片</p></div>}
             {filteredMaps.map(m=>{
               const relatedCreatures = scopedBestiary.filter(b => q(`${b.description} ${b.details?.habitat||''} ${b.details?.lore||''}`).includes(q(m.name)));
               return (
@@ -699,7 +702,7 @@ export default function GameScreen() {
                 <button onClick={()=>{addDmBeast(); setShowBeastBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本生物库</button>
               </div>
             )}
-            {filteredBestiary.length===0&&<p className="text-xs text-gray-400">暂无匹配生物。</p>}
+            {filteredBestiary.length===0&&<div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">🐾</p><p>没有找到生物。</p><p className="text-[9px] text-gray-300">可以调整搜索，或先导入怪物库 / 上传生物图片</p></div>}
             {filteredBestiary.map(b=>{
               const relatedMaps = scopedMaps.filter(m => q(`${b.details?.habitat||''} ${b.description} ${b.details?.lore||''}`).includes(q(m.name)) || q(m.description).includes(q(b.name)));
               const s = b.stats || {};
@@ -879,7 +882,7 @@ export default function GameScreen() {
                 <button onClick={()=>{addDmSpell(); setShowSpellBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本法术库</button>
               </div>
             )}
-            {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <p className="text-xs text-gray-400">暂无匹配法术。</p>}
+            {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">✨</p><p>没有找到法术。</p><p className="text-[9px] text-gray-300">可以调整搜索，或先导入法术图鉴 / 自建法术</p></div>}
             {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).map(s=>(
               <details key={s.id} className="group mb-2 border-2 border-amber-900/30 rounded-lg p-2.5 bg-[#fffdf5]">
                 <summary className="cursor-pointer select-none flex items-center justify-between gap-2">

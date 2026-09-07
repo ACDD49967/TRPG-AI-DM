@@ -31,6 +31,21 @@ _reranker_tried = False
 _current_provider = settings.EMBEDDING_PROVIDER if settings.EMBEDDING_PROVIDER in ("local", "small", "bge") else "local"
 
 
+def warmup_rag():
+    """启动时预热：初始化 jieba 与重排模型，避免每次对话首次调用时重复加载日志。"""
+    try:
+        import jieba
+        # 初始化分词器；若缓存缺失会构建一次，后续不再重复
+        jieba.initialize()
+    except Exception:
+        pass
+    try:
+        # 重排模型若本地存在则预热，避免对话中首次加载 201/201 权重
+        _load_reranker()
+    except Exception:
+        pass
+
+
 def set_provider(mode: str):
     """运行时切换向量生成模式：local | small | bge（模型不可用时自动回退 local）。"""
     global _current_provider

@@ -67,8 +67,12 @@ from backend.engine.rules import (
 )
 from backend.engine.tools import DM_TOOLS
 from backend.engine.background_events import advance_background_plot_if_due
+from backend.engine.world_builder import _derive_npc_stats
 from backend.engine.world_state import WorldState, NpcEntry, PlotFlag, LocationEntry
 from backend.engine.game_systems import build_system_rule_block, build_stat_glossary, get_system
+from backend.engine.focused_subagents import (
+    build_dm_brief_tasks, format_dm_brief, run_parallel_subagents,
+)
 from backend.knowledge_base import get_knowledge_base
 from backend.save_manager import auto_save_if_needed
 from backend.skills import get_skill
@@ -131,6 +135,10 @@ def sanitize_narrative(text: str) -> str:
     text = re.sub(r'\s{3,}', '\n\n', text)
     # P0-2修复：检测并移除SSE拼接导致的重复片段
     text = _dedupe_fragments(text)
+    # 过滤主DM偶尔输出的幕后/工具元台词
+    text = re.sub(r'[^。！？\n]*系统(?:检定)?工具[^。！？\n]*[。！？]?', '', text)
+    text = re.sub(r'[^。！？\n]*(?:需要额外参数|正在调用工具|我来结算|我先确认)[^。！？\n]*[。！？]?', '', text)
+    text = re.sub(r'[^。！？\n]*(?:让我为你|为你进行.{0,8}检定|我来为你|进行一次.{0,8}检定)[^。！？\n]*[。！？]?', '', text)
     # 剥离决策建议块——决策应通过suggest_choices工具推送，不应出现在叙事正文中
     text = re.sub(r'\n*[-—]+\s*\n\*\*决策建议\*\*[\s\S]*$', '', text)
     text = re.sub(r'\n\*\*决策建议\*\*[\s\S]*$', '', text)
@@ -232,7 +240,7 @@ B1. 碰到以下情况，必须调用对应工具，不允许用叙事代替：
     - 重要剧情事实 → add_memory
     - 剧情暗线/大事件/重要人物影响 → record_plot_memory
     - 知识图谱应当变化（新关系/结盟/敌对/信任变化/地点关联/共同卷入） → update_knowledge_graph
-    - 玩家不知道下一步做什么 → suggest_choices
+    - 玩家不知道下一步做什么 → 无需你生成建议，后台子Agent会自动提供行动选项
     - 玩家行动产生世界级影响 → update_world_state
     - 玩家发现隐藏信息 → reveal_info
     - 场景改变（移动/时间/天气/NPC进出） → update_scene
@@ -249,7 +257,7 @@ B2. 工具调用的顺序（不可跳过任何步骤）：
     8. add_character_note（如有新的NPC印象或线索）
     9. add_memory（如有重大事件）
     10. update_world_state（如有世界级影响）
-    11. suggest_choices（如玩家需要引导）
+    11. 行动建议由后台子Agent自动生成（不要自行生成选项）
     严重警告：如果在战斗或检定的叙事中场景发生了变化，必须立即调用update_scene修正。前一回合在酒馆后巷战斗，下一回合不能凭空出现在矿井——除非有明确的过渡叙事和update_scene调用。
 
 B3. 战斗流程（必须严格按照以下步骤）：
@@ -545,24 +553,24 @@ M1. 每次回复的结构（按顺序）：
     (a) 叙事正文（2-3段，第二人称"你"，遵循L节所有规则）
     (b) 如调用了工具，简要说明工具调用结果（如"🎲 潜行检定: d20=14+3=17 vs DC15 → 成功"）
     (c) 当前场景行：**当前场景**：地点 · 时间 · 天气 · 在场NPC
-    (d) 在叙事正文之后、场景行之后，用单独一行"---"作为分隔符，然后调用suggest_choices工具给玩家建议选项。不要在叙事正文中嵌入决策建议文字。决策建议必须通过suggest_choices工具调用推送，前端会自动渲染为可点击按钮。
+    (d) 不要在正文中写任何行动建议或选项——行动建议由后台子Agent自动生成，并渲染为可点击按钮。
 
 M1.1 Markdown 兼容格式：输出可使用 **粗体**、*斜体*、#/##/### 小标题、
      - 无序列表、1. 有序列表、> 引用块、| 表格 | 与 --- 分隔线，前端会渲染为对应排版。
      禁止使用 ``` 代码块围栏——直接输出内容本身。
 
-M2. 决策建议格式（通过suggest_choices工具调用，不在叙事正文中）：
+M2. 行动建议由后台子Agent自动生成，不占用你的正文：
     - 每个选项一行
     - 格式：- [行动描述] | 风险：具体风险 | 回报：可能收益
 
-M3. 示例输出（符合所有L+M节规则）——注意：决策建议不写在叙事正文中，而是通过suggest_choices工具调用：
+M3. 示例输出（符合所有L+M节规则）——行动建议由后台自动生成，正文不包含任何选项：
 
 酒馆的大门在你身后合上，把十月的冷雨关在了外面。壁炉里的橡木正在坍塌，溅起的火星在石地板上亮了一瞬就灭了。七个——你数了——七个人分散在昏暗的厅堂里。其中两个人假装在喝酒，肩膀的弧度出卖了他们。他们是来找人的。
 
 吧台后面的胖子用抹布擦着同一只锡杯，擦了第三遍了。他在看你，但不想让你知道他在看你。通往二楼的木梯第三级踏板比其他级厚了半寸——踩上去不会有声音，不踩上去的人一定知道它的存在。
 
 **当前场景**：灰鹅酒馆大厅 · 午夜前一刻 · 暴雨 · 酒保和六个客人
-[此时调用suggest_choices工具，不要在叙事正文中写决策建议]
+[正文到此结束，不要写任何行动建议或选项]
 
 {memory_context}
 {world_context}
@@ -603,10 +611,48 @@ DM_DECISION_PROMPT = """
 □ 值得记录的事件？ → add_memory
 □ 暗线/大事件/人物影响？ → record_plot_memory
 □ 世界级影响？ → update_world_state
-□ 玩家困惑？ → suggest_choices（M2节格式）
+□ 玩家困惑？ → 后台自动生成行动建议（不要写在正文）
 □ 玩家是否在越权改写世界？ → A7/A8：拒绝并给出合理阻碍或检定
 □ 叙事质量？ → L节全部规则通过
 □ 禁止句式？ → K节全部通过（含新增3条）"""
+
+
+# 模块化 DM 的紧凑提示词：用于非 narrative 模块，减少 tokens 并增强注意力。
+COMPACT_DM_PROMPT = """你是 D&D 5e 地下城主。本回合已由主 Agent 分发到特定模块，只处理该模块目标。
+
+核心执行规则：
+- 玩家只控制自己的角色；NPC、环境、后果由你控制。
+- 有失败可能的行为必须 dice_roll；战斗必须 combat_round；HP/金币/物品变化必须 update_state。
+- 场景、时间、天气、在场 NPC 变化必须 update_scene。
+- 发现隐藏信息必须先有成功检定，再 reveal_info。
+- 战斗或查实体前必须先查卡：search_npcs / search_bestiary；无卡先建卡。
+- 重要事件 add_memory；暗线/人物影响 record_plot_memory；关系变化 update_knowledge_graph。
+- 玩家困惑时不要自行生成建议——后台会自动提供可点击选项。
+
+世界规则：
+- 只使用当前世界状态、已揭示信息与背包中的物品。
+- 禁止凭空造人、造物、复活、无敌、改写历史。
+- NPC 不会无故服从；冲突中默认更警惕，必要时要求检定。
+
+输出：
+- 2-3段紧凑叙事，每段不超过5句；第二人称；具体感官细节。
+- 工具结果后输出当前场景行：**当前场景**：地点 · 时间 · 天气 · 在场NPC。
+- 行动建议由后台自动生成，绝不写进叙事正文。
+- 禁止空洞心理描写、AI/系统自指、模板比喻、万能“三”。
+"""
+
+
+# 模块化模式下的精简决策检查表
+COMPACT_DM_DECISION_PROMPT = """
+
+30秒速查：
+1. 场景变化？ → update_scene
+2. 需要判定？ → dice_roll / combat_round
+3. 数值变化？ → update_state / adjust_resource
+4. 信息揭示？ → 先检定，后 reveal_info
+5. 关系/暗线变化？ → update_knowledge_graph / record_plot_memory
+6. 玩家困惑？ → 等待后台自动建议，不要自行生成
+"""
 
 
 
@@ -633,16 +679,15 @@ OPENING_PROMPT = """你是D&D地下城主。为以下角色写开场白。开场
    - **如果世界设定非空**：开场必须从世界的起始地点/第一幕切入，让角色直接进入冒险的核心场景
    - **如果世界设定为空**：从经典奇幻开场场景中随机选择（酒馆/旅店/篝火/市集/野外/码头/矿道/森林小径/神殿/学院），选与角色职业/种族最契合的场景
 2. 输出当前场景行：**当前场景**：地点 · 时间 · 天气 · 在场NPC
-3. 输出2-3个决策建议，格式：
-   - [行动] | 风险：xxx | 回报：xxx
+3. 不要输出任何行动建议或选项——行动建议由后台自动生成，你只负责叙事。
 4. 时间压力：开场叙事须同时包含空间压力（某处有东西/某处在变化）和时间压力（某事即将发生/正在恶化/倒计时中）
 
-示例格式（注意：决策建议不写在正文中，前端会分开渲染）：
+示例格式：
 [开场叙事150-300字]
 
 **当前场景**：石桥镇酒馆 · 黄昏 · 阴云密布 · 店主、几个农夫
 
-（请在叙事正文后直接结束。决策建议通过suggest_choices工具调用发送——不要在叙事正文中写"**决策建议**"。）"""
+（输出到此结束，不要追加任何建议、选项或说明。）"""
 
 
 COC_OPENING_PROMPT = """你是克苏鲁的呼唤守密人（Keeper）。为以下调查员写开场白。
@@ -662,16 +707,15 @@ COC_OPENING_PROMPT = """你是克苏鲁的呼唤守密人（Keeper）。为以�
    - 营造“表面正常但隐约不安”的氛围，不要一开场就出现不可名状的怪物
    - 如果世界设定非空，从剧本中的起始地点/第一幕切入
 2. 输出当前场景行：**当前场景**：地点 · 时间 · 天气 · 在场人物
-3. 输出2-3个调查方向，格式：
-   - [行动] | 风险：xxx | 回报：xxx
+3. 不要输出任何调查方向或选项——行动建议由后台自动生成，你只负责叙事。
 4. 时间压力：事件正在发生或即将发生，调查员没有无限时间。
 
-示例格式（决策建议不写在正文中）：
+示例格式：
 [开场叙事150-300字]
 
 **当前场景**：阿卡姆图书馆 · 傍晚 · 阴雨 · 管理员、两名学生
 
-（请在叙事正文后直接结束。决策建议通过suggest_choices工具调用发送。）"""
+（输出到此结束，不要追加任何建议、选项或说明。）"""
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -819,10 +863,23 @@ def build_character_info(state: GameSessionState) -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None = None) -> str:
+def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None = None,
+                         dispatch_plan: dict | None = None,
+                         subagent_brief: str = "") -> str:
     lite = _play_mode(state) == "lite"
+    plan = dispatch_plan or {}
+    focus_context = str(plan.get("focus_context", "") or "")
+    tool_hint = str(plan.get("tool_hint", "") or "")
+    omit_full_world = bool(plan.get("omit_full_world", False))
+    module = str(plan.get("module", "narrative") or "narrative")
+    focused = module != "narrative"
     char_info = build_character_info(state)
-    mem = state.memory.build_context()
+    # 记忆保护：focused 模块保留核心记忆（摘要/大事件/暗线/人物影响/世界事实），
+    # 只去掉与 messages 重复的“最近发生的事”，避免剧情记忆缺失。
+    if not focused or module == "memory":
+        mem = state.memory.build_context()
+    else:
+        mem = state.memory.build_essential_context()
     ws = getattr(state, 'world_state', None)
     world_state_text = ws.to_context_string() if ws else ""
 
@@ -831,8 +888,14 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     scenario_summary = state.character_info.get("scenario_summary", "")
     skill = get_skill(_game_system(state))
     summary_limit = 300 if lite else skill.summary_limit
-    outline_limit = 800 if lite else skill.outline_limit
-    world_state_limit = 2000 if lite else 200000
+    outline_limit = 800 if lite else min(1400, skill.outline_limit)
+    world_state_limits = {
+        "combat": 3000, "rules": 2400, "scene": 3200,
+        "social": 2800, "memory": 2800, "graph": 1800,
+    }
+    world_state_limit = 2000 if lite else (
+        world_state_limits.get(module, 2400) if omit_full_world else 6000
+    )
 
     summary_block = f"## 剧本总结\n{scenario_summary[:summary_limit]}" if scenario_summary else ""
     if world_state_text:
@@ -848,21 +911,25 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     wsc = ws.to_context_compact() if ws else ""
     if lite:
         wsc = wsc[:500]
+    elif omit_full_world:
+        wsc = wsc[:1000]
 
     # 角色背景——用于AI生成符合角色身份的决策建议
     backstory = state.character_info.get("backstory", "")
     backstory_block = ""
     if backstory:
-        backstory_block = f"\n## 角色背景（决策建议须参考此背景——建议的行动应符合角色的出身、性格和动机）\n{backstory[:200 if lite else 500]}"
+        backstory_block = f"\n## 角色背景（决策建议须参考此背景——建议的行动应符合角色的出身、性格和动机）\n{backstory[:200 if lite else 350]}"
 
     # 使用规则系统技能包：非 DND5e 使用紧凑提示词，避免发送 DND5e 巨型规则
     skill = get_skill(_game_system(state))
     if skill.system_prompt is None:
-        base_prompt = SYSTEM_PROMPT.format(
-            character_info="",
-            memory_context="",
-            world_context="",
-            world_state_compact="",
+        base_prompt = (
+            COMPACT_DM_PROMPT if focused else SYSTEM_PROMPT.format(
+                character_info="",
+                memory_context="",
+                world_context="",
+                world_state_compact="",
+            )
         )
     elif skill.system_prompt == "DND4E":
         base_prompt = DND4E_SYSTEM_PROMPT
@@ -874,7 +941,10 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     # 固定规则前缀：所有静态规则放在前面，动态上下文统一追加到末尾，
     # 这样同一会话/模式的 system prompt 前缀保持稳定，更容易命中 LLM prompt cache。
     sp = base_prompt
-    if skill.system_prompt is None:
+    if focused:
+        # 模块化回合不需要完整 5e/4e/COC 决策检查表，用紧凑版替代
+        sp += COMPACT_DM_DECISION_PROMPT
+    elif skill.system_prompt is None:
         sp += DM_DECISION_PROMPT
     elif skill.system_prompt == "DND4E":
         sp += DND4E_DECISION_PROMPT
@@ -882,11 +952,19 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
         sp += COC_DECISION_PROMPT
     else:
         sp += CUSTOM_DECISION_PROMPT
-    sp += _mode_instructions(state)
-    sp += build_system_rule_block(
-        _game_system(state),
-        state.character_info.get("custom_rules", ""),
-    )
+    sp += _mode_instructions(state, focused)
+    # 解离详细规则：只有规则/战斗模块才携带完整规则与数值表，其它模块用精简提示并依赖工具查询
+    module_needs_full_rules = focused and module in ("rules", "combat")
+    if module_needs_full_rules:
+        sp += build_system_rule_block(
+            _game_system(state),
+            state.character_info.get("custom_rules", ""),
+        )
+    else:
+        sp += """
+## 规则速查（精简）
+- 本回合不携带完整规则表；需要具体规则/数值/DC 时，使用游戏规则或骰子工具查询后按结果执行。
+"""
     sp += """
 ## DM 权限与职责（你是主持人，不是旁观者）
 - 你拥有主持权限：可以新增/修改 NPC、地点、生物、地图、世界状态、旗标和玩家状态。
@@ -894,6 +972,21 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
 - 新增内容必须符合当前规则系统、剧本设定与数值合理性。
 - 不要滥用权限替玩家做决定；不要暴露 DM 后台信息给玩家。
 - 每次修改后通过 update_scene / journal_update 保持玩家可见信息同步。
+
+## 主 DM 的核心使命
+- 你的核心产出永远是：角色扮演、生动的故事、真实的世界反应。数值与规则是支撑，不是主角。
+- 每轮至少给出一个具体可感的动作/感官细节，并让世界对玩家行动产生后果。
+- 规则、检索、记忆核对以专家简报和工具结果为准；你不再需要自己做长文分析。
+"""
+    sp += """
+## 玩家可见文本硬性规则
+- 禁止输出主持人内心独白或幕后说明，例如：“我先调出战力卡”“我先确认”“让我先看看”“我来结算这轮”等。
+- 禁止在正文中直接判定命中/伤害/成功/失败。所有战斗攻击、伤害、属性检定、DC 等必须通过 dice_roll / combat_round 等工具产生数值，并把骰子/加减值/AC/DC/HP变化写入结果。
+- 工具/数值结算以事件化、叙事化的方式呈现；不要向玩家解释“我正在调用工具”。
+- 不要跳过战斗过程直接给出“成功/失败”结论。
+- 每次 dice_roll / combat_round 等工具调用后，必须继续输出对应剧情叙事：动作、反应、环境、后果；不能只停留在数值或事件摘要。
+- 战斗工具分工：combat_round 只结算玩家行动；敌人进攻使用 enemy_attack 工具在敌人回合单独结算，不要写成“玩家受击立刻反伤”的自动反击。
+- 多敌战斗：每次 combat_round 的 enemy_names 传入当前全部敌人名单（含未攻击者），enemy_name 为本次实际目标；敌人回合逐个调用 enemy_attack。
 """
     if getattr(state, "resumed", False):
         sp += """
@@ -906,14 +999,41 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     mem_text = mem if mem.strip() else "冒险刚启。篝火刚点起来，第一颗骰子还在你的掌心。"
     if lite:
         mem_text = mem_text[:800]
+    elif focused and module != "memory":
+        mem_text = mem_text[:1200]
+    else:
+        mem_text = mem_text[:3000]
     sp += f"\n\n## 当前角色\n{char_info}"
-    sp += f"\n\n## 数值含义速查\n{build_stat_glossary(_game_system(state))}"
+    if module_needs_full_rules:
+        sp += f"\n\n## 数值含义速查\n{build_stat_glossary(_game_system(state))}"
+    else:
+        sp += "\n\n## 数值含义速查（精简）\n- 属性/技能/特性等数值以规则工具返回为准，不要凭空臆造。"
     sp += backstory_block
-    sp += f"\n\n## 记忆上下文\n{mem_text}"
-    if wc:
-        sp += f"\n\n## 世界上下文\n{wc}"
-    if wsc:
-        sp += f"\n\n## 世界状态精简\n{wsc}"
+    if subagent_brief:
+        # 专家简报覆盖规则/战斗/场景/记忆/图谱，主提示词不再重复塞完整长文；
+        # 但保留剧本背景与紧凑世界状态，让主 DM 仍有世界操控权。
+        sp += f"\n\n## 本回合专家简报（并发专业子Agent已甄别）\n{subagent_brief[:3000]}"
+        sp += ("""
+\n## 专家简报使用规则
+- 简报是多个专业子Agent对当前回合的压缩结论，可信且优先；若与你脑中的印象冲突，以简报中引用的明确事实为准。
+- 简报中的【仅DM可见】信息只能用于你裁决与推进剧情，绝不能直接展示给玩家。
+- 不要在玩家可见文本中出现“专家”“子Agent”“后台分析”“简报”等字眼。
+- 你是唯一叙事者与最终裁决者：简报只提供弹药，正文、语气、节奏、戏剧张力由你负责。""")
+        if ws and getattr(ws, "scene", None):
+            cur = ws.scene.current_location
+            cur_time = ws.scene.current_time or f"第{ws.scene.day_count}天"
+            if cur:
+                sp += f"\n\n## 当前场景（同步）\n{cur} · {cur_time} · {ws.scene.weather}"
+        if wc:
+            sp += f"\n\n## 剧本/世界背景（同步）\n{wc[:1600]}"
+        if wsc:
+            sp += f"\n\n## 世界状态精简（主DM世界操控用）\n{wsc[:1500]}"
+    else:
+        sp += f"\n\n## 记忆上下文\n{mem_text}"
+        if wc:
+            sp += f"\n\n## 世界上下文\n{wc}"
+        if wsc:
+            sp += f"\n\n## 世界状态精简\n{wsc}"
     scenario_id = state.character_info.get("scenario_id", "")
     sp += "\n\n## 当前剧本约束"
     if scenario_id:
@@ -922,9 +1042,22 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     sp += "\n- 如果玩家提及剧本中不存在的人物/地点/事件，应引导其在剧本内寻找、调查或确认引入，而不是直接凭空添加。"
     sp += "\n- 地点/NPC/剧情信息只有在玩家通过探索、检定或剧情推进真正接触后才对玩家可见；不要一次性暴露后台设定。"
     if retrieved_chunks:
+        chunk_count = 3 if lite else 5
+        chunk_chars = 300 if lite else 500
+        if focused:
+            if module == "rules":
+                chunk_count, chunk_chars = 5, 450
+            elif module == "combat":
+                chunk_count, chunk_chars = 3, 350
+            else:
+                chunk_count, chunk_chars = 2, 250
         sp += "\n\n## 检索到的设定/规则细节（按需使用，优先于你的记忆）\n"
-        for item in retrieved_chunks[:3 if lite else 5]:
-            sp += f"\n- [{item.get('title','')}]({item.get('source','')}) {item.get('text','')[:300 if lite else 600]}"
+        for item in retrieved_chunks[:chunk_count]:
+            sp += f"\n- [{item.get('title','')}]({item.get('source','')}) {item.get('text','')[:chunk_chars]}"
+    if focus_context:
+        sp += f"\n\n## 本回合模块焦点（主 Agent 分发）\n{focus_context}"
+        if tool_hint:
+            sp += f"\n- 推荐工具：{tool_hint}"
     if getattr(state, "bestiary_overrides", None):
         sp += "\n\n## 本局生物图鉴临时覆写（优先级高于知识库）\n"
         for name, changes in state.bestiary_overrides.items():
@@ -945,6 +1078,7 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "dice_roll": _exec_dice_roll,
         "update_state": _exec_update_state,
         "combat_round": _exec_combat_round,
+        "enemy_attack": _exec_enemy_attack,
         "add_memory": _exec_add_memory,
         "record_plot_memory": _exec_record_plot_memory,
         "equip_item": _exec_equip_item,
@@ -987,7 +1121,21 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         return f"未知: {name}"
     result = fn(args, state)
     if asyncio.iscoroutine(result):
-        return await result
+        result = await result
+    # 数据及时更新：世界/角色/图谱发生变化后立即推送冒险笔记
+    try:
+        ws = getattr(state, "world_state", None)
+        if ws is not None and name in {
+            "update_state", "combat_round", "update_world_state", "update_scene",
+            "adjust_npc", "promote_npc", "add_scenario_bestiary", "add_scenario_map",
+            "add_scenario_spell", "reveal_info", "update_bestiary_entry",
+            "update_city_entry", "adjust_bestiary", "learn_spell", "forget_spell",
+            "cast_spell", "update_knowledge_graph", "add_memory",
+            "record_plot_memory", "add_character_note",
+        }:
+            await push_event(state, "journal_update", ws.to_player_journal())
+    except Exception:
+        pass
     return result
 
 
@@ -1547,6 +1695,34 @@ def _resolve_enemy_from_cards(state: GameSessionState, enemy: str, args: dict) -
     return fallback
 
 
+def _build_combat_snapshot(state: GameSessionState, names: list[str], target: str, target_hp: int) -> list[dict]:
+    """为前端收集当前战斗中敌人的 HP 快照；未显式给出名单时收集当前场景所有存活敌对 NPC。"""
+    if not names:
+        names = []
+        ws = getattr(state, "world_state", None)
+        if ws is not None and getattr(ws, "scene", None):
+            cur = ws.scene.current_location
+            names = [
+                n.name for n in ws.npcs
+                if getattr(n, "alive", True) and n.attitude == "敌对"
+                and (not cur or n.location == cur)
+                and getattr(n, "discovered", True)
+            ]
+        if target and target not in names:
+            names.append(target)
+    out: list[dict] = []
+    for nm in names:
+        if not nm:
+            continue
+        stats = _resolve_enemy_from_cards(state, nm, {})
+        hp = int(stats.get("e_hp", 0) or 0)
+        if nm == target:
+            hp = max(0, int(target_hp or 0))
+        out.append({"name": nm, "hp": hp})
+    return out
+
+
+
 async def _persist_combat_damage(state: GameSessionState, npc: Any, new_hp: int):
     """把敌人 HP 写回世界状态实体，并在阵亡时标记死亡。"""
     if npc is None:
@@ -1567,6 +1743,11 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
     p_action = str(args.get("player_action", "攻击"))
     enemy = str(args.get("enemy_name", "敌人"))
     system = _game_system(state)
+    # 敌人是否可以主动行动：被绑/待宰/昏迷/无力等不得反击或主动攻击
+    enemy_can_act = bool(args.get("enemy_can_act", True))
+    helpless_text = f"{enemy} {args.get('enemy_condition', '')} {args.get('enemy_notes', '')}"
+    if re.search(r"待宰|被绑|捆绑|失去意识|昏迷|无力|跪着|跪地|囚|笼中|陷阱|无助|重伤|濒死|倒下", helpless_text, re.I):
+        enemy_can_act = False
 
     # 玩家侧：角色卡推导（参数缺省时）
     info = state.character_info
@@ -1624,37 +1805,32 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
         pd = _roll_damage_simple(p_dice) if p_hit else 0
         new_e_hp = max(0, e_hp - pd)
         ed = 0
-        if new_e_hp > 0:
-            er = random.randint(1, 100)
-            if er <= e_skill:
-                ed = _roll_damage_simple(e_dice)
-            lines = [
-                f"⚔️ 战斗结算（COC d100）",
-                f"你的{p_action}: d100={pr} vs {p_skill}% → {p_result}" + (f"，造成 {pd} 点伤害" if pd else ""),
-                f"{enemy}反击: d100={er} vs {e_skill}% → " + ("命中" if ed else "未命中"),
-            ]
-        else:
-            lines = [
-                f"⚔️ 战斗结算（COC d100）",
-                f"你的{p_action}: d100={pr} vs {p_skill}% → {p_result}" + (f"，造成 {pd} 点伤害" if pd else ""),
-            ]
+        # 敌人攻击由 enemy_attack 工具在敌人回合/剧情中单独调用
+        lines = [
+            f"⚔️ 战斗结算（COC d100）",
+            f"你的{p_action}: d100={pr} vs {p_skill}% → {p_result}" + (f"，造成 {pd} 点伤害" if pd else ""),
+        ]
         if new_e_hp <= 0: lines.append(f"💀 {enemy}被击败！")
         desc = "\n".join(lines)
         extras = {"enemy_name": enemy, "enemy_hp_remaining": new_e_hp,
                   "player_damage_taken": ed, "player_damage_dealt": pd,
-                  "enemy_dead": new_e_hp <= 0, "system": "coc"}
+                  "enemy_dead": new_e_hp <= 0, "system": "coc",
+                  "enemies": _build_combat_snapshot(state, args.get("enemy_names") or [], enemy, new_e_hp)}
         await push_narrative_token(state, f"\n{desc}\n")
         await push_event(state, "game_event", {"type": "combat", "description": desc, "extra": extras})
         if ed:
             await _exec_update_state({"changes": {"hp": -ed}, "reason": f"{enemy}造成{ed}伤害"}, state)
         await _persist_combat_damage(state, npc, new_e_hp)
+        # 目标敌人若仍能行动，立即结算其一次反击；dedup 保证主DM随后不会重复结算
+        if enemy_can_act and new_e_hp > 0:
+            enemy_result = await _exec_enemy_attack({"enemy_name": enemy}, state)
+            desc += "\n" + enemy_result
         return desc
 
     ph, pd = combat_attack_roll("你", e_ac, p_mod, p_dice)
     new_e_hp = max(0, e_hp - pd)
     ed = 0
-    if new_e_hp > 0:
-        _, ed = combat_attack_roll(enemy, player_ac, e_mod, e_dice)
+    # 敌人攻击由 enemy_attack 工具在敌人回合/剧情中单独调用，避免“穿反甲”式自动反伤
 
     system_hint = "D&D4e" if system == "dnd4e" else ("D&D5e" if system == "dnd5e" else "自定义")
     lines = [f"⚔️ 战斗结算（{system_hint} d20）", f"攻击: d20={ph.roll}+{p_mod}={ph.total} vs AC{e_ac}→{ph.result.value}"]
@@ -1666,7 +1842,8 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
     desc = "\n".join(lines)
     extras = {"enemy_name": enemy, "enemy_hp_remaining": new_e_hp,
               "player_damage_taken": ed, "player_damage_dealt": pd,
-              "enemy_dead": new_e_hp <= 0, "system": system}
+              "enemy_dead": new_e_hp <= 0, "system": system,
+              "enemies": _build_combat_snapshot(state, args.get("enemy_names") or [], enemy, new_e_hp)}
 
     await push_narrative_token(state, f"\n{desc}\n")
     await push_event(state, "game_event", {"type": "combat", "description": desc, "extra": extras})
@@ -1676,10 +1853,75 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
     # 伤害写回实际战斗实体（NPC卡 / 自动注册的图鉴生物）
     await _persist_combat_damage(state, npc, new_e_hp)
 
+    # 目标敌人若仍能行动，立即结算其一次反击；dedup 保证主DM随后不会重复结算
+    if enemy_can_act and new_e_hp > 0:
+        enemy_result = await _exec_enemy_attack({"enemy_name": enemy}, state)
+        desc += "\n" + enemy_result
+
     ws = getattr(state, 'world_state', None)
     if ws and ws.scene.current_location != "未知":
         desc += f"\n[场景确认: {ws.scene.current_location}, {ws.scene.current_time or f'第{ws.scene.day_count}天'}]"
     return desc
+
+
+async def _exec_enemy_attack(args: dict, state: GameSessionState) -> str:
+    """敌人回合主动攻击：在剧情中到达敌人回合时调用，不是玩家攻击后的自动反伤。"""
+    enemy = str(args.get("enemy_name", "敌人"))
+    # 同一敌人本回合只能行动一次，避免 DM 重复调用造成双倍结算
+    if not getattr(state, "enemy_attack_log", None):
+        state.enemy_attack_log = {}
+    if state.enemy_attack_log.get(enemy, 0) >= 1:
+        return f"⚠ {enemy} 本回合已经行动过，不要再重复结算。如需表现其反应，直接写叙事即可。"
+    state.enemy_attack_log[enemy] = state.enemy_attack_log.get(enemy, 0) + 1
+    system = _game_system(state)
+    enemy_stats = _resolve_enemy_from_cards(state, enemy, args)
+    e_mod = int(enemy_stats["e_mod"])
+    e_dice = str(enemy_stats["e_dice"])
+    npc = enemy_stats.get("npc")
+
+    attrs = state.character_info.get("attributes", {})
+    player_ac = int(state.character_info.get("ac", 0) or 0)
+    if not player_ac:
+        dex_mod = (attrs.get("dex", 10) - 10) // 2
+        cc = state.character_info.get("char_class", "战士")
+        player_ac = (16 if cc in ("战士", "圣武士") else
+                     14 + max(-2, min(2, dex_mod)) if cc == "游侠" else
+                     10 + dex_mod + (attrs.get("con", 10) - 10) // 2 if cc == "野蛮人" else
+                     10 + dex_mod + (attrs.get("wis", 10) - 10) // 2 if cc == "武僧" else
+                     11 + dex_mod)
+        player_ac = max(8, min(22, player_ac))
+
+    if system == "coc":
+        e_skill = max(1, min(99, int(e_mod or 40)))
+        er = random.randint(1, 100)
+        if er <= e_skill:
+            ed = _roll_damage_simple(e_dice)
+            result = "命中"
+        else:
+            ed = 0
+            result = "未命中"
+        line = f"{enemy}攻击: d100={er} vs {e_skill}% → {result}"
+        if ed:
+            line += f"，造成 {ed} 点伤害"
+    else:
+        _, ed = combat_attack_roll(enemy, player_ac, e_mod, e_dice)
+        line = f"{enemy}攻击玩家 → AC{player_ac}"
+        if ed:
+            line += f"，命中造成 {ed} 点伤害"
+
+    await push_narrative_token(state, f"\n{line}\n")
+    current_hp = int(enemy_stats.get("e_hp", 0) or 0)
+    await push_event(state, "game_event", {"type": "combat", "description": line,
+                                           "extra": {"player_damage_taken": ed, "enemy_name": enemy,
+                                                     "enemy_hp_remaining": current_hp,
+                                                     "enemies": _build_combat_snapshot(state, args.get("enemy_names") or [], enemy, current_hp)}})
+    if ed:
+        # _exec_update_state 已经推送权威 state_update，这里不再重复推送
+        await _exec_update_state({"changes": {"hp": -ed}, "reason": f"{enemy}造成{ed}伤害"}, state)
+    # 若敌人已有 NPC 实体，持久化当前血量（敌人攻击不影响自己血量，只保留实体存在）
+    if npc is not None:
+        await _persist_combat_damage(state, npc, int(enemy_stats.get("e_hp", 0) or 0))
+    return line
 
 
 async def _exec_death_save(args: dict, state: GameSessionState) -> str:
@@ -1791,6 +2033,32 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
     if ws is None: return "无世界状态"
     action = args.get("action", ""); target = args.get("target", ""); changes = args.get("changes", {}); reason = args.get("reason", "")
     if action in ("update_npc", "add_npc"):
+        existing = ws.get_npc(target)
+        if action == "update_npc" and existing is not None:
+            # 只更新调用方显式提供的字段，避免把未填字段重置成默认值
+            update_data = {}
+            for k in ("race", "role", "location", "attitude", "personality", "motivation",
+                      "secret", "relation_to_plot", "alive", "level", "hp", "max_hp", "ac",
+                      "attributes", "skills", "traits", "equipment", "related_locations",
+                      "related_npcs", "related_creatures", "image_path", "importance"):
+                if k in changes:
+                    update_data[k] = changes[k]
+            if update_data:
+                ws.update_npc(target, **update_data)
+            ws.save()
+            await push_event(state, "journal_update", ws.to_player_journal())
+            return f"✅ 已更新NPC: {target} ({reason})"
+
+        # 新增或未命中同名实体时，使用合理默认值/派生数值建卡
+        level, ac, hp, max_hp = _derive_npc_stats({
+            "importance": changes.get("importance", "minor"),
+            "role": changes.get("role", ""),
+            "name": target,
+            "level": changes.get("level", 0) or 0,
+            "ac": changes.get("ac", 0) or 0,
+            "hp": changes.get("hp", 0) or 0,
+            "max_hp": changes.get("max_hp", 0) or 0,
+        })
         npc_data = {
             "name": target,
             "race": changes.get("race", ""),
@@ -1802,10 +2070,10 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
             "secret": changes.get("secret", ""),
             "relation_to_plot": changes.get("relation_to_plot", ""),
             "alive": changes.get("alive", True),
-            "level": int(changes.get("level", 1) or 1),
-            "hp": int(changes.get("hp", 10) or 10),
-            "max_hp": int(changes.get("max_hp", changes.get("hp", 10)) or 10),
-            "ac": int(changes.get("ac", 10) or 10),
+            "level": level,
+            "hp": hp,
+            "max_hp": max_hp,
+            "ac": ac,
             "attributes": changes.get("attributes", {}),
             "skills": changes.get("skills", []),
             "traits": changes.get("traits", []),
@@ -1816,27 +2084,94 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
             "image_path": changes.get("image_path", ""),
             "importance": changes.get("importance", "minor"),
         }
-        if ws.get_npc(target):
-            update_data = {k: v for k, v in npc_data.items() if k != "name"}
-            ws.update_npc(target, **update_data)
+        if existing is not None:
+            # add_npc 语义但已有同名：保留原实体，仅覆写显式字段同样避免清空
+            update_data = {}
+            for k in ("race", "role", "location", "attitude", "personality", "motivation",
+                      "secret", "relation_to_plot", "alive", "level", "hp", "max_hp", "ac",
+                      "attributes", "skills", "traits", "equipment", "related_locations",
+                      "related_npcs", "related_creatures", "image_path", "importance"):
+                if k in changes:
+                    update_data[k] = changes[k]
+            if update_data:
+                ws.update_npc(target, **update_data)
         else:
             ws.add_npc(NpcEntry(**npc_data))
         ws.save()
         await push_event(state, "journal_update", ws.to_player_journal())
         return f"✅ NPC: {target} ({reason})"
     elif action == "set_flag":
-        ws.set_flag(key=target, status=changes.get("status","进行中"), description=changes.get("description",""), consequence=changes.get("consequence",""))
-        return f"✅ 旗标: {target}"
-    elif action == "add_location":
+        old_flag = next((f for f in ws.plot_flags if f.key == target), None)
+        status = changes.get("status") or (old_flag.status if old_flag else "进行中")
+        ws.set_flag(key=target, status=status, description=changes.get("description",""), consequence=changes.get("consequence",""))
+        await push_event(state, "journal_update", ws.to_player_journal())
+        return f"✅ 旗标: {target} ({reason})"
+    elif action == "set_world_rule":
+        ws.world_rules = target or str(changes.get("rule", "") or changes.get("description", "") or "")
+        ws.save()
+        await push_event(state, "journal_update", ws.to_player_journal())
+        return f"✅ 世界规则: {ws.world_rules[:80]} ({reason})"
+    elif action in ("add_location", "update_location"):
+        existing_location = ws.get_location(target)
+        if existing_location is not None:
+            # 已有地点：只更新显式传入的字段，避免清除未提供的内容
+            for k in ("description", "status", "type", "culture", "notable_figures",
+                      "dangers", "secrets", "secret_revealed", "related_locations",
+                      "related_npcs", "related_creatures", "discovered"):
+                if k in changes:
+                    setattr(existing_location, k, changes[k])
+            ws.save()
+            await push_event(state, "journal_update", ws.to_player_journal())
+            return f"✅ 地点已更新: {target} ({reason})"
         ws.add_location(LocationEntry(
             name=target,
             description=changes.get("description", ""),
             status=changes.get("status", "可访问"),
+            type=changes.get("type", ""),
+            culture=changes.get("culture", ""),
+            notable_figures=changes.get("notable_figures", ""),
+            dangers=changes.get("dangers", ""),
             secrets=changes.get("secrets", ""),
+            secret_revealed=changes.get("secret_revealed", False),
+            related_locations=changes.get("related_locations", []),
+            related_npcs=changes.get("related_npcs", []),
+            related_creatures=changes.get("related_creatures", []),
             discovered=changes.get("discovered", True),
         ))
         await push_event(state, "journal_update", ws.to_player_journal())
-        return f"✅ 地点: {target}"
+        return f"✅ 新增地点: {target} ({reason})"
+    elif action == "remove_npc":
+        before = len(ws.npcs)
+        ws.npcs = [n for n in ws.npcs if n.name != target]
+        if len(ws.npcs) == before:
+            return f"⚠ NPC {target} 不存在"
+        # 同步清理现场、角色笔记与关系，避免冒险笔记残留已废弃角色
+        ws.scene.visible_npcs_here = [n for n in ws.scene.visible_npcs_here if n != target]
+        ws.character_notes = [c for c in ws.character_notes if not (c.target_type == "npc" and c.target == target)]
+        ws.relations = [r for r in ws.relations if r.get("source") != target and r.get("target") != target]
+        ws.save()
+        await push_event(state, "journal_update", ws.to_player_journal())
+        return f"🗑️ 已移除NPC: {target} ({reason})"
+    elif action == "remove_location":
+        before = len(ws.locations)
+        ws.locations = [l for l in ws.locations if l.name != target]
+        if len(ws.locations) == before:
+            return f"⚠ 地点 {target} 不存在"
+        if ws.scene.current_location == target:
+            ws.scene.current_location = "未知"
+        ws.character_notes = [c for c in ws.character_notes if not (c.target_type == "location" and c.target == target)]
+        ws.relations = [r for r in ws.relations if r.get("source") != target and r.get("target") != target]
+        ws.save()
+        await push_event(state, "journal_update", ws.to_player_journal())
+        return f"🗑️ 已移除地点: {target} ({reason})"
+    elif action == "remove_flag":
+        before = len(ws.plot_flags)
+        ws.plot_flags = [f for f in ws.plot_flags if f.key != target]
+        if len(ws.plot_flags) == before:
+            return f"⚠ 旗标 {target} 不存在"
+        ws.save()
+        await push_event(state, "journal_update", ws.to_player_journal())
+        return f"🗑️ 已移除旗标: {target} ({reason})"
     return f"未知操作: {action}"
 
 
@@ -2186,6 +2521,13 @@ async def _exec_cast_spell(args: dict, state: GameSessionState) -> str:
     name = str(args.get("name", "") or "法术")
     level = int(args.get("level", 0) or 0)
     info = state.character_info
+    # 施法前先检索法术图鉴确认等级/信息，避免凭空使用错误环位
+    ref = _search_spell_for_entity(state, name)
+    if ref and not args.get("level"):
+        try:
+            level = int(ref.get("level", level) or level)
+        except Exception:
+            level = 0
     # 邪术师未显式指定时默认消耗契约法术位
     pact = bool(args.get("pact", info.get("char_class") == "邪术师"))
     if level <= 0:
@@ -2216,8 +2558,68 @@ async def _exec_cast_spell(args: dict, state: GameSessionState) -> str:
     return f"🎲 {name}：已消耗法术位 → {remain}"
 
 
+def _search_spell_for_entity(state: GameSessionState, name: str) -> dict | None:
+    """玩家/生物获得魔法能力时，先检索法术图鉴确认；找不到则返回 None。"""
+    try:
+        from backend.media_manager import list_spells
+        sid = (state.character_info or {}).get("scenario_id", "") or ""
+        for spells in (list_spells(state.username, sid), list_spells(state.username, None)):
+            for s in spells or []:
+                if str(s.get("name", "")).strip() == name.strip():
+                    return s
+    except Exception:
+        pass
+    return None
+
+
 async def _exec_learn_spell(args: dict, state: GameSessionState) -> str:
-    spell = _normalize_spell(args)
+    name = str(args.get("name", "") or "").strip()
+    if not name:
+        return "⚠ 缺少法术名"
+    ref = _search_spell_for_entity(state, name)
+    if ref:
+        spell = {
+            "name": str(ref.get("name", name)),
+            "level": str(ref.get("level", "0") or "0"),
+            "school": str(ref.get("school", "") or ""),
+            "description": str(ref.get("description", "") or ""),
+            "casting_time": str(ref.get("casting_time", "") or ""),
+            "range": str(ref.get("range", "") or ""),
+            "components": str(ref.get("components", "") or ""),
+            "duration": str(ref.get("duration", "") or ""),
+            "classes": list(ref.get("classes", []) or []),
+            "scenario_id": (state.character_info or {}).get("scenario_id", ""),
+        }
+    else:
+        # 不存在时生成一个合理法术，并写入当前剧本法术图鉴
+        spell = _normalize_spell(args)
+        spell.setdefault("level", "1")
+        spell.setdefault("school", "变化")
+        spell.setdefault("description", "")
+        spell.setdefault("casting_time", "1动作")
+        spell.setdefault("range", "30尺")
+        spell.setdefault("components", "V、S")
+        spell.setdefault("duration", "瞬间")
+        try:
+            from backend.media_manager import add_spell
+            add_spell(
+                username=state.username,
+                name=spell["name"],
+                system=_game_system(state),
+                description=spell.get("description", ""),
+                level=str(spell.get("level", "1") or "1"),
+                school=str(spell.get("school", "") or ""),
+                ritual=bool(spell.get("ritual", False)),
+                casting_time=str(spell.get("casting_time", "") or ""),
+                range_=str(spell.get("range", "") or ""),
+                components=str(spell.get("components", "") or ""),
+                duration=str(spell.get("duration", "") or ""),
+                classes=list(spell.get("classes", []) or []),
+                scenario_id=(state.character_info or {}).get("scenario_id", ""),
+                tags=["剧本生成"],
+            )
+        except Exception:
+            pass
     await _exec_update_state({"changes": {"spells_known_add": spell},
                               "reason": f"习得 {spell['name']}"}, state)
     return f"✅ 已习得: {spell['name']}（{spell['level']}环 {spell['school']}）"
@@ -2657,6 +3059,78 @@ def _model(s: GameSessionState) -> str:
     return s.model_name or settings.LLM_MODEL_NAME
 
 
+async def _run_focused_subagent(
+    task: str,
+    context: str,
+    state: GameSessionState,
+    max_tokens: int = 600,
+    temperature: float = 0.2,
+) -> str:
+    """调用一个专注子 Agent，对长上下文做精简后返回结论。
+
+    失败时返回空字符串，调用方回退到现有完整上下文，不阻塞主流程。
+    """
+    try:
+        from backend.engine.focused_subagents import run_focused_agent
+        result = await run_focused_agent(
+            _client(state),
+            _model(state),
+            role="DM聚焦分析子Agent",
+            task=task,
+            context=context,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        if result and not result.startswith("[子Agent失败]"):
+            return result
+    except Exception as e:
+        print(f"[DMSubAgent] 失败: {e}")
+    return ""
+
+
+async def _generate_suggestions_subagent(
+    state: GameSessionState,
+    player_input: str,
+    context_text: str = "",
+) -> list[str]:
+    """从 DM Agent 剥离建议生成：由独立子 Agent 强制产出 2-4 个行动建议。"""
+    ws = getattr(state, "world_state", None)
+    scene = ""
+    if ws is not None and getattr(ws, "scene", None):
+        scene = (f"当前位置: {ws.scene.current_location} | "
+                 f"时间: {ws.scene.current_time or f'第{ws.scene.day_count}天'} | "
+                 f"在场NPC: {', '.join(ws.scene.visible_npcs_here)}")
+    context = (f"玩家行动：{player_input}\n"
+               f"最近剧情：{(context_text or '')[-1500:]}\n"
+               f"当前场景：{scene}\n"
+               f"角色背景：{build_character_info(state)[:500]}")
+    task = (
+        "你是行动建议生成器。根据当前局面严格输出2-4个玩家可执行的行动选项，每个不超过25字。"
+        "格式：每行一个选项，以“- ”开头。只输出选项本身，禁止任何解释、分析、自我对话，"
+        "禁止出现“目标”“玩家行动”“应该怎么做”“别过度思考”等元描述。"
+    )
+    result = await _run_focused_subagent(task, context, state, max_tokens=250, temperature=0.2)
+    meta_re = re.compile(r"目标|玩家行动|应该怎么做|建议如下|别过度|思考|选项|元描述|请根据|严格输出|掷骰|检定|先攻|骰子|系统")
+    options: list[str] = []
+    for line in (result or "").splitlines():
+        line = line.strip()
+        if line.startswith(("-", "*", "•")):
+            opt = line.lstrip("-*•").strip().strip("\"'“”")
+            opt = opt[:25]
+            if opt and len(opt) >= 2 and not meta_re.search(opt):
+                options.append(opt)
+    if len(options) < 2:
+        # 兼容纯文本输出，并丢弃元描述
+        for part in re.split(r"[\n;；]+", result or ""):
+            part = part.strip().strip("\"'“”")
+            if part and len(part) <= 25 and not meta_re.search(part) and part not in options:
+                options.append(part)
+    if len(options) < 2:
+        # 最后兜底：给不出好选项时提供安全、可执行的基础行动
+        options = ["先观察再行动，寻找可利用的细节", "谨慎试探对方的反应", "继续推进当前目标，准备应对变化"]
+    return options[:4]
+
+
 def _play_mode(s: GameSessionState) -> str:
     """返回当前游玩模式：lite=精简模式，deep=深度模式。"""
     mode = (s.character_info or {}).get("play_mode", "deep")
@@ -2718,6 +3192,21 @@ async def compress_memory_if_needed(state: GameSessionState):
     mem._maybe_summarise()
 
 
+def _thinking_extra_body(s: GameSessionState, mode: str = "auto") -> dict:
+    """把思维强度映射到 API 的 thinking 参数。
+
+    - 快速任务（fixed/low 或玩家选 low）：直接禁用思考，提速且保证有 content；
+    - 普通任务：不传，使用服务端默认行为；
+    - 高强度创作：显式 enabled。
+    """
+    ts = getattr(s, "thinking_strength", "medium")
+    if mode in ("fixed", "low") or ts == "low":
+        return {"thinking": {"type": "disabled"}}
+    if mode == "high" or ts == "high":
+        return {"thinking": {"type": "enabled"}}
+    return {}
+
+
 def _thinking_params(s: GameSessionState) -> tuple[float, float]:
     """返回 (max_tokens倍率, 温度修正)，用于“思维强度”调节。"""
     ts = getattr(s, "thinking_strength", "medium")
@@ -2728,15 +3217,38 @@ def _thinking_params(s: GameSessionState) -> tuple[float, float]:
     return 1.0, 0.0
 
 
+def _call_thinking_params(s: GameSessionState, mode: str = "auto") -> tuple[float, float]:
+    """按任务类型限制思考/温度：
+    - auto: 跟随玩家思维强度
+    - low:  快速执行/规则/战斗，降低思考与温度
+    - fixed: 固定内容/工具选择，最低思考与低温度
+    - high: 创作/复杂叙事
+    """
+    if mode == "fixed":
+        return 0.3, -0.25
+    if mode == "low":
+        return 0.5, -0.15
+    if mode == "high":
+        return 1.5, 0.05
+    return _thinking_params(s)
+
+
 def _game_system(s: GameSessionState) -> str:
     """返回当前规则系统：dnd5e / dnd4e / coc / custom。"""
     system = (s.character_info or {}).get("game_system", "dnd5e")
     return system if system in ("dnd5e", "dnd4e", "coc", "custom") else "dnd5e"
 
 
-def _mode_instructions(s: GameSessionState) -> str:
+def _mode_instructions(s: GameSessionState, focused: bool = False) -> str:
     """根据游玩模式生成附加指令，控制 token 消耗与扮演深度。"""
     mode = _play_mode(s)
+    if focused:
+        return """
+模块化回合：
+- 聚焦本回合模块目标，不展开无关背景与完整世界设定。
+- 输出更紧凑：1-3段，每段不超过4句。
+- 工具调用只执行本模块必需项。
+"""
     if mode == "lite":
         return """
 ===============================================================================
@@ -2762,32 +3274,100 @@ def _mode_instructions(s: GameSessionState) -> str:
 """
 
 
-async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2048, temperature: float | None = None, tool_choice: str | dict | None = "auto"):
-    mult, tdelta = _thinking_params(state)
+MODULE_TOOL_NAMES = {
+    "rules": ["dice_roll", "update_state", "get_character_state", "adjust_resource",
+              "cast_spell", "search_spells", "search_knowledge", "update_world_state",
+              "suggest_choices"],
+    "combat": ["combat_round", "enemy_attack", "death_saving_throw", "take_rest", "search_npcs",
+               "search_bestiary", "update_state", "update_scene", "update_world_state",
+               "suggest_choices"],
+    "scene": ["update_scene", "search_locations", "get_location_card",
+              "reveal_info", "update_world_state", "suggest_choices"],
+    "social": ["search_npcs", "adjust_npc", "add_character_note",
+               "update_knowledge_graph", "get_entity_graph", "update_world_state",
+               "suggest_choices"],
+    "memory": ["search_knowledge", "get_entity_graph", "get_graph_path",
+               "add_memory", "record_plot_memory", "update_world_state",
+               "suggest_choices"],
+    "graph": ["get_entity_graph", "get_graph_path", "update_knowledge_graph",
+              "update_world_state", "suggest_choices"],
+}
+
+
+def _module_tools(module: str, all_tools: list) -> list:
+    names = set(MODULE_TOOL_NAMES.get(module, []))
+    if not names:
+        picked = list(all_tools)
+    else:
+        picked = [t for t in all_tools if t.get("function", {}).get("name", "") in names]
+    # 行动建议已完全剥离到后台子Agent：主DM永远看不到 suggest_choices 工具
+    return [t for t in picked if t.get("function", {}).get("name", "") != "suggest_choices"]
+
+
+_META_LEAK_PATTERN = re.compile(
+    r"系统(?:检定)?工具|工具参数错误|需要额外参数|正在调用工具|我来结算|我先确认|让我先看看|让我看看|先调出|调出战力|系统提示|系统提醒|后台分析|子Agent|专家简报|让我为你|为你进行.{0,8}检定|我来为你|进行一次.{0,8}检定"
+)
+
+
+async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2048, temperature: float | None = None, tool_choice: str | dict | None = "auto", thinking_mode: str = "auto"):
+    mult, tdelta = _call_thinking_params(state, thinking_mode)
     max_tokens = min(8000, int(max_tokens * mult))
     temp = (temperature if temperature is not None else settings.TEMPERATURE) + tdelta
     temp = max(0.0, min(1.5, temp))
+    extra_body = _thinking_extra_body(state, thinking_mode)
     stream = await client.chat.completions.create(
         model=model, messages=messages, tools=tools,
         max_tokens=max_tokens, temperature=temp, stream=True,
         tool_choice=tool_choice,
+        **({"extra_body": extra_body} if extra_body else {}),
     )
-    content = ""; tc_map = {}
+    content = ""; reasoning_content = ""; tc_map = {}
     had_tool_call = False  # P0-2修复：追踪工具调用边界
+
+    # 句子级流式过滤：把“系统检定工具需要额外参数”等幕后台词拦截在推送之前
+    pending = ""
+
+    async def emit(part: str):
+        nonlocal pending
+        pending += part
+        while True:
+            m = re.search(r"[。！？!?\n]", pending)
+            if not m:
+                break
+            idx = m.end()
+            seg = pending[:idx]
+            pending = pending[idx:]
+            if seg.strip() and not _META_LEAK_PATTERN.search(seg):
+                await push_narrative_token(state, seg)
+            elif not seg.strip():
+                await push_narrative_token(state, seg)
+
+    async def flush_pending():
+        nonlocal pending
+        if pending.strip():
+            if not _META_LEAK_PATTERN.search(pending):
+                await push_narrative_token(state, pending)
+        elif pending:
+            await push_narrative_token(state, pending)
+        pending = ""
+
     async for chunk in stream:
         if state.aborted: await stream.close(); break
         d = chunk.choices[0].delta if chunk.choices else None
         if not d: continue
+        if getattr(d, "reasoning_content", None):
+            reasoning_content += d.reasoning_content
         if d.content:
             # P0-2修复：工具调用后新文本开始时，确保有换行分隔
             if had_tool_call and content and not content.endswith('\n'):
                 content += '\n'
-                await push_narrative_token(state, '\n')
+                await emit('\n')
             content += d.content
-            await push_narrative_token(state, d.content)
+            await emit(d.content)
         if d.tool_calls:
             # P0-2修复：检测到工具调用——确保叙事文本以完整句子结尾
             had_tool_call = True
+            await flush_pending()
             if content and not re.search(r'[。！？\n]\s*$', content):
                 content += '\n'
                 await push_narrative_token(state, '\n')
@@ -2798,7 +3378,32 @@ async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2
                 if tc.function:
                     if tc.function.name: tc_map[i]["function"]["name"] = tc.function.name
                     if tc.function.arguments: tc_map[i]["function"]["arguments"] += tc.function.arguments
+    await flush_pending()
+    # deepseek-v4-flash 等模型可能只给 reasoning_content；没有内容也没有工具调用时作为兜底
+    if not content.strip() and not tc_map and reasoning_content.strip():
+        content = reasoning_content
     return content, list(tc_map.values())
+
+
+def _build_graph_context_text(state: GameSessionState, player_input: str) -> str:
+    """为图谱顾问准备轻量检索结果；失败返回空串，不影响主流程。"""
+    ws = getattr(state, "world_state", None)
+    if ws is None:
+        return ""
+    try:
+        from backend.engine.knowledge_graph import build_knowledge_graph, search_graph_nodes
+        kg = build_knowledge_graph(ws)
+        hits = search_graph_nodes(kg, player_input, top_k=6)
+        lines = []
+        for h in hits:
+            n = h.get("node", {}) if isinstance(h, dict) else {}
+            label = str(n.get("label", "") or "")
+            ntype = str(n.get("type", "") or "")
+            if label:
+                lines.append(f"- {label} ({ntype}) score={h.get('score', 0)}")
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 async def process_player_action(state: GameSessionState, player_input: str) -> str:
@@ -2834,20 +3439,96 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
         return cached
 
     client = _client(state); model = _model(state)
+    scenario_id = getattr(state, "scenario_id", None) or (state.character_info or {}).get("scenario_id") or None
     retrieved = get_knowledge_base().retrieve(
         player_input,
         system=_game_system(state),
         top_k=3 if lite else skill.rag_top_k,
         username=state.username,
+        scenario_id=scenario_id,
     )
-    sp = build_system_prompt(state, retrieved_chunks=retrieved)
+
+    # 主 Agent 模块化调度：LangGraph 分发到规则/战斗/场景/社交/记忆/图谱/叙事模块
+    from backend.engine.dm_modules import run_dm_dispatch
+    dispatch_plan = await run_dm_dispatch(state, player_input)
+    module = str(dispatch_plan.get("module", "narrative"))
+    module_chunk_limits = {
+        "rules": 5, "combat": 3, "scene": 2, "social": 2,
+        "memory": 2, "graph": 2, "narrative": 5,
+    }
+    retrieved = retrieved[:module_chunk_limits.get(module, 3)]
+
+    # 多专业子 Agent 并发委派：规则/战斗战术/场景事实/剧情连续性/关系图谱各司其职，
+    # 主 DM 只接收聚合后的“专家简报”，专注角色扮演、故事生成与世界操控。
+    subagent_brief = ""
+    try:
+        ws_prep = getattr(state, "world_state", None)
+        # 近期对话单独走 recent_for_brief，长期记忆用 essential 版避免重复灌入
+        mem_for_brief = state.memory.build_essential_context()
+        recent_for_brief = "\n".join(
+            f"- 玩家: {t.player_input}\n- DM: {str(t.dm_response)[:240]}"
+            for t in state.memory.turns[-4:]
+        )
+        world_for_brief = ws_prep.to_context_string() if ws_prep is not None else ""
+        world_compact_for_brief = ws_prep.to_context_compact() if ws_prep is not None else ""
+        if module == "combat" and ws_prep is not None:
+            roster_lines = ["### 战斗单位数值"]
+            for n in ws_prep.npcs:
+                if n.attitude != "敌对" and n.name not in str(player_input):
+                    continue
+                cond = "可行动" if n.alive else "死亡"
+                roster_lines.append(
+                    f"- {n.name} | 存活:{n.alive} | HP:{n.hp}/{n.max_hp} | AC:{n.ac} | "
+                    f"位置:{n.location} | 态度:{n.attitude} | {cond}"
+                )
+            world_compact_for_brief = world_compact_for_brief + "\n" + "\n".join(roster_lines)
+        brief_tasks = build_dm_brief_tasks(
+            player_input=player_input,
+            module=module,
+            lite=lite,
+            system=_game_system(state),
+            char_info=build_character_info(state),
+            retrieved=retrieved,
+            memory_text=mem_for_brief,
+            recent_text=recent_for_brief,
+            world_text=world_for_brief,
+            world_compact=world_compact_for_brief,
+            graph_text=_build_graph_context_text(state, player_input),
+        )
+        brief_results = await run_parallel_subagents(client, model, brief_tasks)
+        subagent_brief = format_dm_brief(brief_results)
+        if subagent_brief:
+            print(f"[DMSubAgents] module={module} lite={lite} agents={len(brief_tasks)} "
+                  f"ok={len([v for v in brief_results.values() if v and not v.startswith('[子Agent失败]')])} "
+                  f"brief={len(subagent_brief)}")
+    except Exception as e:
+        print(f"[DMSubAgents] 并发子Agent委派失败，回退完整上下文: {e}")
+        subagent_brief = ""
+
+    sp = build_system_prompt(state, retrieved_chunks=retrieved, dispatch_plan=dispatch_plan,
+                             subagent_brief=subagent_brief)
 
     messages = [{"role":"system","content":sp}]
-    active_turns = state.memory.turns[-5 if lite else -skill.history_rounds:]
+    base_history = 5 if lite else skill.history_rounds
+    history_limits = {"rules":5, "combat":4, "scene":4, "social":5, "memory":8, "graph":5, "narrative":base_history}
+    history_limit = history_limits.get(module, base_history)
+    if subagent_brief:
+        # 专家简报已覆盖长期记忆/世界状态，但主 DM 仍保留最近 3 轮用于扮演连续性
+        history_limit = min(history_limit, 3)
+    active_turns = state.memory.turns[-history_limit:]
     for t in active_turns:
         messages.append({"role":"user","content":sanitize_user_text(t.player_input) or t.player_input})
-        if t.dm_response: messages.append({"role":"assistant","content":t.dm_response})
+        if t.dm_response:
+            msg = t.dm_response[:400] if subagent_brief else t.dm_response
+            messages.append({"role":"assistant","content":msg})
     messages.append({"role":"user","content":player_input})
+
+    # 战斗模块强制：禁止只输出“我先/让我确认/我打算”等未结算计划，必须走工具
+    if module == "combat":
+        messages.append({"role":"system","content":
+            "[系统强制战斗执行] 本回合必须调用 dice_roll / search_npcs / search_bestiary / combat_round 等工具完成玩家行动结算。"
+            "禁止只输出“我先确认”“让我看看”“我打算”等计划性独白而不调用工具；"
+            "若需要先查敌人状态，可先 search_npcs / search_bestiary，随后仍必须用工具推进本回合。"})
 
     # P1-4修复：感知行为自动提醒——扫描玩家输入中的感知动词
     perception_verbs = r'观察|聆听|嗅\b|摸\b|翻找|侦查|张望|偷看|检查|搜索|细看|倾听|嗅探|听\b|看\b|闻\b'
@@ -2859,16 +3540,35 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
     full = ""
     suggested = False
     error_streak = 0
+    combat_guard_count = 0
+    state.enemy_attack_log = {}
+    module_tools = _module_tools(module, skill.tools)
     try:
         while True:
             if state.aborted:
                 await push_event(state, "error", {"code":"ABORTED","msg":"已中断"}); break
-            max_tokens = 1024 if _play_mode(state) == "lite" else skill.max_tokens
-            text, tcs = await _stream_with_tools(client, model, messages, skill.tools, state, max_tokens, temperature=skill.temperature)
+            module_max_tokens = {
+                "rules": 2600, "combat": 2200, "scene": 2000,
+                "social": 2200, "memory": 2000, "graph": 1800, "narrative": skill.max_tokens,
+            }
+            max_tokens = 1024 if _play_mode(state) == "lite" else min(skill.max_tokens, module_max_tokens.get(module, skill.max_tokens))
+            think_mode = "fixed" if module in ("rules", "combat", "graph", "memory") else "auto"
+            text, tcs = await _stream_with_tools(client, model, messages, module_tools, state, max_tokens, temperature=skill.temperature, thinking_mode=think_mode)
             full += text
             if any(t.get("function", {}).get("name") == "suggest_choices" for t in tcs):
                 suggested = True
-            if not tcs: break
+            if not tcs:
+                # 战斗/“我先确认…”式计划独白没有调用任何工具时强制重试，避免卡住不结算
+                had_tool_result = any(m.get("role") == "tool" for m in messages)
+                plan_like = bool(re.search(r"我先|让我先|让我看看|我打算|我需要确认|我来确认|先调出|调出战力|我来结算", text))
+                if not state.aborted and not had_tool_result and (module == "combat" or plan_like) and combat_guard_count < 2:
+                    combat_guard_count += 1
+                    messages.append({"role":"system","content":
+                        "[系统强制] 你刚才没有调用任何工具，输出不能算作本回合结算。"
+                        "请立即调用对应工具（dice_roll / search_npcs / search_bestiary / combat_round / enemy_attack / update_world_state）完成行动；"
+                        "不要再输出“我先确认”“让我看看”等计划。若玩家只是侦查/观察，调用搜索或检定工具后给出结果。"})
+                    continue
+                break
             asst = {"role":"assistant","content":text or None}
             atc = [{"id":t["id"],"type":"function","function":t["function"]} for t in tcs]
             if atc: asst["tool_calls"] = atc
@@ -2906,6 +3606,10 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
                         break
                     continue
                 messages.append({"role":"tool","tool_call_id":t["id"],"content":result})
+                if tool_name == "combat_round":
+                    messages.append({"role":"system","content":
+                        "[系统] 玩家行动已结算。所有存活且可行动的敌对单位都必须在敌人回合行动："
+                        "逐个调用 enemy_attack（同一敌人本回合最多一次），不要写成敌人只挨打不还手。"})
             if too_many_errors:
                 print("[DM] 工具连续错误超过3次，停止本轮工具重试")
                 break
@@ -2933,35 +3637,36 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
             if tool_count >= tool_limit:
                 break
 
-        # 确保每轮都有决策建议：若模型未主动调用 suggest_choices，则强制补一次
+        # 建议从 DM Agent 剥离：由独立子 Agent 强制生成
         if not suggested and not state.aborted:
-            tool_count = sum(1 for m in messages if m["role"] == "tool")
-            if tool_count < (3 if lite else 5):
-                messages.append({
-                    "role": "system",
-                    "content": "[系统] 本轮还没有生成决策建议。请只调用 suggest_choices 工具，不要输出叙事正文。",
-                })
-                try:
-                    _text2, _tcs2 = await _stream_with_tools(
-                        client, model, messages, skill.tools, state,
-                        max_tokens=120, temperature=0.7,
-                        tool_choice={"type": "function", "function": {"name": "suggest_choices"}},
-                    )
-                    if _tcs2:
-                        asst2 = {"role": "assistant", "content": _text2 or None}
-                        atc2 = [{"id": t["id"], "type": "function", "function": t["function"]} for t in _tcs2]
-                        if atc2:
-                            asst2["tool_calls"] = atc2
-                        messages.append(asst2)
-                        for t in _tcs2:
-                            try:
-                                args = json.loads(t["function"]["arguments"])
-                            except json.JSONDecodeError:
-                                continue
-                            result = await execute_tool(t["function"]["name"], args, state)
-                            messages.append({"role": "tool", "tool_call_id": t["id"], "content": result})
-                except Exception:
-                    pass
+            try:
+                options = await _generate_suggestions_subagent(state, player_input, full)
+                if options:
+                    await push_event(state, "choices", {"options": options})
+                    print(f"[DMSubAgent] 生成建议 {len(options)} 个")
+            except Exception as e:
+                print(f"[DMSubAgent] 建议生成失败: {e}")
+
+        # 工具结算后补足剧情：不能让玩家只看到数值/事件摘要
+        tool_result_count = sum(1 for m in messages if m.get("role") == "tool")
+        if tool_result_count > 0 and len(full.strip()) < 80 and not state.aborted:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "[系统] 工具结算已完成。请立刻根据工具结果输出2-4句对应剧情叙事："
+                    "描写动作、反应、环境与后果；不要复述数值，不要输出主持人独白，不要再次调用工具。"
+                ),
+            })
+            try:
+                narrative_full, _ = await _stream_with_tools(
+                    client, model, messages, [], state,
+                    max_tokens=700, temperature=skill.temperature,
+                    thinking_mode="low",
+                )
+                if narrative_full.strip():
+                    full += ("" if not full or full.endswith("\n") else "\n") + narrative_full.strip()
+            except Exception:
+                pass
 
         # 反八股过滤
         full = sanitize_narrative(full)
@@ -2999,6 +3704,12 @@ async def generate_opening_scene(state: GameSessionState) -> str:
     bs = state.character_info.get("backstory", "")
     wc = state.character_info.get("world_outline", "")
     scenario_summary = state.character_info.get("scenario_summary", "")
+    if not wc and getattr(state, "world_state", None) is not None:
+        ws_open = state.world_state
+        if getattr(ws_open, "world_outline", ""):
+            wc = ws_open.world_outline
+        else:
+            wc = "## 当前世界状态\n" + ws_open.to_context_string()[:1800]
     skill = get_skill(_game_system(state))
     summary_limit = 300 if lite else skill.summary_limit
     outline_limit = 800 if lite else skill.outline_limit
@@ -3009,21 +3720,25 @@ async def generate_opening_scene(state: GameSessionState) -> str:
     prompt = opening_template.format(character_info=ci, backstory=(bs or "暂无")[:200 if lite else 500], world_context=wc[:2000] if wc else "暂无")
     prompt += _mode_instructions(state)
     prompt += build_system_rule_block(_game_system(state), state.character_info.get("custom_rules", ""))
+    prompt += "\n\n【输出硬性要求】直接输出开场白正文。禁止输出任何思考过程、规划、分析、角色属性复述、内部独白；不要出现“好的，我现在要扮演...”等前置语句。"
     system_role = "你是克苏鲁的呼唤守密人（Keeper），负责营造神秘、恐怖与调查氛围。" if _game_system(state) == "coc" else "你是世界级D&D地下城主。"
-    mult, tdelta = _thinking_params(state)
-    max_tokens = int((1500 if _play_mode(state) == "lite" else min(3000, skill.max_tokens)) * mult)
+    # 开场白：降低思考/温度以提速，但必须给足最终正文 token，不能只生成 reasoning
+    mult, tdelta = _call_thinking_params(state, "low")
+    max_tokens = 4000 if lite else 6000
     max_tokens = min(8000, max_tokens)
     temp = max(0.0, min(1.5, skill.temperature + tdelta))
     full = ""
+    streamed = False
     last_err = None
     for attempt in range(1, 3):
-        current_max_tokens = max_tokens if attempt == 1 else min(max_tokens * 2, 8000)
+        current_max_tokens = max_tokens if attempt == 1 else min(max_tokens * 2, 5000)
         try:
             if attempt == 1:
                 # 第一次流式，带 60s 空闲超时，防止卡死
                 stream = await client.chat.completions.create(
                     model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],
                     max_tokens=current_max_tokens, temperature=temp, stream=True,
+                    extra_body={"thinking": {"type": "disabled"}},
                 )
                 full = ""
                 while True:
@@ -3038,16 +3753,20 @@ async def generate_opening_scene(state: GameSessionState) -> str:
                         await stream.close()
                         break
                     d = chunk.choices[0].delta if chunk.choices else None
+                    # 只收集正文；绝不把 reasoning_content 当作玩家可见文案
                     if d and d.content:
                         full += d.content
+                        streamed = True
                         await push_narrative_token(state, d.content)
             else:
-                # 第二次非流式，避免部分服务商流式返回空
+                # 第二次非流式：只接受正文 content，不把 reasoning_content 当作叙事
                 resp = await client.chat.completions.create(
                     model=model, messages=[{"role":"system","content":system_role},{"role":"user","content":prompt}],
                     max_tokens=current_max_tokens, temperature=temp,
+                    extra_body={"thinking": {"type": "disabled"}},
                 )
-                full = resp.choices[0].message.content or ""
+                msg = resp.choices[0].message
+                full = msg.content or ""
 
             full = sanitize_narrative(full)
             if full:
@@ -3062,6 +3781,37 @@ async def generate_opening_scene(state: GameSessionState) -> str:
                 await asyncio.sleep(1)
 
     if not full:
+        # 第三次兜底：极简短 prompt，尽量仍生成真实开场而不是模板
+        try:
+            minimal_prompt = (
+                f"请为角色「{state.character_name}」写一段150字左右的冒险开场白。"
+                f"直接输出正文，不要输出思考过程、分析、角色信息复述或内部独白。"
+                f"第二人称，从动作中间开始，包含环境细节与一个即将发生的悬念。"
+                f"角色背景：{(bs or '')[:300]}"
+            )
+            resp = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "system", "content": system_role},
+                              {"role": "user", "content": minimal_prompt}],
+                    max_tokens=1200,
+                    temperature=0.4,
+                    extra_body={"thinking": {"type": "disabled"}},
+                ),
+                timeout=30,
+            )
+            msg = resp.choices[0].message
+            full = msg.content or ""
+            full = sanitize_narrative(full)
+        except Exception as e:
+            last_err = e
+            print(f"[Opening] 极简短兜底失败: {e}")
+
+    if full and not streamed:
+        await push_narrative_token(state, full)
+
+    if not full:
+        print(f"[Opening] 三次生成均失败，最后错误: {last_err}")
         full = f"欢迎，{state.character_name}。"
         await push_narrative_token(state, full)
 
@@ -3073,13 +3823,43 @@ async def generate_opening_scene(state: GameSessionState) -> str:
             parts = [p.strip() for p in scene_match.group(1).split('·')]
             if len(parts) >= 1 and parts[0]:
                 ws.scene.current_location = parts[0]
-            if len(parts) >= 2 and parts[1]:
-                ws.scene.current_time = parts[1]
-            if len(parts) >= 3 and parts[2]:
-                ws.scene.weather = parts[2]
-            if len(parts) >= 4 and parts[3]:
-                ws.scene.visible_npcs_here = [n.strip() for n in parts[3].split('、') if n.strip()]
-            ws.save()
+            if len(parts) >= 4:
+                # 兼容模型把时间写成“第1天·晨”这类带分隔符的情况：
+                # 结构应为 地点 · 时间 · 天气 · 在场NPC
+                ws.scene.current_time = "·".join(parts[1:-2]) if len(parts) > 4 else parts[1]
+                ws.scene.weather = parts[-2]
+                npc_part = parts[-1]
+                ws.scene.visible_npcs_here = (
+                    [n.strip() for n in npc_part.split('、') if n.strip()]
+                    if npc_part and not npc_part.startswith("无NPC") else []
+                )
+            else:
+                if len(parts) >= 2 and parts[1]:
+                    ws.scene.current_time = parts[1]
+                if len(parts) >= 3 and parts[2]:
+                    ws.scene.weather = parts[2]
+            # 世界初始化：确保当前地点存在且已发现，避免开场后 Journal/图谱全空
+            if not ws.scene.current_location:
+                ws.scene.current_location = "冒险的起点"
+            if ws.get_location(ws.scene.current_location) is None:
+                from backend.engine.world_state import LocationEntry
+                ws.add_location(LocationEntry(
+                    name=ws.scene.current_location,
+                    description="当前冒险场景（由开场自动初始化）",
+                    discovered=True,
+                ))
+            # 通过 update_scene 统一发现当前地点/在场NPC，避免初始全部隐藏
+            ws.update_scene()
             print(f"[Opening] 场景已写入: {ws.scene.current_location}")
 
+    # 开场行动建议也走独立子Agent，不由主DM在叙事正文里夹带
+    try:
+        opening_choices = await _generate_suggestions_subagent(state, "游戏开场", full)
+        if opening_choices:
+            await push_event(state, "choices", {"options": opening_choices})
+    except Exception as e:
+        print(f"[OpeningChoices] 开场建议生成失败: {e}")
+
+    # 保存开场白，读档时恢复
+    state.opening_text = full
     return full

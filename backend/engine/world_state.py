@@ -361,6 +361,12 @@ class WorldState:
         self._log_change(f"新增NPC: {entry.name} ({entry.role})")
         self.save()
 
+    def get_location(self, name: str) -> "LocationEntry | None":
+        for l in self.locations:
+            if l.name == name:
+                return l
+        return None
+
     def add_location(self, entry: "LocationEntry"):
         """新增/更新地点实体（同名更新描述，不重复追加）。"""
         for i, loc in enumerate(self.locations):
@@ -403,6 +409,11 @@ class WorldState:
             elif not npc.discovered:
                 npc.discovered = True
                 self._log_change(f"NPC[{npc_name}] 已发现")
+        # 玩家进入某个地点后，该地点应被发现
+        loc = self.get_location(self.scene.current_location)
+        if loc is not None and not loc.discovered:
+            loc.discovered = True
+            self._log_change(f"地点[{loc.name}] 已发现")
         self.save()
         # P0-1修复：日志输出，方便追踪Journal数据流
         print(f"[WorldState] 场景更新: location={self.scene.current_location}, "

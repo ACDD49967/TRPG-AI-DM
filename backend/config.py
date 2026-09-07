@@ -69,6 +69,8 @@ class Settings:
 
     # ── 可选 PostgreSQL / pgvector ──
     ENABLE_PGVECTOR: bool = os.getenv("ENABLE_PGVECTOR", "false").lower() in ("1", "true", "yes")
+    PIPELINE_LAYOUT_ENABLED: bool = os.getenv("PIPELINE_LAYOUT_ENABLED", "false").lower() in ("1", "true", "yes")
+    PIPELINE_REGION_FUSION: bool = os.getenv("PIPELINE_REGION_FUSION", "true").lower() in ("1", "true", "yes")
 
     # ── 游戏设置 ──
     MAX_ACTIVE_CONTEXT_ROUNDS: int = int(os.getenv("MAX_ACTIVE_CONTEXT_ROUNDS", "10"))

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,11 @@ _DEFAULT_BESTIARY_NAMES = {b["name"] for b in CLASSIC_BESTIARY}
 _DEFAULT_CITY_NAMES = {c["name"] for c in COMMON_CITIES}
 
 MEDIA_ROOT = Path("media")
+
+_MAPS_CACHE: dict[tuple, tuple[float, list[dict]]] = {}
+_BESTIARY_CACHE: dict[tuple, tuple[float, list[dict]]] = {}
+_SPELLS_CACHE: dict[tuple, tuple[float, list[dict]]] = {}
+_CACHE_TTL = 3.0
 
 
 def _user_media_dir(username: str) -> Path:
@@ -303,36 +309,53 @@ def _import_kb_locations(username: str):
         print(f"[MediaManager] 知识库地点导入失败: {e}")
 
 
+def _match_scenario(item: dict, scenario_id: str | None) -> bool:
+    sid = str(item.get("scenario_id") or "")
+    if scenario_id is None:
+        # 全局/无剧本上下文：隐藏所有剧本内内容，避免跨剧本暴露
+        return not sid
+    # 指定剧本：显示当前剧本内容 + 全局通用参考；隐藏其它剧本内容
+    return sid == scenario_id or not sid
+
+
 def list_maps(username: str, scenario_id: str | None = None) -> list[dict]:
+    cache_key = (username, scenario_id or "")
+    now = time.time()
+    cached = _MAPS_CACHE.get(cache_key)
+    if cached and now - cached[0] < _CACHE_TTL:
+        return cached[1]
+
     ensure_seeded(username)
     _import_kb_locations(username)
     items = _load_meta(username, "maps")
-    user_names = {i.get("name") for i in items}
-    # 将知识库中标记为地点/城市的文档合并进地图（已导入的用户条目不再重复合并）
-    try:
-        from backend.knowledge_base import get_knowledge_base
-        kb = get_knowledge_base()
-        for d in kb.documents:
-            tags = [str(t) for t in d.get("tags", [])]
-            if any(("地点" in t) or ("城市" in t) or ("location" in t.lower()) for t in tags):
-                if d.get("title") in user_names:
-                    continue
-                items.append({
-                    "id": f"kb-{d['id']}",
-                    "name": d.get("title", "未命名地点"),
-                    "description": d.get("content", ""),
-                    "image_path": "",
-                    "locations": [],
-                    "system": d.get("system", "custom"),
-                    "details": {"source": "知识库"},
-                    "scenario_id": "",
-                    "created_at": d.get("created_at", ""),
-                })
-    except Exception:
-        pass
-    if scenario_id is not None:
-        return [i for i in items if not i.get("scenario_id") or i.get("scenario_id") == scenario_id]
-    return items
+    # 剧本模式只读取该剧本自己的地图，不扫描全局知识库，避免拖慢开场
+    if scenario_id is None:
+        user_names = {i.get("name") for i in items}
+        # 将知识库中标记为地点/城市的文档合并进地图（已导入的用户条目不再重复合并）
+        try:
+            from backend.knowledge_base import get_knowledge_base
+            kb = get_knowledge_base()
+            for d in kb.documents:
+                tags = [str(t) for t in d.get("tags", [])]
+                if any(("地点" in t) or ("城市" in t) or ("location" in t.lower()) for t in tags):
+                    if d.get("title") in user_names:
+                        continue
+                    items.append({
+                        "id": f"kb-{d['id']}",
+                        "name": d.get("title", "未命名地点"),
+                        "description": d.get("content", ""),
+                        "image_path": "",
+                        "locations": [],
+                        "system": d.get("system", "custom"),
+                        "details": {"source": "知识库"},
+                        "scenario_id": "",
+                        "created_at": d.get("created_at", ""),
+                    })
+        except Exception:
+            pass
+    result = [i for i in items if _match_scenario(i, scenario_id)]
+    _MAPS_CACHE[cache_key] = (now, result)
+    return result
 
 
 def sync_scenario_maps(username: str, scenario_id: str, locations: list, system: str = "custom"):
@@ -343,28 +366,43 @@ def sync_scenario_maps(username: str, scenario_id: str, locations: list, system:
     if not scenario_id:
         return
     existing = {i.get("name") for i in list_maps(username, scenario_id)}
+    global_maps = {i.get("name"): i for i in list_maps(username, None)}
     for loc in locations:
         data = asdict(loc) if not isinstance(loc, dict) else dict(loc)
         name = str(data.get("name", "")).strip()
         if not name or name in existing:
             continue
-        add_map(
-            username=username,
-            name=name,
-            description=str(data.get("description", "") or ""),
-            image_path="",
-            locations=[],
-            system=system,
-            details={
-                "type": str(data.get("type", "") or ""),
-                "status": str(data.get("status", "") or "可访问"),
-                "culture": str(data.get("culture", "") or ""),
-                "notable_figures": str(data.get("notable_figures", "") or ""),
-                "dangers": str(data.get("dangers", "") or ""),
-                "source": "剧本生成",
-            },
-            scenario_id=scenario_id,
-        )
+        ref = global_maps.get(name)
+        if ref:
+            # 地点图鉴已有权威记录：将该记录以剧本身份复制到当前剧本
+            add_map(
+                username=username,
+                name=name,
+                description=str(ref.get("description", "") or ""),
+                image_path=str(ref.get("image_path", "") or ""),
+                locations=list(ref.get("locations", []) or []),
+                system=system,
+                details=dict(ref.get("details", {}) or {}),
+                scenario_id=scenario_id,
+            )
+        else:
+            add_map(
+                username=username,
+                name=name,
+                description=str(data.get("description", "") or ""),
+                image_path="",
+                locations=[],
+                system=system,
+                details={
+                    "type": str(data.get("type", "") or ""),
+                    "status": str(data.get("status", "") or "可访问"),
+                    "culture": str(data.get("culture", "") or ""),
+                    "notable_figures": str(data.get("notable_figures", "") or ""),
+                    "dangers": str(data.get("dangers", "") or ""),
+                    "source": "剧本生成",
+                },
+                scenario_id=scenario_id,
+            )
         existing.add(name)
 
 
@@ -373,20 +411,35 @@ def sync_scenario_bestiary(username: str, scenario_id: str, creatures: list[dict
     if not scenario_id:
         return
     existing = {i.get("name") for i in list_bestiary(username, scenario_id)}
+    global_bestiary = {i.get("name"): i for i in list_bestiary(username, None)}
     for c in creatures:
         name = str(c.get("name", "")).strip() if isinstance(c, dict) else str(c).strip()
         if not name or name in existing:
             continue
-        add_bestiary(
-            username=username,
-            name=name,
-            system=system,
-            description=str(c.get("description", "")) if isinstance(c, dict) else "",
-            stats=c.get("stats") if isinstance(c, dict) else {},
-            tags=c.get("tags") if isinstance(c, dict) else [],
-            details={"source": "剧本生成"},
-            scenario_id=scenario_id,
-        )
+        ref = global_bestiary.get(name)
+        if ref:
+            add_bestiary(
+                username=username,
+                name=name,
+                system=system,
+                description=str(ref.get("description", "") or ""),
+                stats=dict(ref.get("stats", {}) or {}),
+                image_path=str(ref.get("image_path", "") or ""),
+                tags=list(ref.get("tags", []) or []),
+                details=dict(ref.get("details", {}) or {}),
+                scenario_id=scenario_id,
+            )
+        else:
+            add_bestiary(
+                username=username,
+                name=name,
+                system=system,
+                description=str(c.get("description", "")) if isinstance(c, dict) else "",
+                stats=c.get("stats") if isinstance(c, dict) else {},
+                tags=c.get("tags") if isinstance(c, dict) else [],
+                details={"source": "剧本生成"},
+                scenario_id=scenario_id,
+            )
         existing.add(name)
 
 
@@ -599,38 +652,46 @@ def _import_dnd4_pdf_monsters(username: str):
 
 
 def list_bestiary(username: str, scenario_id: str | None = None) -> list[dict]:
+    cache_key = (username, scenario_id or "")
+    now = time.time()
+    cached = _BESTIARY_CACHE.get(cache_key)
+    if cached and now - cached[0] < _CACHE_TTL:
+        return cached[1]
+
     ensure_seeded(username)
     _import_kb_monsters(username)
     _import_dnd4_pdf_monsters(username)
     items = _load_meta(username, "bestiary")
-    # 将知识库中标记为生物/怪物的文档合并进图鉴（保留完整内容，仅展示，不写入用户媒体）
-    try:
-        from backend.knowledge_base import get_knowledge_base
-        kb = get_knowledge_base()
-        for d in kb.documents:
-            tags = [str(t) for t in d.get("tags", [])]
-            source = d.get("source", "")
-            title = d.get("title", "")
-            if "srd:" in source or "compact" in source or "bestiary" in source or "怪物" in title:
-                continue
-            if any(("生物" in t) or ("怪物" in t) or ("creature" in t.lower()) for t in tags):
-                items.append({
-                    "id": f"kb-{d['id']}",
-                    "name": d.get("title", "未命名生物"),
-                    "system": d.get("system", "custom"),
-                    "description": d.get("content", ""),
-                    "stats": {},
-                    "image_path": "",
-                    "tags": tags,
-                    "details": {"source": "知识库"},
-                    "scenario_id": "",
-                    "created_at": d.get("created_at", ""),
-                })
-    except Exception:
-        pass
-    if scenario_id is not None:
-        return [i for i in items if not i.get("scenario_id") or i.get("scenario_id") == scenario_id]
-    return items
+    # 剧本模式只读取该剧本自己的图鉴，不扫描全局知识库，避免拖慢开场
+    if scenario_id is None:
+        # 将知识库中标记为生物/怪物的文档合并进图鉴（保留完整内容，仅展示，不写入用户媒体）
+        try:
+            from backend.knowledge_base import get_knowledge_base
+            kb = get_knowledge_base()
+            for d in kb.documents:
+                tags = [str(t) for t in d.get("tags", [])]
+                source = d.get("source", "")
+                title = d.get("title", "")
+                if "srd:" in source or "compact" in source or "bestiary" in source or "怪物" in title:
+                    continue
+                if any(("生物" in t) or ("怪物" in t) or ("creature" in t.lower()) for t in tags):
+                    items.append({
+                        "id": f"kb-{d['id']}",
+                        "name": d.get("title", "未命名生物"),
+                        "system": d.get("system", "custom"),
+                        "description": d.get("content", ""),
+                        "stats": {},
+                        "image_path": "",
+                        "tags": tags,
+                        "details": {"source": "知识库"},
+                        "scenario_id": "",
+                        "created_at": d.get("created_at", ""),
+                    })
+        except Exception:
+            pass
+    result = [i for i in items if _match_scenario(i, scenario_id)]
+    _BESTIARY_CACHE[cache_key] = (now, result)
+    return result
 
 
 def delete_bestiary(username: str, beast_id: str) -> bool:
@@ -1166,6 +1227,12 @@ def _fill_srd_spell_classes(username: str):
 
 
 def list_spells(username: str, scenario_id: str | None = None) -> list[dict]:
+    cache_key = (username, scenario_id or "")
+    now = time.time()
+    cached = _SPELLS_CACHE.get(cache_key)
+    if cached and now - cached[0] < _CACHE_TTL:
+        return cached[1]
+
     ensure_seeded(username)
     _seed_classic_spells(username)
     _import_kb_spells(username)
@@ -1180,9 +1247,9 @@ def list_spells(username: str, scenario_id: str | None = None) -> list[dict]:
             changed = True
     if changed:
         _save_meta(username, "spells", items)
-    if scenario_id is not None:
-        return [i for i in items if not i.get("scenario_id") or i.get("scenario_id") == scenario_id]
-    return items
+    result = [i for i in items if _match_scenario(i, scenario_id)]
+    _SPELLS_CACHE[cache_key] = (now, result)
+    return result
 
 
 def delete_spell(username: str, spell_id: str) -> bool:
@@ -1202,23 +1269,42 @@ def sync_scenario_spells(username: str, scenario_id: str, spells: list[dict], sy
     if not scenario_id:
         return
     existing = {i.get("name") for i in list_spells(username, scenario_id)}
+    global_spells = {i.get("name"): i for i in list_spells(username, None)}
     for s in spells:
         name = str(s.get("name", "")).strip() if isinstance(s, dict) else str(s).strip()
         if not name or name in existing:
             continue
-        add_spell(
-            username=username,
-            name=name,
-            system=system,
-            description=str(s.get("description", "")) if isinstance(s, dict) else "",
-            level=str(s.get("level", "0")) if isinstance(s, dict) else "0",
-            school=str(s.get("school", "")) if isinstance(s, dict) else "",
-            ritual=bool(s.get("ritual", False)) if isinstance(s, dict) else False,
-            casting_time=str(s.get("casting_time", "")) if isinstance(s, dict) else "",
-            range_=str(s.get("range", "")) if isinstance(s, dict) else "",
-            components=str(s.get("components", "")) if isinstance(s, dict) else "",
-            duration=str(s.get("duration", "")) if isinstance(s, dict) else "",
-            classes=list(s.get("classes", [])) if isinstance(s, dict) else [],
-            scenario_id=scenario_id,
-        )
+        ref = global_spells.get(name)
+        if ref:
+            add_spell(
+                username=username,
+                name=name,
+                system=system,
+                description=str(ref.get("description", "") or ""),
+                level=str(ref.get("level", "0") or "0"),
+                school=str(ref.get("school", "") or ""),
+                ritual=bool(ref.get("ritual", False)),
+                casting_time=str(ref.get("casting_time", "") or ""),
+                range_=str(ref.get("range", "") or ""),
+                components=str(ref.get("components", "") or ""),
+                duration=str(ref.get("duration", "") or ""),
+                classes=list(ref.get("classes", []) or []),
+                scenario_id=scenario_id,
+            )
+        else:
+            add_spell(
+                username=username,
+                name=name,
+                system=system,
+                description=str(s.get("description", "")) if isinstance(s, dict) else "",
+                level=str(s.get("level", "0")) if isinstance(s, dict) else "0",
+                school=str(s.get("school", "")) if isinstance(s, dict) else "",
+                ritual=bool(s.get("ritual", False)) if isinstance(s, dict) else False,
+                casting_time=str(s.get("casting_time", "")) if isinstance(s, dict) else "",
+                range_=str(s.get("range", "")) if isinstance(s, dict) else "",
+                components=str(s.get("components", "")) if isinstance(s, dict) else "",
+                duration=str(s.get("duration", "")) if isinstance(s, dict) else "",
+                classes=list(s.get("classes", [])) if isinstance(s, dict) else [],
+                scenario_id=scenario_id,
+            )
         existing.add(name)

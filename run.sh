@@ -76,7 +76,7 @@ echo "============================================================"
 echo "  Starting servers..."
 echo "============================================================"
 
-"$PYTHON" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 &
+"$PYTHON" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --no-access-log --log-level warning &
 BACKEND_PID=$!
 echo "[OK] Backend PID: $BACKEND_PID"
 

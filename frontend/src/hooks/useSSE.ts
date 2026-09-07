@@ -87,6 +87,7 @@ export function useSSE(sessionId: string | null) {
       },
 
       dice_roll: (data) => {
+        const detail = `${data.skill}检定 d20=${data.roll}${data.modifier ? `+${data.modifier}` : ''} vs DC${data.dc} → ${data.result}`;
         store.getState().appendDiceRoll({
           skill: data.skill as string,
           dc: data.dc as number,
@@ -94,6 +95,7 @@ export function useSSE(sessionId: string | null) {
           modifier: (data.modifier as number) || 0,
           result: data.result as string,
         });
+        store.getState().appendCombatLog({ kind: 'dice', text: detail });
       },
 
       state_update: (data) => {
@@ -123,21 +125,41 @@ export function useSSE(sessionId: string | null) {
           extra: data.extra as Record<string, unknown> | undefined,
         });
 
-        // 处理战斗事件
+        // 战斗记录统一进入面板
+        const evDesc = data.description as string || '';
+        store.getState().appendCombatLog({
+          kind: data.type === 'combat' ? (evDesc.includes('攻击') ? 'enemy' : 'combat') : 'combat',
+          text: evDesc,
+          extra: data.extra as Record<string, unknown> | undefined,
+        });
+
+        // 处理多敌人战斗状态
         const extra = data.extra as Record<string, unknown> | undefined;
         if (data.type === 'combat' && extra) {
-          store.getState().setCombat({
-            active: !extra.enemy_dead,
-            enemyName: extra.enemy_name as string,
-            enemyHp: extra.enemy_hp_remaining as number,
-          });
-          // 自动更新HP
-          if (typeof extra.player_damage_taken === 'number' && extra.player_damage_taken > 0) {
-            const s = store.getState();
-            store.getState().updateStatus({
-              hp: Math.max(0, s.status.hp - (extra.player_damage_taken as number)),
-            });
+          const prev = store.getState().combat;
+          const enemyName = extra.enemy_name as string || '敌人';
+          const prevHp = prev?.enemies?.find(e => e.name === enemyName)?.hp ?? 0;
+          const enemyHp = typeof extra.enemy_hp_remaining === 'number' ? extra.enemy_hp_remaining : prevHp;
+          let enemies = prev?.enemies ? [...prev.enemies] : [];
+          // 后端提供完整敌人快照时优先使用，保证多敌战斗全部显示
+          if (Array.isArray(extra.enemies)) {
+            const snapshot = extra.enemies as Array<{ name: string; hp: number }>;
+            const map = new Map(enemies.map(e => [e.name, e]));
+            for (const e of snapshot) map.set(e.name, { name: e.name, hp: e.hp });
+            enemies = [...map.values()];
+          } else {
+            const idx = enemies.findIndex(e => e.name === enemyName);
+            if (idx >= 0) enemies[idx] = { name: enemyName, hp: enemyHp };
+            else enemies.push({ name: enemyName, hp: enemyHp });
           }
+          const anyAlive = enemies.length === 0 ? !extra.enemy_dead : enemies.some(e => e.hp > 0);
+          store.getState().setCombat({
+            active: anyAlive,
+            enemyName,
+            enemyHp,
+            enemies,
+          });
+          // HP 以 state_update 事件为准，避免与后端已推送的权威状态重复扣血
         }
       },
 
@@ -148,6 +170,7 @@ export function useSSE(sessionId: string | null) {
 
       journal_update: (data) => {
         // P2-12修复：SSE推送Journal数据，无需轮询API
+        store.getState().setJournalStatus('synced');
         store.getState().setJournalData(data as Record<string, unknown>);
         // 同时同步场景信息到顶栏
         const scene = (data as Record<string, unknown>).scene as Record<string, unknown> | undefined;

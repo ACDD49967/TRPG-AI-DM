@@ -9,14 +9,17 @@
 - **DM 与玩家信息隔离**：NPC/地点/剧情旗标通过 `discovered` / `visible` 控制，后台信息只进 DM 上下文，玩家仅看到已发现内容。
 - **类知识图谱**：角色/地点/生物/剧情组织成节点与关系，支持亲密度、置信度、局部子图查询、向量检索与前端可视化。
 - **ReAct 稳健性**：工具调用失败时会把错误回传给 DM 修正，而不是直接中断；同会话行动串行化，避免并发状态损坏。
-- **RAG 混合检索**：本地稠密向量 + TF-IDF + BM25 三路融合，零外部 embedding 成本；语义切分同样使用本地向量。
+- **多专业子 Agent 并发委派**：规则裁决、战斗战术、场景事实、剧情连续性、关系图谱由专业子 Agent 并行分析，主 DM 只收专家简报，专注角色扮演、故事生成与世界操控；行动建议由后台子 Agent 强制生成。
+- **RAG 混合检索**：本地稠密向量 + TF-IDF + BM25 三路融合，零外部 embedding 成本；可选 BGE-M3 稠密+稀疏、BGE-reranker 重排与 pgvector 持久化。
 
 ## 功能概览
 
 ### 剧本
 
-- 内置免费经典剧本，支持 PDF、TXT、DOCX、DOC、MD 导入
-- 文本自动切分：快速切分、语义切分、LLM 智能切分
+- 内置免费经典剧本，支持 PDF、TXT、DOCX、DOC、MD 与扫描图片导入
+- 统一文档管线：页级解析、OCR（PaddleOCR）、跨页表格合并、页眉页脚清洗、注释合并、图片提取与自动图鉴载入
+- 文本自动切分：快速切分、递归父子块切分（15% overlap）、语义切分、LLM 智能切分
+- 剧本原件绑定到该剧本知识库（父子块/图片/表格同源存储），修订剧本仍作为使用剧本
 - 根据描述生成完整世界大纲（世界观、主线、NPC、遭遇、规则），SSE 实时显示 LLM 输出
 - 自建剧本时选择剧本规则系统（角色系统自动跟随）；导入剧本时后端自动识别规则系统
 - 生成/导入完成后自动保存剧本，开局前再次自动保存当前编辑
@@ -34,16 +37,21 @@
 - Function Calling 工具化处理：检定、战斗、死亡豁免、休息、状态更新、世界状态、信息揭示、场景更新
 - 低 token 工具：角色状态、职业资源、施法、习得/遗忘法术、NPC 查询/调整、生物图鉴查询/调整
 - ReAct 工具纠错：工具参数错误或执行失败会回传 DM，DM 接受报错并修改
+- 多专业子 Agent 并发委派：规则裁决、战斗战术、场景事实、剧情连续性、关系图谱按模块并行分析，主 DM 只读专家简报；行动建议由后台子 Agent 强制生成
+- 战斗系统：多敌人独立单位、敌人回合 `enemy_attack`、同回合每敌人最多结算一次、被绑/昏迷/濒死敌人不会机械反杀、前端多敌人战斗面板与战斗记录
+- 动态世界增删改：NPC/地点/旗标/世界规则可新增、更新、删除；`update_npc`/地点/旗标只覆写显式字段，删除时同步清理笔记与关系
+- 开场与流式输出：开场白禁用思考保证稳定正文，流式叙事过滤“系统工具/我来结算”等幕后台词，避免破坏沉浸感
 - 记忆系统：短期轮次 + 自动摘要 + 长期记忆；大事件、暗线、人物影响结构化记忆
 - 后台剧情推进：玩家视线之外的世界持续发展，深度模式每 3 轮、精简模式每 5 轮触发一次
 - 知识图谱子 AGENT：DM 识别到关系变化时调用，子 AGENT 从文本中识别实体关系并更新，结果/错误回传 DM
 
 ### 知识与图鉴
 
-- 本地 RAG：稠密向量 + TF-IDF + BM25 三路融合检索
+- 本地 RAG：稠密向量 + TF-IDF + BM25 三路融合检索，SQLite 向量持久化
+- 可选 BGE-M3（稠密+稀疏混合检索）、BGE-reranker 重排、pgvector 向量层
 - 内置规则备注与 5etools SRD，支持上传知识库文档
 - 法术图鉴、地图/地点图鉴、生物图鉴：结构化字段、自建、搜索、机翻
-- 地图/生物/法术按剧本隔离；DM 可用 `search_*` 精简查询或完整卡面工具
+- 地图/生物/法术按剧本隔离；当前剧本显示剧本条目 + 全局通用参考；DM 可用 `search_*` 精简查询或完整卡面工具
 - 世界生成时自动提取 NPC、地点、生物、法术进入图鉴
 - 类知识图谱：节点（NPC/地点/生物/剧情）+ 关系（亲密度/置信度/备注），支持局部子图查询与向量检索
 
@@ -58,6 +66,7 @@
 ### 接口与部署
 
 - OpenAI 兼容接口，自动探测 `/models` 与 `/v1/models`
+- 任务中心：文档上传解析、BGE 模型下载等长任务统一走 SSE 进度事件
 - 前端可保存多组 API 配置；剧本、存档、角色卡、扩展、媒体、知识文档按用户名隔离
 - 一键安装/启动脚本；GitHub Release 提供打包产物
 
@@ -68,7 +77,7 @@
 | 后端 | Python 3.11+、FastAPI、SQLAlchemy 异步、SQLite |
 | AI | OpenAI 兼容 API、SSE 流式输出、ReAct、LangGraph |
 | 前端 | React 18、TypeScript、Vite、Tailwind CSS、Zustand |
-| 检索 | 本地稠密向量 + TF-IDF + BM25（jieba 分词） |
+| 检索 | 本地稠密向量 + TF-IDF + BM25；可选 BGE-M3 / BGE-reranker / pgvector |
 | 部署 | 本地运行、zip 打包、GitHub Release |
 
 ## 快速开始
@@ -105,18 +114,23 @@ TRPG-AI-DM/
 │   ├── schemas.py              # 请求/响应模型
 │   ├── scenario_importer.py    # 剧本导入、切分、摘要
 │   ├── scenario_store.py       # 剧本存储
-│   ├── knowledge_base.py       # RAG 知识库（稠密+稀疏混合）
+│   ├── knowledge_base.py       # RAG 知识库（父子块 + 混合检索）
+│   ├── local_vector_store.py   # 内置 SQLite 向量持久化
+│   ├── vector_store.py         # pgvector 可选向量层
+│   ├── task_center.py          # 长任务中心 + SSE 进度
 │   ├── save_manager.py         # 存档管理
 │   ├── character_card_manager.py # 角色卡管理（不绑定剧本）
 │   ├── media_manager.py        # 地图 / 图鉴 / 图片
 │   ├── classic_scenarios.py    # 免费经典剧本
+│   ├── document_pipeline/      # 统一文档管线（PDF/OCR/表格/图片/父子块）
 │   └── engine/
 │       ├── dm_agent.py         # AI 主持核心 + ReAct + 工具
+│       ├── dm_modules.py       # 模块化调度（LangGraph）
+│       ├── focused_subagents.py # 多专业子 Agent 并发委派与简报聚合
 │       ├── world_builder.py    # 多步世界生成 + LangGraph 提取
-│       ├── agent_graph.py      # LangGraph 专业提取流程
 │       ├── knowledge_graph.py  # 知识图谱构建/局部子图/向量检索
 │       ├── graph_agent.py      # 知识图谱子 AGENT（文本识别更新）
-│       ├── rag_utils.py        # 本地稠密向量
+│       ├── rag_utils.py        # 本地/BGE 稠密、稀疏、重排
 │       ├── starting_gold.py    # DM 按财宝规则生成起始金币
 │       ├── game_systems.py     # 规则计算与职业资源
 │       ├── world_state.py      # 世界状态 + 显式关系表
