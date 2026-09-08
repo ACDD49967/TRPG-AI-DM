@@ -528,7 +528,7 @@ export default function GameScreen() {
           <button onClick={()=>setShowRulebook(true)} className="text-xs text-indigo-500 hover:text-indigo-700 transition-colors">说明书</button>
           <button onClick={()=>setShowCharSheet(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">角色卡</button>
           <button onClick={()=>setShowDmTools(true)} className="text-xs text-amber-600 hover:text-amber-800 transition-colors">DM</button>
-          <button onClick={()=>openGraph()} className="text-xs text-emerald-600 hover:text-emerald-800 transition-colors">图谱</button>
+          <button onClick={()=>openGraph(undefined, '')} className="text-xs text-emerald-600 hover:text-emerald-800 transition-colors">图谱</button>
           <button onClick={()=>setShowMap(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">地图</button>
           <button onClick={()=>setShowBeast(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">图鉴</button>
           <button onClick={()=>setShowSpells(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">法术</button>
@@ -1149,11 +1149,11 @@ export default function GameScreen() {
               <input
                 value={graphQuery}
                 onChange={e=>setGraphQuery(e.target.value)}
-                onKeyDown={e=>{if(e.key==='Enter') openGraph();}}
+                onKeyDown={e=>{if(e.key==='Enter') openGraph(undefined, graphQuery);}}
                 placeholder="搜索节点..."
                 className="input-field text-xs flex-1"
               />
-              <button onClick={()=>openGraph()} className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200 hover:bg-emerald-100">搜索</button>
+              <button onClick={()=>openGraph(undefined, graphQuery)} className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200 hover:bg-emerald-100">搜索</button>
               {(graphSearchIds.length > 0 || graphQuery) && (
                 <button onClick={()=>{ setGraphSearchIds([]); setGraphSearchEmpty(false); setGraphQuery(''); }} className="text-xs px-2.5 py-1.5 text-gray-400 hover:text-gray-600">清除</button>
               )}
