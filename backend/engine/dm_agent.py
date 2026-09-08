@@ -3743,9 +3743,11 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
                 "social": 2200, "memory": 2000, "graph": 1800, "narrative": skill.max_tokens,
             }
             max_tokens = 1024 if _play_mode(state) == "lite" else min(skill.max_tokens, module_max_tokens.get(module, skill.max_tokens))
-            think_mode = "fixed" if module in ("rules", "combat", "graph", "memory") else (
-                "high" if getattr(state, "thinking_strength", "medium") == "high" else "low"
-            )
+            if module in ("rules", "combat", "graph", "memory"):
+                think_mode = "fixed"
+            else:
+                # 主 DM 默认高思考；只有玩家显式选 low 时才降为快速模式
+                think_mode = "low" if getattr(state, "thinking_strength", "high") == "low" else "high"
             text, tcs = await _stream_with_tools(client, model, messages, module_tools, state, max_tokens, temperature=skill.temperature, thinking_mode=think_mode)
             full += text
             if any(t.get("function", {}).get("name") == "suggest_choices" for t in tcs):

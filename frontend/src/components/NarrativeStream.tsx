@@ -146,12 +146,7 @@ export default function NarrativeStream() {
       </AnimatePresence>
 
       {currentTokenBuffer && <p className="text-gray-700 text-sm leading-relaxed whitespace-pre-line">{currentTokenBuffer}<span className="text-indigo-400 animate-pulse">▎</span></p>}
-      {isProcessing && !currentTokenBuffer && (
-        <div className="flex items-center gap-2 text-indigo-400 text-xs py-1">
-          <span className="inline-block w-4 h-4 rounded-full border-2 border-indigo-200 border-t-indigo-500 animate-spin" />
-          <span>DM 已受理，正在准备...</span>
-        </div>
-      )}
+      {isProcessing && !currentTokenBuffer && narrative.length > 0 && <div className="flex items-center gap-2 text-indigo-400 text-xs"><span className="animate-pulse">●</span>主持正在思考...</div>}
       <div ref={bottomRef} />
     </div>
   );
