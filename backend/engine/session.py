@@ -64,6 +64,9 @@ class GameSessionState:
     # 每会话串行锁：防止同一会话的多个玩家行动并发修改世界状态
     action_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
+    # 工具执行锁：多个专业子 Agent 并发调用工具时，串行化状态变更
+    tool_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
     def check_rate_limit(self) -> bool:
         """检查距上次操作是否已超过速率限制。"""
         now = time.time()

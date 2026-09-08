@@ -26,7 +26,10 @@ from backend.engine.session import (
     sse_event_generator,
 )
 from backend.models import Character, GameSession, User
-from backend.task_center import task_manager, task_progress_callback, task_sse_generator
+from backend.task_center import (
+    TaskCancelled, is_cancel_requested, task_manager, task_progress_callback,
+    task_sse_generator,
+)
 from backend.schemas import (
     ActionAcceptedResponse,
     ActionRequest,
@@ -364,8 +367,9 @@ async def classic_scenarios():
 
 @app.post("/api/scenarios/import")
 async def import_scenario(
+    request: Request,
     file: UploadFile = File(...),
-    splitter: str = Form("naive"),
+    splitter: str = Form("recursive"),
     chunk_size: int = Form(900),
     title: str = Form(""),
     username: str = Form("default"),
@@ -385,11 +389,10 @@ async def import_scenario(
     base_url: str | None = Form(None),
     thinking_strength: str = Form("medium"),
 ):
-    """上传剧本文件（pdf/txt/docx/doc/md）→ 按所选切分器切分 → 生成并保存新剧本。
+    """上传剧本文件（pdf/txt/docx/doc/md/图片）→ 与知识库相同的识别/切分 → 生成并保存新剧本。
 
-    支持 splitter=naive（切分器）或 splitter=semantic（语义切分）。
-    支持 system=dnd5e/dnd4e/coc/custom；缺省时自动识别。
-    返回的剧本包含约400字总结、世界大纲、结构化世界状态和切分片段。
+    识别、清洗、递归父子切分都在线程中执行，并通过 SSE 推送进度；
+    前端断开连接或点击取消时，服务端会设置 cancel_event 中断管线。
     """
     from backend.scenario_importer import (
         detect_game_system,
@@ -398,6 +401,8 @@ async def import_scenario(
         split_text,
     )
     from backend.engine.game_systems import SYSTEM_TYPES
+    from backend.document_pipeline import run_document_pipeline
+    from backend.document_pipeline.types import DocumentPipelineCancelled
 
     if splitter not in ("naive", "recursive", "semantic", "llm"):
         raise HTTPException(status_code=400, detail="splitter 仅支持 naive、recursive、semantic 或 llm")
@@ -407,58 +412,91 @@ async def import_scenario(
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="文件不能超过 20MB")
-
-    try:
-        text = extract_text(file.filename or "", data)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    # 使用统一文档管线提取/清洗文本（支持表格合并、页眉页脚清洗、图片上下文）
-    _pipeline_result = None
-    try:
-        from backend.document_pipeline import run_document_pipeline
-        _pipeline_result = run_document_pipeline(
-            data, file.filename or "", doc_id="scenario_import", username=username,
-            splitter=splitter,
-        )
-        if _pipeline_result.cleaned_text.strip():
-            text = _pipeline_result.cleaned_text
-    except Exception:
-        pass
-
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="文件中没有可用的剧本文本")
-
-    # LLM 切分在 generate_scenario_from_text 内部异步执行；naive/semantic 在这里预切分
-    chunks: list[str] = []
-    if splitter != "llm":
-        chunks = split_text(text, mode=splitter, chunk_size=chunk_size)
-        if not chunks:
-            raise HTTPException(status_code=400, detail="切分后没有生成任何片段")
-
-    if not system or system == "auto":
-        system = detect_game_system(text, title)
-    if system not in SYSTEM_TYPES:
-        raise HTTPException(status_code=400, detail=f"未知规则系统: {system}，可选: {', '.join(SYSTEM_TYPES)}")
-
-    import json as _json
-    try:
-        custom_classes_list = _json.loads(custom_classes or "[]") or []
-        custom_skills_list = _json.loads(custom_skills or "[]") or []
-        extra_attributes_dict = _json.loads(extra_attributes or "{}") or {}
-    except Exception:
-        custom_classes_list, custom_skills_list, extra_attributes_dict = [], [], {}
+    filename = file.filename or ""
 
     queue: asyncio.Queue = asyncio.Queue()
+    cancel_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
-    def progress(label: str, percent: int, detail: str = ""):
-        queue.put_nowait({"type": "progress", "label": label, "percent": percent, "detail": detail})
+    def _emit(item: dict) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, item)
 
-    def stream_token(token: str):
-        queue.put_nowait({"type": "gen_token", "token": token})
+    def progress(label: str, percent: int, detail: str = "") -> None:
+        if cancel_event.is_set():
+            raise TaskCancelled("剧本导入已取消")
+        _emit({"type": "progress", "label": label, "percent": percent, "detail": detail})
+
+    def stream_token(token: str) -> None:
+        if cancel_event.is_set():
+            raise TaskCancelled("剧本导入已取消")
+        _emit({"type": "gen_token", "token": token})
 
     async def run():
+        nonlocal system
         try:
+            progress("读取文件", 2, "正在提取文本")
+            text = await asyncio.to_thread(extract_text, filename, data)
+            if cancel_event.is_set():
+                raise TaskCancelled("剧本导入已取消")
+            if not text.strip():
+                raise ValueError("文件中没有可用的剧本文本")
+
+            _pipeline_result = None
+            progress("文档识别", 4, "统一文档管线识别/清洗/切分")
+            try:
+                def pipeline_progress(current: int, total: int, detail: str | None = None) -> None:
+                    if cancel_event.is_set():
+                        raise TaskCancelled("剧本导入已取消")
+                    pct = 4 + int(28 * (current / max(1, total)))
+                    progress("文档识别/切分", min(32, pct), detail or f"{current}/{total}")
+
+                _pipeline_result = await asyncio.to_thread(
+                    run_document_pipeline,
+                    data, filename, doc_id="scenario_import", username=username,
+                    splitter=splitter, progress_callback=pipeline_progress,
+                    child_max_chars=chunk_size,
+                    parent_max_chars=max(4000, chunk_size * 4),
+                    cancel_callback=lambda: cancel_event.is_set(),
+                )
+                if _pipeline_result.cleaned_text.strip():
+                    text = _pipeline_result.cleaned_text
+            except (TaskCancelled, DocumentPipelineCancelled):
+                raise TaskCancelled("剧本导入已取消")
+            except Exception as e:
+                progress("文档管线", 6, f"管线失败，使用旧文本回退：{e}")
+
+            if cancel_event.is_set():
+                raise TaskCancelled("剧本导入已取消")
+            if not text.strip():
+                raise ValueError("文件中没有可用的剧本文本")
+
+            # 剧本切分与知识库保持一致：优先使用文档管线生成的 child_chunks
+            chunks: list[str] = []
+            if splitter != "llm":
+                if _pipeline_result is not None and _pipeline_result.child_chunks:
+                    chunks = [
+                        c.content for c in _pipeline_result.child_chunks
+                        if getattr(c, "content", "")
+                    ]
+                if not chunks:
+                    chunks = split_text(text, mode=splitter, chunk_size=chunk_size)
+                if not chunks:
+                    raise ValueError("切分后没有生成任何片段")
+
+            if not system or system == "auto":
+                system = detect_game_system(text, title)
+            if system not in SYSTEM_TYPES:
+                raise ValueError(f"未知规则系统: {system}，可选: {', '.join(SYSTEM_TYPES)}")
+
+            try:
+                custom_classes_list = json.loads(custom_classes or "[]") or []
+                custom_skills_list = json.loads(custom_skills or "[]") or []
+                extra_attributes_dict = json.loads(extra_attributes or "{}") or {}
+            except Exception:
+                custom_classes_list, custom_skills_list, extra_attributes_dict = [], [], {}
+
+            if cancel_event.is_set():
+                raise TaskCancelled("剧本导入已取消")
             result = await generate_scenario_from_text(
                 source_text=text,
                 chunks=chunks,
@@ -485,70 +523,100 @@ async def import_scenario(
                 progress_callback=progress,
                 token_callback=stream_token,
             )
+            if cancel_event.is_set():
+                raise TaskCancelled("剧本导入已取消")
+
             # 把复合剧本中的图片/地图/生物图谱关联到该剧本，而不是全局知识库
             if _pipeline_result is not None and _pipeline_result.images:
                 try:
                     from backend.document_pipeline.image_processor import auto_register_media_images
-                    auto_register_media_images(username, str(result.get("scenario_id") or ""),
-                                               _pipeline_result.images, system=system)
+                    await asyncio.to_thread(
+                        auto_register_media_images, username,
+                        str(result.get("scenario_id") or ""),
+                        _pipeline_result.images, system,
+                    )
                 except Exception:
                     pass
 
-            # 剧本原件绑定到该剧本知识库：采用知识库父子块/图片/表格方法，修订剧本仍保存为使用剧本
+            # 剧本原件绑定到该剧本知识库：采用知识库父子块/图片/表格方法
             if _pipeline_result is not None:
                 try:
                     from backend.knowledge_base import get_knowledge_base
                     kb = get_knowledge_base()
                     scenario_id_new = str(result.get("scenario_id") or "")
                     scenario_kb_source = f"scenario:{scenario_id_new}"
-                    for d in kb.list_documents(username, include_scenario=True):
-                        if d.get("source") == scenario_kb_source or d.get("scenario_id") == scenario_id_new:
-                            kb.remove_document(d["id"], username)
-                    kb.add_document(
-                        title=f"剧本原件：{title or '导入剧本'}",
-                        content=_pipeline_result.cleaned_text or text,
-                        source=scenario_kb_source,
-                        system=system,
-                        tags=["剧本原件", system, splitter],
-                        username=username,
-                        parent_chunks=_pipeline_result.parent_chunks,
-                        child_chunks=_pipeline_result.child_chunks,
-                        images=_pipeline_result.images,
-                        tables=_pipeline_result.tables,
-                        scenario_id=scenario_id_new,
-                    )
+
+                    def _bind_kb():
+                        for d in kb.list_documents(username, include_scenario=True):
+                            if d.get("source") == scenario_kb_source or d.get("scenario_id") == scenario_id_new:
+                                kb.remove_document(d["id"], username)
+                        kb.add_document(
+                            title=f"剧本原件：{title or '导入剧本'}",
+                            content=_pipeline_result.cleaned_text or text,
+                            source=scenario_kb_source,
+                            system=system,
+                            tags=["剧本原件", system, splitter],
+                            username=username,
+                            parent_chunks=_pipeline_result.parent_chunks,
+                            child_chunks=_pipeline_result.child_chunks,
+                            images=_pipeline_result.images,
+                            tables=_pipeline_result.tables,
+                            scenario_id=scenario_id_new,
+                        )
+                    await asyncio.to_thread(_bind_kb)
                 except Exception as e:
                     print(f"[Scenario] 剧本原件知识库绑定失败（不影响剧本生成）: {e}")
 
-            queue.put_nowait({"type": "__complete__", "data": result})
+            _emit({"type": "__complete__", "data": result})
+        except TaskCancelled:
+            _emit({"type": "__cancelled__"})
         except Exception as e:
-            queue.put_nowait({"type": "__error__", "msg": f"剧本生成失败: {e}"})
+            _emit({"type": "__error__", "msg": f"剧本生成失败: {e}"})
 
     async def event_stream():
         task = asyncio.create_task(run())
-        while True:
-            item = await queue.get()
-            if item["type"] == "progress":
-                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
-                continue
-            if item["type"] == "gen_token":
-                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
-                continue
-            if item["type"] == "__error__":
-                yield f"data: {json.dumps({'type':'error','msg':item['msg']}, ensure_ascii=False)}\n\n"
+        try:
+            while True:
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    task.cancel()
+                    break
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                if item["type"] == "progress":
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    continue
+                if item["type"] == "gen_token":
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    continue
+                if item["type"] == "__cancelled__":
+                    yield f"data: {json.dumps({'type':'error','msg':'已取消'}, ensure_ascii=False)}\n\n"
+                    break
+                if item["type"] == "__error__":
+                    yield f"data: {json.dumps({'type':'error','msg':item['msg']}, ensure_ascii=False)}\n\n"
+                    break
+                result = item["data"]
+                result["type"] = "complete"
+                yield f"data: {json.dumps(result, ensure_ascii=False)}\n\n"
                 break
-            result = item["data"]
-            result["type"] = "complete"
-            yield f"data: {json.dumps(result, ensure_ascii=False)}\n\n"
-            break
-        await task
+        finally:
+            if not task.done():
+                cancel_event.set()
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
 
 @app.get("/api/scenarios/{scenario_id}")
 async def get_scenario(scenario_id: str, username: str = "default"):
@@ -720,6 +788,7 @@ async def upload_knowledge(
     from backend.scenario_importer import extract_text
     from backend.document_pipeline import run_document_pipeline
     from backend.document_pipeline.image_processor import auto_register_media_images
+    from backend.document_pipeline.types import DocumentPipelineCancelled
 
     data = await file.read()
     if len(data) > 30 * 1024 * 1024:
@@ -785,12 +854,29 @@ async def _run_knowledge_upload_task(
     from backend.scenario_importer import extract_text
     from backend.document_pipeline import run_document_pipeline
     from backend.document_pipeline.image_processor import auto_register_media_images
+    from backend.document_pipeline.types import DocumentPipelineCancelled
+
+    def _cancelled() -> bool:
+        return is_cancel_requested(task_id)
+
+    def _mark_cancelled(message: str = "已取消") -> None:
+        task_manager.update(task_id, status="cancelled", phase="cancelled", message=message)
+
+    if _cancelled():
+        _mark_cancelled()
+        return
 
     task_manager.update(task_id, status="running", phase="prepare", message="读取文件与旧逻辑回退文本")
     try:
         fallback_content = await asyncio.to_thread(extract_text, filename, data)
+    except TaskCancelled:
+        _mark_cancelled("读取阶段已取消")
+        return
     except Exception as e:
         task_manager.update(task_id, status="failed", phase="prepare", error=str(e))
+        return
+    if _cancelled():
+        _mark_cancelled("读取完成后已取消")
         return
 
     doc_id = uuid.uuid4().hex[:16]
@@ -803,25 +889,45 @@ async def _run_knowledge_upload_task(
             data, filename, doc_id=doc_id, username=username,
             max_ocr_pages=max_ocr_pages, ocr_enabled=ocr_enabled,
             progress_callback=cb, splitter=splitter, region_fusion=region_fusion,
+            cancel_callback=lambda: is_cancel_requested(task_id),
         )
+        if _cancelled():
+            _mark_cancelled("识别切分阶段已取消")
+            return
         content = result.cleaned_text or fallback_content
         parents = result.parent_chunks
         children = result.child_chunks
         images = result.images
         tables = result.tables
         try:
+            if _cancelled():
+                _mark_cancelled("图片注册前已取消")
+                return
             await asyncio.to_thread(auto_register_media_images, username, scenario_id, images, system=system)
+        except TaskCancelled:
+            _mark_cancelled("图片注册阶段已取消")
+            return
         except Exception:
             pass
         pipeline_meta = result.metadata
         warning = ""
+    except (TaskCancelled, DocumentPipelineCancelled):
+        _mark_cancelled("识别切分阶段已取消")
+        return
     except Exception as e:
+        if _cancelled():
+            _mark_cancelled("识别切分阶段已取消")
+            return
         # 管线失败时回退旧逻辑，保证上传可用
         content = fallback_content
         parents = children = images = tables = None
         pipeline_meta = None
         warning = str(e)
         task_manager.update(task_id, status="running", phase="fallback", message=f"管线失败，使用旧文本回退：{warning}")
+
+    if _cancelled():
+        _mark_cancelled("写入知识库前已取消")
+        return
 
     task_manager.update(task_id, status="running", phase="store", message="写入知识库")
     try:
@@ -841,6 +947,16 @@ async def _run_knowledge_upload_task(
             doc_id=doc_id,
             scenario_id=scenario_id,
         )
+        if _cancelled():
+            try:
+                kb.remove_document(doc["id"], username)
+            except Exception:
+                pass
+            _mark_cancelled("写入后取消，已回滚知识库条目")
+            return
+    except TaskCancelled:
+        _mark_cancelled("写入知识库阶段已取消")
+        return
     except Exception as e:
         task_manager.update(task_id, status="failed", phase="store", error=str(e))
         return
@@ -849,6 +965,9 @@ async def _run_knowledge_upload_task(
         try:
             from backend.vector_store import add_document_vectors, pgvector_enabled
             if pgvector_enabled():
+                if _cancelled():
+                    _mark_cancelled("pgvector 写入前已取消")
+                    return
                 await add_document_vectors(doc_id, [
                     {
                         "chunk_id": getattr(c, "id", str(i)),
@@ -857,9 +976,16 @@ async def _run_knowledge_upload_task(
                     }
                     for i, c in enumerate(children)
                 ])
+        except TaskCancelled:
+            _mark_cancelled("pgvector 写入阶段已取消")
+            return
         except Exception as e:
             task_manager.update(task_id, status="running", phase="store",
                                 message=f"pgvector 写入失败（已忽略）：{e}")
+
+    if _cancelled():
+        _mark_cancelled("完成前已取消")
+        return
 
     task_manager.update(
         task_id,
@@ -868,7 +994,6 @@ async def _run_knowledge_upload_task(
         message="上传完成",
         result={"doc": doc, "pipeline": pipeline_meta, "warning": warning or None},
     )
-
 
 @app.post("/api/tasks/upload-document")
 async def create_upload_document_task(

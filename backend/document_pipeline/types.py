@@ -11,6 +11,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class DocumentPipelineCancelled(Exception):
+    """文档管线被外部取消（例如前端点击取消）。"""
+
+
 @dataclass
 class TextBlock:
     text: str

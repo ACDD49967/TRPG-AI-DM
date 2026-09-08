@@ -22,7 +22,9 @@ from backend.document_pipeline.pdf_extractor import extract_pdf
 from backend.document_pipeline.recursive_splitter import build_parent_child_chunks
 from backend.document_pipeline.table_merger import merge_cross_page_tables
 from backend.document_pipeline.table_semantic import semanticize_pages
-from backend.document_pipeline.types import DocumentPage, DocumentResult
+from backend.document_pipeline.types import (
+    DocumentPage, DocumentPipelineCancelled, DocumentResult,
+)
 
 
 def _detect_doc_type(filename: str, data: bytes, magic: str) -> str:
@@ -62,14 +64,24 @@ def run_document_pipeline(
     ocr_enabled: bool = True,
     splitter: str = "recursive",
     region_fusion: bool | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> DocumentResult:
-    """执行完整文档管线。"""
+    """执行完整文档管线。
+
+    cancel_callback 返回 True 时，在阶段边界抛出 DocumentPipelineCancelled，
+    让前端取消能够中断长文档处理。
+    """
+    def _check_cancel() -> None:
+        if cancel_callback is not None and cancel_callback():
+            raise DocumentPipelineCancelled("文档管线已取消")
+
     magic = (data or b"")[:8]
     doc_type = _detect_doc_type(filename, data, magic)
     pages = []
     warnings: list[str] = []
     images = []
 
+    _check_cancel()
     if doc_type == "pdf":
         pages = extract_pdf(data, filename, progress_callback=progress_callback,
                             ocr_first_page=ocr_first_page, ocr_last_page=ocr_last_page,
@@ -92,23 +104,28 @@ def run_document_pipeline(
         if not pages:
             warnings.append(f"无法提取 {filename} 的文本")
 
+    _check_cancel()
     try:
         pages = clean_pages(pages)
     except Exception as e:
         warnings.append(f"清洗失败: {e}")
+    _check_cancel()
     try:
         pages = merge_annotations(pages)
     except Exception as e:
         warnings.append(f"注释合并失败: {e}")
+    _check_cancel()
     try:
         pages = merge_cross_page_tables(pages)
     except Exception as e:
         warnings.append(f"跨页表格合并失败: {e}")
+    _check_cancel()
     try:
         semanticize_pages(pages)
     except Exception as e:
         warnings.append(f"表格语义化失败: {e}")
 
+    _check_cancel()
     result = DocumentResult(
         source=filename or "",
         title=Path(filename or "未命名").stem,
@@ -120,6 +137,7 @@ def run_document_pipeline(
     )
     result.tables = [t for p in pages for t in p.tables]
 
+    _check_cancel()
     parent_chunks, child_chunks = build_parent_child_chunks(
         result, doc_id or "doc",
         parent_max_chars=parent_max_chars,

@@ -20,6 +20,10 @@ from typing import Any
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
 
+class TaskCancelled(Exception):
+    """任务被前端取消时，由进度回调抛出，供具体任务实现中断。"""
+
+
 @dataclass
 class Task:
     id: str
@@ -123,8 +127,15 @@ task_manager = TaskManager()
 
 
 def task_progress_callback(task_id: str, phase: str = ""):
-    """构造一个同步 progress_callback，供文档管线/model 下载使用。"""
+    """构造一个同步 progress_callback，供文档管线/model 下载使用。
+
+    每次进度回调都会检查取消标志；已取消时抛出 TaskCancelled，
+    让在线程中执行的同步管线立即中断。
+    """
     def cb(current: int, total: int, detail: str | None = None) -> None:
+        task = task_manager.get(task_id)
+        if task is not None and task.cancel_requested:
+            raise TaskCancelled(f"任务 {task_id} 已取消")
         task_manager.update(
             task_id,
             status="running",
@@ -134,6 +145,11 @@ def task_progress_callback(task_id: str, phase: str = ""):
             message=detail or f"{phase} {current}/{total}",
         )
     return cb
+
+
+def is_cancel_requested(task_id: str) -> bool:
+    task = task_manager.get(task_id)
+    return bool(task and task.cancel_requested)
 
 
 def make_task_event_text(task: Task) -> str:

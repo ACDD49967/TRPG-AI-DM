@@ -73,6 +73,7 @@ media/*
 
 # 临时/下载数据
 data/
+memory_vault/
 _backend_launch.bat
 _frontend_launch.bat
 

@@ -9,7 +9,7 @@
 - **DM 与玩家信息隔离**：NPC/地点/剧情旗标通过 `discovered` / `visible` 控制，后台信息只进 DM 上下文，玩家仅看到已发现内容。
 - **类知识图谱**：角色/地点/生物/剧情组织成节点与关系，支持亲密度、置信度、局部子图查询、向量检索与前端可视化。
 - **ReAct 稳健性**：工具调用失败时会把错误回传给 DM 修正，而不是直接中断；同会话行动串行化，避免并发状态损坏。
-- **多专业子 Agent 并发委派**：规则裁决、战斗战术、场景事实、剧情连续性、关系图谱由专业子 Agent 并行分析，主 DM 只收专家简报，专注角色扮演、故事生成与世界操控；行动建议由后台子 Agent 强制生成。
+- **主 DM 分配任务 + 子 Agent 调用工具**：主 DM 负责判断本回合需要哪些专业能力，规则裁决、战斗战术、场景事实、剧情连续性、关系图谱由专业子 Agent 并行执行；每个子 Agent 按技能包的 `allowed-tools` 调用工具并返回简报，主 DM 专注角色扮演、故事生成与世界操控；行动建议由后台子 Agent 强制生成。
 - **RAG 混合检索**：本地稠密向量 + TF-IDF + BM25 三路融合，零外部 embedding 成本；可选 BGE-M3 稠密+稀疏、BGE-reranker 重排与 pgvector 持久化。
 
 ## 功能概览
@@ -19,6 +19,7 @@
 - 内置免费经典剧本，支持 PDF、TXT、DOCX、DOC、MD 与扫描图片导入
 - 统一文档管线：页级解析、OCR（PaddleOCR）、跨页表格合并、页眉页脚清洗、注释合并、图片提取与自动图鉴载入
 - 文本自动切分：快速切分、递归父子块切分（15% overlap）、语义切分、LLM 智能切分
+- 识别/切分/载入异步执行：知识库上传走任务中心 + SSE 进度，前端可随时取消；剧本导入与知识库使用同一套递归父子块切分
 - 剧本原件绑定到该剧本知识库（父子块/图片/表格同源存储），修订剧本仍作为使用剧本
 - 根据描述生成完整世界大纲（世界观、主线、NPC、遭遇、规则），SSE 实时显示 LLM 输出
 - 自建剧本时选择剧本规则系统（角色系统自动跟随）；导入剧本时后端自动识别规则系统
@@ -37,11 +38,13 @@
 - Function Calling 工具化处理：检定、战斗、死亡豁免、休息、状态更新、世界状态、信息揭示、场景更新
 - 低 token 工具：角色状态、职业资源、施法、习得/遗忘法术、NPC 查询/调整、生物图鉴查询/调整
 - ReAct 工具纠错：工具参数错误或执行失败会回传 DM，DM 接受报错并修改
-- 多专业子 Agent 并发委派：规则裁决、战斗战术、场景事实、剧情连续性、关系图谱按模块并行分析，主 DM 只读专家简报；行动建议由后台子 Agent 强制生成
+- 主 DM 任务分配 + 子 Agent 工具执行：主 DM 负责选择任务，专业子 Agent 按 `SKILL.md` 的 `allowed-tools` 调用工具并返回简报，推理与工具选择对玩家隐藏；行动建议由后台子 Agent 强制生成
+- AI 技能包标准化：每个技能是一个 `SKILL.md`（YAML Frontmatter + Markdown 指令正文），规则系统与专业子 Agent 能力均按需加载
 - 战斗系统：多敌人独立单位、敌人回合 `enemy_attack`、同回合每敌人最多结算一次、被绑/昏迷/濒死敌人不会机械反杀、前端多敌人战斗面板与战斗记录
 - 动态世界增删改：NPC/地点/旗标/世界规则可新增、更新、删除；`update_npc`/地点/旗标只覆写显式字段，删除时同步清理笔记与关系
 - 开场与流式输出：开场白禁用思考保证稳定正文，流式叙事过滤“系统工具/我来结算”等幕后台词，避免破坏沉浸感
-- 记忆系统：短期轮次 + 自动摘要 + 长期记忆；大事件、暗线、人物影响结构化记忆
+- 长期记忆：EverOS 风格 Markdown 记忆库（index/daily/episodic/semantic/procedural/thread/reflection）+ SQLite 多因子检索索引，支持合并、衰减与遗忘
+- 短期记忆：LangGraph 装配图负责最近轮次、实体抽取、长期记忆检索与上下文装配；记忆检索子 Agent 通过 `search_memory` 工具按需取用
 - 后台剧情推进：玩家视线之外的世界持续发展，深度模式每 3 轮、精简模式每 5 轮触发一次
 - 知识图谱子 AGENT：DM 识别到关系变化时调用，子 AGENT 从文本中识别实体关系并更新，结果/错误回传 DM
 
@@ -118,15 +121,18 @@ TRPG-AI-DM/
 │   ├── local_vector_store.py   # 内置 SQLite 向量持久化
 │   ├── vector_store.py         # pgvector 可选向量层
 │   ├── task_center.py          # 长任务中心 + SSE 进度
+│   ├── long_term_memory.py     # EverOS 风格 Markdown 长期记忆库 + SQLite 检索索引
 │   ├── save_manager.py         # 存档管理
 │   ├── character_card_manager.py # 角色卡管理（不绑定剧本）
 │   ├── media_manager.py        # 地图 / 图鉴 / 图片
 │   ├── classic_scenarios.py    # 免费经典剧本
 │   ├── document_pipeline/      # 统一文档管线（PDF/OCR/表格/图片/父子块）
+│   ├── skills/                 # AI 技能包（SKILL.md：YAML Frontmatter + Markdown 指令）
 │   └── engine/
 │       ├── dm_agent.py         # AI 主持核心 + ReAct + 工具
 │       ├── dm_modules.py       # 模块化调度（LangGraph）
 │       ├── focused_subagents.py # 多专业子 Agent 并发委派与简报聚合
+│       ├── short_term_memory.py # LangGraph 短期记忆装配图
 │       ├── world_builder.py    # 多步世界生成 + LangGraph 提取
 │       ├── knowledge_graph.py  # 知识图谱构建/局部子图/向量检索
 │       ├── graph_agent.py      # 知识图谱子 AGENT（文本识别更新）

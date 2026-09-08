@@ -323,6 +323,15 @@ GET_GRAPH_PATH_TOOL = _tool("get_graph_path",
      "max_depth": {"type": "integer", "minimum": 1, "maximum": 6, "description": "最大深度，默认4"}},
     ["source", "target"])
 
+SEARCH_MEMORY_TOOL = _tool("search_memory",
+    "检索 EverOS 长期记忆库（episodic/semantic/procedural/thread/reflection）。返回按相关度排序的记忆条目，用于确认跨会话事实、暗线、玩家偏好与历史抉择。",
+    {"query": {"type": "string", "description": "检索关键词或自然语言问题"},
+     "memory_types": {"type": "array", "items": {"type": "string",
+                                                  "enum": ["episodic", "semantic", "procedural", "thread", "reflection"]},
+                      "description": "可选，限定记忆类型"},
+     "top_k": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回条数，默认5"}},
+    ["query"])
+
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL, ENEMY_ATTACK_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, EQUIP_ITEM_TOOL, ADD_MEMORY_TOOL, RECORD_PLOT_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
@@ -335,4 +344,5 @@ DM_TOOLS = [
     LEARN_SPELL_TOOL, FORGET_SPELL_TOOL, SEARCH_NPC_TOOL, ADJUST_NPC_TOOL,
     ADJUST_BESTIARY_TOOL, PROMOTE_NPC_TOOL, GET_BESTIARY_CARD_TOOL, GET_LOCATION_CARD_TOOL,
     GET_ENTITY_GRAPH_TOOL, UPDATE_KNOWLEDGE_GRAPH_TOOL, GET_GRAPH_PATH_TOOL,
+    SEARCH_MEMORY_TOOL,
 ]

@@ -11,9 +11,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
-from backend.engine.prompt_guard import sanitize_user_text
+from backend.engine.prompt_guard import extract_json_object, sanitize_user_text
+from backend.engine.tools import DM_TOOLS
+from backend.skills import get_agent_skill
 
 
 # ── 基础调用 ────────────────────────────────────────────────
@@ -103,7 +106,267 @@ async def run_parallel_subagents(
     return out
 
 
+# ── 可调用工具的子 Agent（DeepSeek harness 风格）────────────────
+
+def _allowed_tool_schemas(pack: Any) -> list[dict]:
+    """按 SKILL.md 的 allowed-tools 元数据过滤该子 Agent 可用的工具。"""
+    allowed = pack.metadata.get("allowed-tools") or []
+    if isinstance(allowed, str):
+        allowed = [x.strip() for x in allowed.split(",") if x.strip()]
+    allowed_set = {str(x).strip() for x in allowed if str(x).strip()}
+    if not allowed_set:
+        return []
+    return [
+        t for t in DM_TOOLS
+        if str(t.get("function", {}).get("name", "")) in allowed_set
+    ]
+
+
+async def run_tool_subagent(
+    client: Any,
+    model: str,
+    task: dict,
+    state: Any,
+    max_iterations: int = 4,
+    timeout: float = 60,
+) -> str:
+    """运行一个带工具权限的专业子 Agent，返回给主 DM 的简报。
+
+    - 技能包 `allowed-tools` 决定该子 Agent 能调用哪些工具；
+    - 工具调用结果由子 Agent 自行总结成简报，玩家只看到工具本身推送的事件；
+    - 子 Agent 的推理、工具选择和简报都不直接展示给玩家。
+    """
+    skill_name = str(task.get("skill") or "")
+    pack = get_agent_skill(skill_name) if skill_name else None
+    if pack is None:
+        return await run_focused_agent(
+            client, model,
+            role=str(task.get("role") or "专业子Agent"),
+            task=str(task.get("task") or ""),
+            context=str(task.get("context") or ""),
+            max_tokens=600,
+            temperature=0.1,
+            timeout=timeout,
+        )
+
+    tools = _allowed_tool_schemas(pack)
+    system_prompt = (
+        f"你是专业子Agent：{pack.name}。\n"
+        f"技能说明：{pack.description}\n\n"
+        f"{pack.content}\n\n"
+        "你可以调用提供的工具来完成任务；工具执行结果会以内部观察返回给你。"
+        "你的最终输出是给主 DM 的结论简报：只写事实、已执行的工具、关键数值与结果，"
+        "不要写玩家可见的叙事正文，不要提及子Agent/后台/简报，不要泄露隐藏信息给玩家。"
+    )
+    user_prompt = (
+        "请按系统说明完成本轮专业任务，并输出给主 DM 的结论简报。\n\n"
+        f"本轮上下文：\n{sanitize_user_text(str(task.get('context') or ''))[:9000]}"
+    )
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    observations: list[str] = []
+
+    async def _run() -> str:
+        from backend.engine.dm_agent import execute_tool
+
+        for _ in range(max_iterations):
+            kwargs: dict[str, Any] = dict(
+                model=model,
+                messages=messages,
+                max_tokens=900,
+                temperature=0.1,
+                extra_body={"thinking": {"type": "disabled"}},
+            )
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+            resp = await client.chat.completions.create(**kwargs)
+            msg = resp.choices[0].message
+            tool_calls = getattr(msg, "tool_calls", None) or []
+            if not tool_calls:
+                content = str(msg.content or "").strip()
+                if content:
+                    return content
+                break
+
+            messages.append({
+                "role": "assistant",
+                "content": msg.content or None,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments or "{}",
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            })
+            for tc in tool_calls[:4]:
+                name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except Exception:
+                    args = {}
+                try:
+                    result = await execute_tool(name, args, state)
+                except Exception as e:  # 工具失败回传给子 Agent，让它自行调整
+                    result = f"[工具执行失败] {type(e).__name__}: {e}"
+                observations.append(f"{name}: {result}")
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                })
+        return "\n".join(observations) or "[子Agent未返回结论]"
+
+    try:
+        return await asyncio.wait_for(_run(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return "[子Agent超时]"
+    except Exception as e:
+        return f"[子Agent失败] {type(e).__name__}: {e}"
+
+
+async def run_tool_subagents(
+    client: Any,
+    model: str,
+    tasks: list[dict],
+    state: Any,
+    max_concurrency: int = 4,
+    timeout: float = 60,
+) -> dict[str, str]:
+    """并发运行一组可调用工具的专业子 Agent，按 task key 返回简报。"""
+    sem = asyncio.Semaphore(max(1, int(max_concurrency)))
+
+    async def _one(task: dict) -> tuple[str, str]:
+        key = str(task.get("key", ""))
+        async with sem:
+            try:
+                value = await run_tool_subagent(client, model, task, state, timeout=timeout)
+            except Exception as e:  # pragma: no cover - 保险
+                value = f"[子Agent失败] {type(e).__name__}: {e}"
+        return key, value
+
+    raw = await asyncio.gather(*(_one(t) for t in tasks), return_exceptions=True)
+    out: dict[str, str] = {}
+    for item in raw:
+        if isinstance(item, tuple) and len(item) == 2:
+            out[str(item[0])] = str(item[1] or "")
+    return out
+
+
+async def plan_task_keys(
+    client: Any,
+    model: str,
+    player_input: str,
+    module: str,
+    candidate_tasks: list[dict],
+    lite: bool = False,
+    timeout: float = 20,
+) -> list[str]:
+    """让主 DM 担任任务分配器，从候选专业子 Agent 中选择本回合要运行的技能。
+
+    失败/解析异常时回退为全部候选任务，保证主流程不中断。
+    """
+    keys = [str(t.get("key", "")) for t in candidate_tasks if t.get("key")]
+    if lite or len(keys) <= 1:
+        return keys
+
+    catalog: list[str] = []
+    for task in candidate_tasks:
+        key = str(task.get("key", ""))
+        pack = get_agent_skill(str(task.get("skill") or ""))
+        desc = pack.description if pack is not None else str(task.get("role") or "")
+        catalog.append(f"- {key}: {desc[:140]}")
+
+    prompt = (
+        "你是 DM 主 Agent 的任务分配器。根据玩家行动，从候选专业子Agent中选择本回合需要运行的子Agent。\n"
+        "候选：\n" + "\n".join(catalog) + "\n\n"
+        "输出 JSON：{\"tasks\":[\"key1\",\"key2\"]}\n"
+        "规则：\n"
+        "- 只选真正需要的，1-" + str(len(keys)) + " 个；\n"
+        "- 必须包含能完成玩家行动结算的规则/战斗子Agent；\n"
+        "- 不确定时全选；\n"
+        "- 只输出 JSON，不要解释。\n\n"
+        f"玩家行动：{player_input}\n"
+        f"当前模块：{module}"
+    )
+    try:
+        resp = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "你是任务分配器，只输出合法 JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=200,
+                temperature=0.1,
+                extra_body={"thinking": {"type": "disabled"}},
+            ),
+            timeout=timeout,
+        )
+        content = str(resp.choices[0].message.content or "")
+        data = extract_json_object(content)
+        selected = data.get("tasks") or data.get("keys") or []
+        if isinstance(selected, str):
+            selected = [selected]
+        valid = {k for k in keys}
+        picked: list[str] = []
+        for item in selected if isinstance(selected, list) else []:
+            k = str(item)
+            if k in valid and k not in picked:
+                picked.append(k)
+        if picked:
+            return picked
+    except Exception as e:
+        print(f"[DMPlanner] 任务分配失败，回退全部候选: {e}")
+    return keys
+
+
 # ── 专业子 Agent 任务编排 ─────────────────────────────────────
+
+_SKILL_FOR_TASK_KEY = {
+    "rules": "rules-advisor",
+    "combat": "combat-tactics",
+    "world": "world-scene",
+    "memory": "memory-continuity",
+    "graph": "graph-advisor",
+}
+
+
+def get_skill_instruction(name: str, fallback: str = "") -> str:
+    """按需加载一个 SKILL.md 技能包正文；缺失时回退调用方默认说明。"""
+    pack = get_agent_skill(name)
+    if pack is not None and pack.content.strip():
+        return pack.content.strip()
+    return fallback
+
+
+def _apply_skill_packs(tasks: list[dict], module: str) -> list[dict]:
+    """用 SKILL.md 技能包覆盖子 Agent 的 role/task，保留 Python 侧兜底文本。"""
+    for task in tasks:
+        key = str(task.get("key", ""))
+        skill_name = _SKILL_FOR_TASK_KEY.get(key)
+        if key == "rules" and module == "combat":
+            skill_name = "combat-rules-advisor"
+        if not skill_name:
+            continue
+        pack = get_agent_skill(skill_name)
+        if pack is None:
+            continue
+        role = str(pack.metadata.get("role") or "").strip()
+        if role:
+            task["role"] = role
+        task["skill"] = skill_name
+        if pack.content.strip():
+            task["task"] = pack.content.strip()
+    return tasks
+
 
 def _retrieved_text(retrieved: list) -> str:
     lines = []
@@ -190,7 +453,7 @@ def build_dm_brief_tasks(
                 "context": memory_ctx, "max_tokens": 400, "temperature": 0.1, "timeout": 20,
             },
         ])
-        return tasks
+        return _apply_skill_packs(tasks, module)
 
     if module == "rules":
         tasks.extend([
@@ -323,7 +586,7 @@ def build_dm_brief_tasks(
                 "context": graph_ctx, "max_tokens": 350, "temperature": 0.15, "timeout": 25,
             },
         ])
-    return tasks
+    return _apply_skill_packs(tasks, module)
 
 
 _SECTION_TITLES = {
@@ -341,7 +604,7 @@ def format_dm_brief(results: dict[str, str]) -> str:
     parts: list[str] = []
     for key in order:
         value = str(results.get(key, "") or "").strip()
-        if not value or value.startswith("[子Agent失败]"):
+        if not value or value.startswith(("[子Agent失败]", "[子Agent超时]")):
             continue
         title = _SECTION_TITLES.get(key, key)
         parts.append(f"### {title}\n{value[:900]}")

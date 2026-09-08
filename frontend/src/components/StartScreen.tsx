@@ -1,6 +1,6 @@
 /** 角色创建 —— localStorage持久化 + URL配置 + 技能熟练 + 特长 */
 
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { useToastStore } from '../store/toastStore';
 import RulebookModal from './RulebookModal';
@@ -215,6 +215,7 @@ export default function StartScreen(){
   const [importLive,setImportLive]=useState('');
   const [importErr,setImportErr]=useState('');
   const [importFileName,setImportFileName]=useState('');
+  const importAbortRef=useRef<AbortController|null>(null);
 
   // 知识库
   const [kbDocs,setKbDocs]=useState<Array<{id:string;title:string;source:string;system:string;tags:string[];chunk_count:number;created_at:string}>>([]);
@@ -227,6 +228,9 @@ export default function StartScreen(){
   const [kbErr,setKbErr]=useState('');
   const [kbUploadFile,setKbUploadFile]=useState<File|null>(null);
   const [kbProgress,setKbProgress]=useState<{phase:string;message:string;progress:number;current:number;total:number}|null>(null);
+  const kbEsRef=useRef<EventSource|null>(null);
+  const kbStopRef=useRef<(()=>void)|null>(null);
+  const kbTaskIdRef=useRef('');
 
   // 扩展包与存档
   const [extList,setExtList]=useState<Array<{id:string;name:string;description:string;system:string;tags:string[];source:string;created_at:string}>>([]);
@@ -660,6 +664,8 @@ export default function StartScreen(){
   };
 
   const importScenario=async(file:File)=>{
+    const ac=new AbortController();
+    importAbortRef.current=ac;
     setImportBusy(true);setImportErr('');setImportFileName(file.name);setImportLive('');
     setImportProgress(2);
     try{
@@ -678,7 +684,7 @@ export default function StartScreen(){
       fd.append('model_name',modelName||'');
       fd.append('base_url',baseUrl||'');
       fd.append('thinking_strength',thinkingStrength);
-      const r=await fetch('/api/scenarios/import',{method:'POST',body:fd});
+      const r=await fetch('/api/scenarios/import',{method:'POST',body:fd,signal:ac.signal});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'导入失败');}
       const reader=r.body?.getReader();
       const decoder=new TextDecoder();
@@ -728,11 +734,22 @@ export default function StartScreen(){
       }
       fetch(`/api/scenarios?username=${encodeURIComponent(username||'default')}`).then(r=>r.json()).then(d=>setSavedScenarios(d.scenarios||[])).catch(()=>{});
       loadKb();
-    }catch(e:unknown){setImportErr(e instanceof Error?e.message:'导入失败');}
+    }catch(e:unknown){
+      if(e instanceof DOMException && e.name==='AbortError'){setImportErr('已取消');}
+      else{setImportErr(e instanceof Error?e.message:'导入失败');}
+    }
     finally{
+      if(importAbortRef.current===ac) importAbortRef.current=null;
       window.setTimeout(()=>setImportProgress(0), 800);
       setImportBusy(false);
     }
+  };
+
+  const cancelImport=()=>{
+    importAbortRef.current?.abort();
+    setImportErr('已取消');
+    setImportBusy(false);
+    setImportProgress(0);
   };
 
   const loadKb=async()=>{
@@ -774,23 +791,50 @@ export default function StartScreen(){
       fd.append('splitter',splitter);
       const r=await fetch('/api/tasks/upload-document',{method:'POST',body:fd});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||'上传失败');}
-      const d=await r.json() as {events_url:string};
+      const d=await r.json() as {events_url:string;task_id?:string};
+      kbTaskIdRef.current=d.task_id||'';
       await new Promise<void>((resolve,reject)=>{
+        let settled=false;
         const es=new EventSource(d.events_url);
+        kbEsRef.current=es;
+        const finish=(err?:Error)=>{
+          if(settled)return;
+          settled=true;
+          es.close();
+          kbEsRef.current=null;
+          kbStopRef.current=null;
+          if(err)reject(err);else resolve();
+        };
+        kbStopRef.current=()=>finish();
         es.onmessage=(ev)=>{
           try{
             const t=JSON.parse(ev.data) as {phase:string;message:string;progress:number;current:number;total:number;status:string;error?:string};
             setKbProgress({phase:t.phase,message:t.message,progress:t.progress,current:t.current,total:t.total});
-            if(t.status==='completed'){es.close();resolve();}
-            else if(t.status==='failed'||t.status==='cancelled'){es.close();reject(new Error(t.error||'上传失败'));}
+            if(t.status==='completed'){finish();}
+            else if(t.status==='cancelled'){setKbErr('已取消');finish();}
+            else if(t.status==='failed'){finish(new Error(t.error||'上传失败'));}
           }catch{/* event type 与 data 分隔时忽略 */}
         };
-        es.onerror=()=>{es.close();reject(new Error('进度连接中断'));};
+        es.onerror=()=>finish(new Error('进度连接中断'));
       });
       setKbTitle('');setKbTags('');setKbUploadFile(null);
       await loadKb();
     }catch(e:unknown){setKbErr(e instanceof Error?e.message:'上传失败');}
-    finally{setKbBusy(false);setKbProgress(null);}
+    finally{
+      kbEsRef.current=null;
+      kbStopRef.current=null;
+      kbTaskIdRef.current='';
+      setKbBusy(false);setKbProgress(null);
+    }
+  };
+
+  const cancelKbUpload=async()=>{
+    const tid=kbTaskIdRef.current;
+    if(tid){try{await fetch(`/api/tasks/${tid}/cancel`,{method:'POST'});}catch{/* 忽略 */}}
+    kbStopRef.current?.();
+    setKbBusy(false);
+    setKbProgress(null);
+    setKbErr('已取消');
   };
 
   const deleteKb=async(id:string)=>{
@@ -1263,7 +1307,7 @@ export default function StartScreen(){
               <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-3 border border-gray-200">
                 {characterImage?<img src={characterImage} alt="角色" className="w-16 h-16 object-cover rounded-lg border border-gray-300" />:<div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center text-[9px] text-gray-400">暂无头像</div>}
                 <div className="flex-1">
-                  <label className="block text-[10px] text-gray-500 mb-1">角色图片（可自定义）</label>
+                  <label className="block text-[10px] text-gray-500 mb-1">角色图片</label>
                   <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>{const f=e.target.files?.[0]; if(f)uploadCharacterImage(f);}} className="block w-full text-xs" />
                   {mediaErr&&<p className="text-red-500 text-[10px] mt-1">{mediaErr}</p>}
                 </div>
@@ -1611,7 +1655,7 @@ export default function StartScreen(){
 
               {/* 自行填写背景（所有规则系统通用） */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">角色背景（可选，可自行填写）</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">角色背景</label>
                 <textarea value={backstoryText} onChange={e=>setBackstoryText(e.target.value)} placeholder="在这里直接写下你的角色过往；也可以留空并使用上方 AI 生成" rows={4} className="input-field resize-none" />
               </div>
 
@@ -1772,7 +1816,7 @@ export default function StartScreen(){
 
               {scenarioMode!=='existing'&&(
                 <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
-                  <p className="text-xs font-medium text-gray-700">剧本专属扩展（可选）</p>
+                  <p className="text-xs font-medium text-gray-700">剧本专属扩展</p>
                   <input value={customClassesText} onChange={e=>setCustomClassesText(e.target.value)} placeholder="专属职业/身份，逗号分隔，如：守夜人、符文工匠" className="input-field text-xs" />
                   <input value={customSkillsText} onChange={e=>setCustomSkillsText(e.target.value)} placeholder="专属技能，逗号分隔，如：符文解读、夜间追踪" className="input-field text-xs" />
                   <textarea value={extraAttributesText} onChange={e=>setExtraAttributesText(e.target.value)} placeholder="额外属性/规则特色，每行一个：名称:值" rows={2} className="input-field resize-none text-xs" />
@@ -1782,7 +1826,7 @@ export default function StartScreen(){
               {scenarioMode==='split'&&(
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">上传剧本文件（pdf / txt / docx / doc / md）</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">上传剧本文件</label>
                   <input
                     type="file"
                     accept=".txt,.md,.markdown,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp"
@@ -1799,9 +1843,10 @@ export default function StartScreen(){
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">切分方式</label>
-                    <select value={splitter} onChange={e=>setSplitter(e.target.value as 'semantic'|'llm')} className="input-field">
-                      <option value="semantic">语义切分（更连贯）</option>
-                      <option value="llm">LLM 智能切分（更准确）</option>
+                    <select value={splitter} onChange={e=>setSplitter(e.target.value as 'semantic'|'llm'|'recursive')} className="input-field">
+                      <option value="recursive">递归切分</option>
+                      <option value="semantic">语义切分</option>
+                      <option value="llm">LLM 切分</option>
                     </select>
                   </div>
                   <div>
@@ -1817,6 +1862,7 @@ export default function StartScreen(){
                       <div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{width:`${importProgress}%`}} />
                     </div>
                     <p className="text-[9px] text-gray-400 mt-0.5">{importProgress}%</p>
+                    <button onClick={cancelImport} className="mt-1 text-[10px] px-2 py-1 rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100">取消导入</button>
                     {importLive && <pre className="text-[9px] text-gray-500 bg-white rounded p-2 mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap">{importLive}</pre>}
                   </div>
                 )}
@@ -1855,7 +1901,7 @@ export default function StartScreen(){
                   )}
                   {scenarioSummary&&(
                     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-                      <p className="text-[10px] text-emerald-700 font-medium mb-1">剧本总结（约400字）</p>
+                      <p className="text-[10px] text-emerald-700 font-medium mb-1">剧本总结</p>
                       <p className="text-xs text-gray-700 leading-relaxed">{scenarioSummary}</p>
                     </div>
                   )}
@@ -1866,18 +1912,18 @@ export default function StartScreen(){
                   </div>
                   {scenarioId ? (
                     <div className="space-y-2">
-                      <label className="text-[10px] text-gray-500 font-medium">编辑剧本大纲（会保存到剧本）</label>
+                      <label className="text-[10px] text-gray-500 font-medium">编辑剧本大纲</label>
                       <textarea value={worldOutline} onChange={e=>setWorldOutline(e.target.value)} rows={8} className="input-field text-xs resize-y" />
                       <button onClick={()=>updateScenario()} className="text-[10px] px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">保存修改</button>
                     </div>
                   ) : (
                     <details className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                      <summary className="text-xs text-gray-500 cursor-pointer select-none">展开完整大纲（含剧透，仅供创建时确认）</summary>
+                      <summary className="text-xs text-gray-500 cursor-pointer select-none">展开完整大纲</summary>
                       <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed mt-2 max-h-64 overflow-y-auto">{worldOutline.slice(0,2500)}{worldOutline.length>2500?'...':''}</pre>
                     </details>
                   )}
                   {sourceChunks.length>0&&(
-                    <p className="text-[10px] text-gray-400">已切分为 {sourceChunks.length} 个片段 · 切分方式: {splitter==='llm'?'LLM 智能切分':'语义切分'}</p>
+                    <p className="text-[10px] text-gray-400">已切分为 {sourceChunks.length} 个片段 · 切分方式: {splitter==='llm'?'LLM 智能切分':splitter==='recursive'?'递归切分':'语义切分'}</p>
                   )}
                   {scenarioId&&<p className="text-[10px] text-gray-400">已保存 · 可在下次游戏时直接加载</p>}
                 </div>
@@ -1893,7 +1939,7 @@ export default function StartScreen(){
               <h2 className="text-lg font-bold text-gray-900">冒险准备</h2>
 
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">额外剧本（可选）</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">额外剧本</label>
                 <textarea value={scenarioText} onChange={e=>setScenarioText(e.target.value)} placeholder="粘贴自定义剧本..." rows={4} className="input-field resize-none" />
               </div>
 
@@ -2004,16 +2050,16 @@ export default function StartScreen(){
                   <div>
                     <label className="block text-[10px] text-gray-500 mb-1">切分方式</label>
                     <select value={splitter} onChange={e=>setSplitter(e.target.value as 'semantic'|'llm'|'recursive')} className="input-field text-xs">
-                      <option value="recursive">递归快速切分（不依赖LLM）</option>
-                      <option value="semantic">语义切分（更连贯）</option>
-                      <option value="llm">LLM 智能切分（更准确）</option>
+                      <option value="recursive">递归切分</option>
+                      <option value="semantic">语义切分</option>
+                      <option value="llm">LLM 切分</option>
                     </select>
                   </div>
                   {!bgeDownloaded && (
                     <div className="pt-1 border-t border-gray-200 space-y-1.5">
-                      <p className="text-[10px] font-medium text-gray-500">下载向量模型（可选，点击后下载）</p>
+                      <p className="text-[10px] font-medium text-gray-500">下载向量模型</p>
                       <button onClick={()=>downloadBge('embedding')} disabled={bgeBusy!==null} className="btn-secondary text-xs px-3 whitespace-nowrap">
-                        {bgeBusy==='embedding' ? '下载中...' : '下载 BGE-M3（稠密+稀疏，约2.2GB）'}
+                        {bgeBusy==='embedding' ? '下载中...' : '下载 BGE-M3'}
                       </button>
                       {bgeBusy==='embedding' && (
                         <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
@@ -2028,7 +2074,7 @@ export default function StartScreen(){
                   )}
                   {!bgeRerankerDownloaded && (
                     <div className="pt-1 border-t border-gray-200 space-y-1.5">
-                      <p className="text-[10px] font-medium text-gray-500">可选重排模型（增强检索精度）</p>
+                      <p className="text-[10px] font-medium text-gray-500">可选重排模型</p>
                       <button onClick={()=>downloadBge('reranker')} disabled={bgeBusy!==null} className="btn-secondary text-xs px-3 whitespace-nowrap">
                         {bgeBusy==='reranker' ? '下载中...' : '下载 BGE-Reranker-base'}
                       </button>
@@ -2052,6 +2098,7 @@ export default function StartScreen(){
                         {kbProgress.phase}：{kbProgress.message||'处理中'}
                         {kbProgress.total>0&&(` (${kbProgress.current}/${kbProgress.total})`)}
                       </p>
+                      {kbBusy&&<button onClick={cancelKbUpload} className="w-full py-1.5 bg-red-50 border border-red-200 text-red-600 rounded-lg text-[10px] font-medium hover:bg-red-100">取消上传</button>}
                     </div>
                   )}
                 </div>
@@ -2086,10 +2133,9 @@ export default function StartScreen(){
               <div className="bg-white rounded-lg p-3 border border-gray-200 space-y-2">
                 <p className="text-xs font-medium text-gray-700">向量检索模式</p>
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={()=>setVectorModeNow('local')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='local'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>基底（小模型/本地）</button>
-                  <button onClick={()=>setVectorModeNow('bge')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='bge'?'border-emerald-400 bg-emerald-50 text-emerald-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`} disabled={!bgeDownloaded}>BGE（替换）</button>
+                  <button onClick={()=>setVectorModeNow('local')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='local'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>基底</button>
+                  <button onClick={()=>setVectorModeNow('bge')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='bge'?'border-emerald-400 bg-emerald-50 text-emerald-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`} disabled={!bgeDownloaded}>BGE</button>
                 </div>
-                <p className="text-[10px] text-gray-400">默认使用轻量小模型作为固定基底（未安装时回退本地哈希）；下载 BGE 后自动切换为 BGE。</p>
               </div>
 
               {kbErr&&<p className="text-red-500 text-xs">{kbErr}</p>}
@@ -2153,7 +2199,7 @@ export default function StartScreen(){
 
               {/* 地图管理 */}
               <div className="border-t border-gray-200 pt-4 space-y-3">
-                <p className="text-xs font-bold text-gray-800">地区地图（可上传自定义地图）</p>
+                <p className="text-xs font-bold text-gray-800">地区地图</p>
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
                     <input value={mapName} onChange={e=>setMapName(e.target.value)} placeholder="地图名称" className="input-field text-xs" />
@@ -2179,7 +2225,7 @@ export default function StartScreen(){
 
               {/* 生物图鉴 */}
               <div className="border-t border-gray-200 pt-4 space-y-3">
-                <p className="text-xs font-bold text-gray-800">生物图鉴（可上传自定义生物图片）</p>
+                <p className="text-xs font-bold text-gray-800">生物图鉴</p>
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
                     <input value={beastName} onChange={e=>setBeastName(e.target.value)} placeholder="生物名称" className="input-field text-xs" />

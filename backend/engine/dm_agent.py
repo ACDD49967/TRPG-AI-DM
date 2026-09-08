@@ -71,8 +71,10 @@ from backend.engine.world_builder import _derive_npc_stats
 from backend.engine.world_state import WorldState, NpcEntry, PlotFlag, LocationEntry
 from backend.engine.game_systems import build_system_rule_block, build_stat_glossary, get_system
 from backend.engine.focused_subagents import (
-    build_dm_brief_tasks, format_dm_brief, run_parallel_subagents,
+    build_dm_brief_tasks, format_dm_brief, get_skill_instruction,
+    plan_task_keys, run_tool_subagents,
 )
+from backend.engine.short_term_memory import build_memory_context
 from backend.knowledge_base import get_knowledge_base
 from backend.save_manager import auto_save_if_needed
 from backend.skills import get_skill
@@ -865,7 +867,8 @@ def build_character_info(state: GameSessionState) -> str:
 
 def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None = None,
                          dispatch_plan: dict | None = None,
-                         subagent_brief: str = "") -> str:
+                         subagent_brief: str = "",
+                         memory_context_override: str | None = None) -> str:
     lite = _play_mode(state) == "lite"
     plan = dispatch_plan or {}
     focus_context = str(plan.get("focus_context", "") or "")
@@ -876,7 +879,10 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     char_info = build_character_info(state)
     # 记忆保护：focused 模块保留核心记忆（摘要/大事件/暗线/人物影响/世界事实），
     # 只去掉与 messages 重复的“最近发生的事”，避免剧情记忆缺失。
-    if not focused or module == "memory":
+    if memory_context_override is not None:
+        # 优先使用 LangGraph 短期记忆图 + EverOS 长期记忆检索的结果
+        mem = memory_context_override
+    elif not focused or module == "memory":
         mem = state.memory.build_context()
     else:
         mem = state.memory.build_essential_context()
@@ -941,6 +947,9 @@ def build_system_prompt(state: GameSessionState, retrieved_chunks: list | None =
     # 固定规则前缀：所有静态规则放在前面，动态上下文统一追加到末尾，
     # 这样同一会话/模式的 system prompt 前缀保持稳定，更容易命中 LLM prompt cache。
     sp = base_prompt
+    skill_instructions = getattr(skill, "instructions", "")
+    if skill_instructions:
+        sp += f"\n\n## 规则系统技能包（{skill.name}）\n{skill_instructions[:1200]}"
     if focused:
         # 模块化回合不需要完整 5e/4e/COC 决策检查表，用紧凑版替代
         sp += COMPACT_DM_DECISION_PROMPT
@@ -1098,6 +1107,7 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "roll_treasure": lambda a,s: "、".join(roll_treasure(int(a.get("cr",1)))),
         "npc_quirk": lambda a,s: npc_quirk(),
         "search_knowledge": lambda a,s: str(search_knowledge(a.get("query",""), _game_system(s), int(a.get("top_k",3)), s.username)),
+        "search_memory": _exec_search_memory,
         "search_bestiary": _exec_search_bestiary,
         "search_locations": _exec_search_locations,
         "search_spells": _exec_search_spells,
@@ -1119,9 +1129,20 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
     fn = handlers.get(name)
     if fn is None:
         return f"未知: {name}"
-    result = fn(args, state)
-    if asyncio.iscoroutine(result):
-        result = await result
+
+    async def _invoke():
+        result = fn(args, state)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return result
+
+    lock = getattr(state, "tool_lock", None)
+    if lock is None:
+        result = await _invoke()
+    else:
+        # 多个专业子 Agent 并发调用工具时，串行化状态变更，避免世界状态竞态
+        async with lock:
+            result = await _invoke()
     # 数据及时更新：世界/角色/图谱发生变化后立即推送冒险笔记
     try:
         ws = getattr(state, "world_state", None)
@@ -1430,9 +1451,17 @@ async def _exec_add_memory(args: dict, state: GameSessionState) -> str:
     if not fact:
         return "未记录（空内容）"
     state.memory.add_world_fact(fact)
+    ws = getattr(state, "world_state", None)
+    turn = ws.turn_count if ws is not None else 0
     try:
-        from backend.long_term_memory import store_fact
-        store_fact(state.username, fact)
+        from backend.long_term_memory import store_memory
+        store_memory(
+            state.username, fact,
+            memory_type="semantic",
+            importance=0.65, confidence=0.8,
+            session_id=state.session_id, turn=turn,
+            source="add_memory", tags=["world_fact"],
+        )
     except Exception:
         pass
     return f"已记录: {fact}"
@@ -1449,6 +1478,41 @@ def _as_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in ("1", "true", "yes", "y", "是", "真")
     return bool(value)
+
+
+async def _exec_search_memory(args: dict, state: GameSessionState) -> str:
+    """检索 EverOS 长期记忆库，返回可引用的记忆条目。"""
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return "⚠ 需要 query"
+    memory_types = [str(x) for x in (args.get("memory_types") or []) if str(x).strip()]
+    try:
+        top_k = max(1, min(10, int(args.get("top_k", 5) or 5)))
+    except (TypeError, ValueError):
+        top_k = 5
+    try:
+        from backend.long_term_memory import retrieve_memories
+        results = await asyncio.to_thread(
+            retrieve_memories,
+            state.username, query,
+            entities=[], memory_types=memory_types, top_k=top_k,
+        )
+    except Exception as e:
+        return f"❌ 长期记忆检索失败: {_safe_error_text(e)}"
+    if not results:
+        return "未找到相关长期记忆。"
+    lines = ["## 长期记忆检索结果（EverOS Markdown 记忆库）"]
+    for r in results:
+        text = str(r.get("summary") or r.get("content") or "")
+        if len(text) > 220:
+            text = text[:220] + "…"
+        lines.append(
+            f"- [{r.get('memory_type', 'semantic')} 重要度{r.get('importance', 0.5):.2f} "
+            f"相关度{r.get('score', 0):.2f}] {text}"
+        )
+        if r.get("vault_path"):
+            lines.append(f"  Markdown: {r['vault_path']}")
+    return "\n".join(lines)
 
 
 async def _exec_record_plot_memory(args: dict, state: GameSessionState) -> str:
@@ -1491,6 +1555,17 @@ async def _exec_record_plot_memory(args: dict, state: GameSessionState) -> str:
             return "未记录（缺少title）"
         state.memory.add_major_event(title=title, description=desc, impact=impact, turn=turn, npcs=npcs, locations=locs)
         update_relations(title, "plot_link")
+        try:
+            from backend.long_term_memory import store_memory
+            store_memory(
+                state.username, f"{title}: {desc} {impact}".strip(),
+                memory_type="episodic", summary=title,
+                entities=npcs + locs, tags=["major_event"],
+                importance=0.85, confidence=0.9,
+                session_id=state.session_id, turn=turn, source="record_plot_memory",
+            )
+        except Exception:
+            pass
         return f"已记录大事件: {title}"
     if kind == "hidden_thread":
         if not title:
@@ -1499,12 +1574,34 @@ async def _exec_record_plot_memory(args: dict, state: GameSessionState) -> str:
         if ws is not None:
             ws.set_flag(key=title, status=status, description=desc or title, consequence=impact, visible=visible)
             update_relations(title, "thread_link")
+        try:
+            from backend.long_term_memory import store_memory
+            store_memory(
+                state.username, f"{title} [{status}]: {desc} {impact}".strip(),
+                memory_type="thread", summary=title,
+                entities=npcs + locs, tags=["hidden_thread", status],
+                importance=0.8, confidence=0.85,
+                session_id=state.session_id, turn=turn, source="record_plot_memory",
+            )
+        except Exception:
+            pass
         return f"已记录暗线: {title} [{status}]"
     if kind == "character_impact":
         if not title or not impact:
             return "未记录（需要title人物名和impact影响）"
         state.memory.add_character_impact(name=title, impact=impact, event=desc, turn=turn)
         update_relations(title, "impact_link")
+        try:
+            from backend.long_term_memory import store_memory
+            store_memory(
+                state.username, f"{title}: {impact} {desc}".strip(),
+                memory_type="reflection", summary=title,
+                entities=[title] + npcs + locs, tags=["character_impact"],
+                importance=0.75, confidence=0.8,
+                session_id=state.session_id, turn=turn, source="record_plot_memory",
+            )
+        except Exception:
+            pass
         return f"已记录人物影响: {title}"
     return "未知类型: " + kind
 
@@ -3104,11 +3201,12 @@ async def _generate_suggestions_subagent(
                f"最近剧情：{(context_text or '')[-1500:]}\n"
                f"当前场景：{scene}\n"
                f"角色背景：{build_character_info(state)[:500]}")
-    task = (
+    fallback_task = (
         "你是行动建议生成器。根据当前局面严格输出2-4个玩家可执行的行动选项，每个不超过25字。"
         "格式：每行一个选项，以“- ”开头。只输出选项本身，禁止任何解释、分析、自我对话，"
         "禁止出现“目标”“玩家行动”“应该怎么做”“别过度思考”等元描述。"
     )
+    task = get_skill_instruction("suggestions", fallback_task)
     result = await _run_focused_subagent(task, context, state, max_tokens=250, temperature=0.2)
     meta_re = re.compile(r"目标|玩家行动|应该怎么做|建议如下|别过度|思考|选项|元描述|请根据|严格输出|掷骰|检定|先攻|骰子|系统")
     options: list[str] = []
@@ -3286,7 +3384,7 @@ MODULE_TOOL_NAMES = {
     "social": ["search_npcs", "adjust_npc", "add_character_note",
                "update_knowledge_graph", "get_entity_graph", "update_world_state",
                "suggest_choices"],
-    "memory": ["search_knowledge", "get_entity_graph", "get_graph_path",
+    "memory": ["search_knowledge", "search_memory", "get_entity_graph", "get_graph_path",
                "add_memory", "record_plot_memory", "update_world_state",
                "suggest_choices"],
     "graph": ["get_entity_graph", "get_graph_path", "update_knowledge_graph",
@@ -3315,12 +3413,16 @@ async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2
     temp = (temperature if temperature is not None else settings.TEMPERATURE) + tdelta
     temp = max(0.0, min(1.5, temp))
     extra_body = _thinking_extra_body(state, thinking_mode)
-    stream = await client.chat.completions.create(
-        model=model, messages=messages, tools=tools,
+    create_kwargs = dict(
+        model=model, messages=messages,
         max_tokens=max_tokens, temperature=temp, stream=True,
-        tool_choice=tool_choice,
-        **({"extra_body": extra_body} if extra_body else {}),
     )
+    if tools:
+        create_kwargs["tools"] = tools
+        create_kwargs["tool_choice"] = tool_choice
+    if extra_body:
+        create_kwargs["extra_body"] = extra_body
+    stream = await client.chat.completions.create(**create_kwargs)
     content = ""; reasoning_content = ""; tc_map = {}
     had_tool_call = False  # P0-2修复：追踪工具调用边界
 
@@ -3415,6 +3517,8 @@ async def process_player_action(state: GameSessionState, player_input: str) -> s
 async def _process_player_action_inner(state: GameSessionState, player_input: str) -> str:
     from backend.engine.prompt_guard import sanitize_user_text
     state.reset_abort()
+    # 每轮开始就清空敌人行动记录；子 Agent 会在任务分配后调用 enemy_attack
+    state.enemy_attack_log = {}
     # P0-1修复（双保险）：确保WorldState始终存在，即使create_new_game漏初始化
     if getattr(state, 'world_state', None) is None:
         state.world_state = WorldState(session_id=state.session_id)
@@ -3458,13 +3562,26 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
     }
     retrieved = retrieved[:module_chunk_limits.get(module, 3)]
 
+    # LangGraph 短期记忆装配 + EverOS 长期记忆检索：
+    # 先由记忆图生成 essential/full 上下文与长期记忆简报，供主 DM 与记忆检索子 Agent 使用。
+    memory_pack: dict = {}
+    memory_context_override = ""
+    try:
+        memory_pack = await build_memory_context(
+            state, player_input, focused=module not in ("narrative", "memory"),
+        )
+        memory_context_override = str(memory_pack.get("context") or "")
+    except Exception as e:
+        print(f"[MemoryGraph] 短期记忆装配失败，回退旧版记忆: {e}")
+
     # 多专业子 Agent 并发委派：规则/战斗战术/场景事实/剧情连续性/关系图谱各司其职，
     # 主 DM 只接收聚合后的“专家简报”，专注角色扮演、故事生成与世界操控。
     subagent_brief = ""
+    delegation_used = False
     try:
         ws_prep = getattr(state, "world_state", None)
-        # 近期对话单独走 recent_for_brief，长期记忆用 essential 版避免重复灌入
-        mem_for_brief = state.memory.build_essential_context()
+        # 近期对话单独走 recent_for_brief；长期/短期记忆使用 LangGraph 装配结果
+        mem_for_brief = memory_context_override or state.memory.build_essential_context()
         recent_for_brief = "\n".join(
             f"- 玩家: {t.player_input}\n- DM: {str(t.dm_response)[:240]}"
             for t in state.memory.turns[-4:]
@@ -3495,18 +3612,32 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
             world_compact=world_compact_for_brief,
             graph_text=_build_graph_context_text(state, player_input),
         )
-        brief_results = await run_parallel_subagents(client, model, brief_tasks)
+        # 主 DM 担任任务分配器：从候选专业子 Agent 中选择本回合要运行的任务
+        selected_keys = await plan_task_keys(
+            client, model, player_input, module, brief_tasks, lite=lite,
+        )
+        selected_set = set(selected_keys)
+        selected_tasks = [t for t in brief_tasks if str(t.get("key")) in selected_set] or brief_tasks
+        # 子 Agent 带工具执行：工具结果只以简报形式返回主 DM，过程对玩家隐藏
+        brief_results = await run_tool_subagents(client, model, selected_tasks, state)
         subagent_brief = format_dm_brief(brief_results)
+        delegation_used = bool(subagent_brief.strip())
         if subagent_brief:
-            print(f"[DMSubAgents] module={module} lite={lite} agents={len(brief_tasks)} "
-                  f"ok={len([v for v in brief_results.values() if v and not v.startswith('[子Agent失败]')])} "
-                  f"brief={len(subagent_brief)}")
+            ok_count = len([
+                v for v in brief_results.values()
+                if v and not v.startswith(("[子Agent失败]", "[子Agent超时]"))
+            ])
+            print(f"[DMSubAgents] module={module} lite={lite} planned={selected_keys} "
+                  f"agents={len(selected_tasks)} ok={ok_count} brief={len(subagent_brief)}")
     except Exception as e:
         print(f"[DMSubAgents] 并发子Agent委派失败，回退完整上下文: {e}")
         subagent_brief = ""
 
-    sp = build_system_prompt(state, retrieved_chunks=retrieved, dispatch_plan=dispatch_plan,
-                             subagent_brief=subagent_brief)
+    sp = build_system_prompt(
+        state, retrieved_chunks=retrieved, dispatch_plan=dispatch_plan,
+        subagent_brief=subagent_brief,
+        memory_context_override=memory_context_override or None,
+    )
 
     messages = [{"role":"system","content":sp}]
     base_history = 5 if lite else skill.history_rounds
@@ -3523,8 +3654,14 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
             messages.append({"role":"assistant","content":msg})
     messages.append({"role":"user","content":player_input})
 
-    # 战斗模块强制：禁止只输出“我先/让我确认/我打算”等未结算计划，必须走工具
-    if module == "combat":
+    if delegation_used:
+        messages.append({"role":"system","content":
+            "[系统] 本回合的规则/战斗/世界/记忆/图谱工具已由后台专业子Agent结算完成，结果见专家简报。"
+            "你不再拥有工具调用权限，请直接输出玩家可见的剧情叙事；"
+            "不要提及子Agent、工具、后台、简报，也不要复述数值。"})
+
+    # 战斗模块强制：仅在主 DM 仍持有工具时要求它走工具
+    if module == "combat" and not delegation_used:
         messages.append({"role":"system","content":
             "[系统强制战斗执行] 本回合必须调用 dice_roll / search_npcs / search_bestiary / combat_round 等工具完成玩家行动结算。"
             "禁止只输出“我先确认”“让我看看”“我打算”等计划性独白而不调用工具；"
@@ -3541,8 +3678,7 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
     suggested = False
     error_streak = 0
     combat_guard_count = 0
-    state.enemy_attack_log = {}
-    module_tools = _module_tools(module, skill.tools)
+    module_tools = [] if delegation_used else _module_tools(module, skill.tools)
     try:
         while True:
             if state.aborted:
@@ -3561,7 +3697,8 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
                 # 战斗/“我先确认…”式计划独白没有调用任何工具时强制重试，避免卡住不结算
                 had_tool_result = any(m.get("role") == "tool" for m in messages)
                 plan_like = bool(re.search(r"我先|让我先|让我看看|我打算|我需要确认|我来确认|先调出|调出战力|我来结算", text))
-                if not state.aborted and not had_tool_result and (module == "combat" or plan_like) and combat_guard_count < 2:
+                if (not state.aborted and not delegation_used and not had_tool_result
+                        and (module == "combat" or plan_like) and combat_guard_count < 2):
                     combat_guard_count += 1
                     messages.append({"role":"system","content":
                         "[系统强制] 你刚才没有调用任何工具，输出不能算作本回合结算。"
@@ -3649,7 +3786,7 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
 
         # 工具结算后补足剧情：不能让玩家只看到数值/事件摘要
         tool_result_count = sum(1 for m in messages if m.get("role") == "tool")
-        if tool_result_count > 0 and len(full.strip()) < 80 and not state.aborted:
+        if (tool_result_count > 0 or delegation_used) and len(full.strip()) < 80 and not state.aborted:
             messages.append({
                 "role": "system",
                 "content": (

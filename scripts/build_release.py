@@ -48,7 +48,7 @@ INCLUDE_FILES = [
 EXCLUDE_NAMES = {
     "__pycache__", ".venv", "venv", "env", "node_modules",
     "docs", "models", "media", "knowledge_base", "saves",
-    "characters", "world_states", "scenarios", "data", "dist",
+    "characters", "world_states", "scenarios", "data", "memory_vault", "dist",
     ".git", ".claude", ".idea", ".vscode", ".dsh-plugins",
     ".install-cache", ".git-ssl", "frontend/dist",
 }
