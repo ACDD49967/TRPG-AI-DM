@@ -229,7 +229,11 @@ export default function GameScreen() {
       }
     }
     if (graphTypeFilter !== 'all') {
-      nodes = nodes.filter(n => n.type === graphTypeFilter || n.id === graphFocusId);
+      const knownTypes = ['npc', 'location', 'plot', 'creature'];
+      nodes = nodes.filter(n =>
+        (graphTypeFilter === 'other' ? !knownTypes.includes(n.type) : n.type === graphTypeFilter)
+        || n.id === graphFocusId
+      );
     }
     if (focusKeep) nodes = nodes.filter(n => focusKeep!.has(n.id));
     if (graphSearchIds.length) {
