@@ -127,8 +127,8 @@ async def run_tool_subagent(
     model: str,
     task: dict,
     state: Any,
-    max_iterations: int = 4,
-    timeout: float = 60,
+    max_iterations: int = 3,
+    timeout: float = 45,
 ) -> str:
     """运行一个带工具权限的专业子 Agent，返回给主 DM 的简报。
 
@@ -175,7 +175,7 @@ async def run_tool_subagent(
             kwargs: dict[str, Any] = dict(
                 model=model,
                 messages=messages,
-                max_tokens=900,
+                max_tokens=700,
                 temperature=0.1,
                 extra_body={"thinking": {"type": "disabled"}},
             )
@@ -238,7 +238,7 @@ async def run_tool_subagents(
     tasks: list[dict],
     state: Any,
     max_concurrency: int = 4,
-    timeout: float = 60,
+    timeout: float = 45,
 ) -> dict[str, str]:
     """并发运行一组可调用工具的专业子 Agent，按 task key 返回简报。"""
     sem = asyncio.Semaphore(max(1, int(max_concurrency)))
@@ -267,7 +267,7 @@ async def plan_task_keys(
     module: str,
     candidate_tasks: list[dict],
     lite: bool = False,
-    timeout: float = 20,
+    timeout: float = 12,
 ) -> list[str]:
     """让主 DM 担任任务分配器，从候选专业子 Agent 中选择本回合要运行的技能。
 
@@ -304,7 +304,7 @@ async def plan_task_keys(
                     {"role": "system", "content": "你是任务分配器，只输出合法 JSON。"},
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=200,
+                max_tokens=150,
                 temperature=0.1,
                 extra_body={"thinking": {"type": "disabled"}},
             ),

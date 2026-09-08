@@ -165,9 +165,12 @@ def _append_daily(username: str, record: dict[str, Any]) -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
             if not path.exists():
                 path.write_text(f"# {day} 事件时间线\n\n", encoding="utf-8")
+            marker = f"[{record.get('id', '')}]"
+            if marker in path.read_text(encoding="utf-8"):
+                return
             with path.open("a", encoding="utf-8") as f:
                 summary = record.get("summary") or record.get("content", "")[:60]
-                f.write(f"- [{record.get('id', '')}] {summary}\n")
+                f.write(f"- {marker} {summary}\n")
     except Exception as e:
         print(f"[MemoryVault] 追加 daily 失败: {e}")
 

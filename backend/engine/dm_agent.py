@@ -3596,18 +3596,21 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
 
     client = _client(state); model = _model(state)
     scenario_id = getattr(state, "scenario_id", None) or (state.character_info or {}).get("scenario_id") or None
-    retrieved = get_knowledge_base().retrieve(
-        player_input,
+    # 知识库检索放到线程中，并与模块分发并行，避免阻塞事件循环
+    _kb = get_knowledge_base()
+    retrieve_task = asyncio.create_task(asyncio.to_thread(
+        _kb.retrieve, player_input,
         system=_game_system(state),
         top_k=3 if lite else skill.rag_top_k,
         username=state.username,
         scenario_id=scenario_id,
-    )
+    ))
 
     # 主 Agent 模块化调度：LangGraph 分发到规则/战斗/场景/社交/记忆/图谱/叙事模块
     from backend.engine.dm_modules import run_dm_dispatch
     dispatch_plan = await run_dm_dispatch(state, player_input)
     module = str(dispatch_plan.get("module", "narrative"))
+    retrieved = await retrieve_task
     module_chunk_limits = {
         "rules": 5, "combat": 3, "scene": 2, "social": 2,
         "memory": 2, "graph": 2, "narrative": 5,
@@ -3740,7 +3743,9 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
                 "social": 2200, "memory": 2000, "graph": 1800, "narrative": skill.max_tokens,
             }
             max_tokens = 1024 if _play_mode(state) == "lite" else min(skill.max_tokens, module_max_tokens.get(module, skill.max_tokens))
-            think_mode = "fixed" if module in ("rules", "combat", "graph", "memory") else "auto"
+            think_mode = "fixed" if module in ("rules", "combat", "graph", "memory") else (
+                "high" if getattr(state, "thinking_strength", "medium") == "high" else "low"
+            )
             text, tcs = await _stream_with_tools(client, model, messages, module_tools, state, max_tokens, temperature=skill.temperature, thinking_mode=think_mode)
             full += text
             if any(t.get("function", {}).get("name") == "suggest_choices" for t in tcs):
@@ -3826,15 +3831,12 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
             if tool_count >= tool_limit:
                 break
 
-        # 建议从 DM Agent 剥离：由独立子 Agent 强制生成
+        # 建议子 Agent 与回合收尾并行：先启动任务，end_of_turn 后再取结果
+        suggestions_task = None
         if not suggested and not state.aborted:
-            try:
-                options = await _generate_suggestions_subagent(state, player_input, full)
-                if options:
-                    await push_event(state, "choices", {"options": options})
-                    print(f"[DMSubAgent] 生成建议 {len(options)} 个")
-            except Exception as e:
-                print(f"[DMSubAgent] 建议生成失败: {e}")
+            suggestions_task = asyncio.create_task(
+                _generate_suggestions_subagent(state, player_input, full)
+            )
 
         # 工具结算后补足剧情：不能让玩家只看到数值/事件摘要
         tool_result_count = sum(1 for m in messages if m.get("role") == "tool")
@@ -3868,8 +3870,23 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
             await advance_background_plot_if_due(state)
             ws.save()
             await push_event(state, "journal_update", ws.to_player_journal())
+            # 每 10 轮整理一次长期记忆：合并重复、衰减低价值、重建 index.md
+            if ws.turn_count % 10 == 0 and not state.aborted:
+                try:
+                    from backend.long_term_memory import consolidate_memories
+                    await asyncio.to_thread(consolidate_memories, state.username)
+                except Exception as e:
+                    print(f"[Memory] 长期记忆整理失败: {e}")
 
         await push_event(state, "end_of_turn", {})
+        if suggestions_task is not None:
+            try:
+                options = await suggestions_task
+                if options:
+                    await push_event(state, "choices", {"options": options})
+                    print(f"[DMSubAgent] 生成建议 {len(options)} 个")
+            except Exception as e:
+                print(f"[DMSubAgent] 建议生成失败: {e}")
         state.memory.add_turn(player_input=player_input, dm_response=full)
         await compress_memory_if_needed(state)
         # 写入问答缓存（限制大小，避免无限增长）

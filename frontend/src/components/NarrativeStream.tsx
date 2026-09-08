@@ -146,15 +146,20 @@ export default function NarrativeStream() {
       </AnimatePresence>
 
       {currentTokenBuffer && <p className="text-gray-700 text-sm leading-relaxed whitespace-pre-line">{currentTokenBuffer}<span className="text-indigo-400 animate-pulse">▎</span></p>}
-      {isProcessing && !currentTokenBuffer && narrative.length > 0 && <div className="flex items-center gap-2 text-indigo-400 text-xs"><span className="animate-pulse">●</span>主持正在思考...</div>}
+      {isProcessing && !currentTokenBuffer && (
+        <div className="flex items-center gap-2 text-indigo-400 text-xs py-1">
+          <span className="inline-block w-4 h-4 rounded-full border-2 border-indigo-200 border-t-indigo-500 animate-spin" />
+          <span>DM 已受理，正在准备...</span>
+        </div>
+      )}
       <div ref={bottomRef} />
     </div>
   );
 }
 
 function DiceBadge({ data }: { data: { skill: string; dc: number; roll: number; modifier: number; result: string } }) {
-  const isCrit = data.result === '大成功' || data.result === '大失败';
-  const ok = data.result === '成功' || data.result === '大成功';
+  const ok = ['成功','大成功','困难成功','极限成功','复活'].includes(data.result);
+  const isCrit = ['大成功','大失败'].includes(data.result) || data.result === '复活';
   return (
     <div className="flex items-center gap-2 flex-wrap mb-1">
       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${isCrit?(ok?'bg-amber-100 text-amber-700 border border-amber-200':'bg-red-100 text-red-700 border border-red-200'):(ok?'bg-emerald-100 text-emerald-700 border border-emerald-200':'bg-gray-100 text-gray-500 border border-gray-200')}`}>{data.result}</span>
