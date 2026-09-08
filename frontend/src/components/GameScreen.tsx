@@ -1200,16 +1200,17 @@ export default function GameScreen() {
                       const mx = (p1.x + p2.x) / 2;
                       const my = (p1.y + p2.y) / 2;
                       const hidden = e.relation === '???';
-                      const active = !graphActive.activeId || e.source === graphActive.activeId || e.target === graphActive.activeId;
-                      const showRelation = !!graphActive.activeId || graphView.visibleEdges.length <= 12;
+                      const hasActive = !!graphActive.activeId;
+                      const related = !hasActive || e.source === graphActive.activeId || e.target === graphActive.activeId;
+                      const showRelation = hasActive || graphView.visibleEdges.length <= 12;
                       return (
                         <g key={i}>
                           <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}
-                            stroke={hidden ? '#d1d5db' : active ? '#818cf8' : '#c7d2fe'}
-                            strokeWidth={active ? 1.6 : 1}
+                            stroke={hidden ? '#e5e7eb' : hasActive && related ? '#818cf8' : '#c7d2fe'}
+                            strokeWidth={hasActive && related ? 1.6 : 1}
                             strokeDasharray={hidden ? '4 3' : undefined}
-                            opacity={active ? 1 : 0.18} />
-                          {!hidden && active && showRelation && (
+                            opacity={hasActive ? (related ? 1 : 0.12) : 0.45} />
+                          {!hidden && related && showRelation && (
                             <text x={mx} y={my - 4} textAnchor="middle" fill="#9ca3af" fontSize="9"
                               stroke="#ffffff" strokeWidth="2.5" paintOrder="stroke" strokeLinejoin="round">{e.relation}</text>
                           )}
