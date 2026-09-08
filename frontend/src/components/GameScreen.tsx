@@ -93,6 +93,11 @@ function computeGraphLayout(nodes: GraphNode[], edges: GraphEdge[], focusId?: st
   if (focusPos) {
     const dx = cx - focusPos.x, dy = cy - focusPos.y;
     result.forEach((v, id) => result.set(id, { x: v.x + dx, y: v.y + dy }));
+    // 聚焦重定心后做一次边界收敛，避免节点被 viewBox 裁掉。
+    result.forEach((v, id) => result.set(id, {
+      x: Math.max(50, Math.min(W - 50, v.x)),
+      y: Math.max(50, Math.min(H - 50, v.y)),
+    }));
   }
   return result;
 }
