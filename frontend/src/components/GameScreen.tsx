@@ -153,6 +153,8 @@ export default function GameScreen() {
   const [graphFocusId, setGraphFocusId] = useState<string | null>(null);
   const [graphHoverId, setGraphHoverId] = useState<string | null>(null);
   const [graphZoom, setGraphZoom] = useState(1);
+  const [graphSearchIds, setGraphSearchIds] = useState<string[]>([]);
+  const [graphSearchEmpty, setGraphSearchEmpty] = useState(false);
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
   const [dmMap, setDmMap] = useState({ name: '', description: '', type: '', status: '', culture: '', districts: '', notable_figures: '', dangers: '', secret: '', locationsText: '' });
   const [dmBeast, setDmBeast] = useState({ name: '', description: '', ac: '', hp: '', speed: '', str: '', dex: '', con: '', int: '', wis: '', cha: '', skills: '', traits: '', actions: '', habits: '', habitat: '', lore: '', weakness: '', tags: '' });
@@ -189,6 +191,7 @@ export default function GameScreen() {
       if (name) params.set('name', name);
       const query = queryOverride !== undefined ? queryOverride : graphQuery;
       if (query) params.set('query', query);
+      if (!name && query) setGraphTypeFilter('all');
       const r = await fetch(`/api/game/${sessionId}/graph?${params.toString()}`);
       if (!r.ok) return;
       const d = await r.json();
@@ -196,6 +199,10 @@ export default function GameScreen() {
       setGraphFocusId(name || null);
       setGraphHoverId(null);
       setGraphZoom(1);
+      if (queryOverride !== undefined) setGraphQuery(queryOverride);
+      const results = name ? [] : (d.search || []).map((s: { node?: { id?: string } }) => s.node?.id).filter(Boolean);
+      setGraphSearchIds(results);
+      setGraphSearchEmpty(!name && !!query && results.length === 0);
       setShowGraph(true);
     } catch {}
   };
@@ -225,6 +232,14 @@ export default function GameScreen() {
       nodes = nodes.filter(n => n.type === graphTypeFilter || n.id === graphFocusId);
     }
     if (focusKeep) nodes = nodes.filter(n => focusKeep!.has(n.id));
+    if (graphSearchIds.length) {
+      const searchKeep = new Set<string>(graphSearchIds);
+      allEdges.forEach(e => {
+        if (searchKeep.has(e.source)) searchKeep.add(e.target);
+        if (searchKeep.has(e.target)) searchKeep.add(e.source);
+      });
+      nodes = nodes.filter(n => searchKeep.has(n.id));
+    }
     nodes = [...nodes].sort((a, b) =>
       (degree.get(b.id) || 0) - (degree.get(a.id) || 0) || a.label.localeCompare(b.label)
     );
@@ -235,7 +250,7 @@ export default function GameScreen() {
     const visibleEdges = allEdges.filter(e => visibleIds.has(e.source) && visibleIds.has(e.target));
     const layout = computeGraphLayout(visibleNodes, visibleEdges, graphFocusId);
     return { allNodes, allEdges, visibleNodes, visibleEdges, layout, total, truncated: total > limit };
-  }, [graphData, graphTypeFilter, graphFocusId]);
+  }, [graphData, graphTypeFilter, graphFocusId, graphSearchIds]);
 
   const graphActive = useMemo(() => {
     const activeId = graphFocusId || graphHoverId;
@@ -1139,7 +1154,14 @@ export default function GameScreen() {
                 className="input-field text-xs flex-1"
               />
               <button onClick={()=>openGraph()} className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200 hover:bg-emerald-100">搜索</button>
+              {(graphSearchIds.length > 0 || graphQuery) && (
+                <button onClick={()=>{ setGraphSearchIds([]); setGraphSearchEmpty(false); setGraphQuery(''); }} className="text-xs px-2.5 py-1.5 text-gray-400 hover:text-gray-600">清除</button>
+              )}
             </div>
+
+            {graphSearchEmpty && (
+              <p className="text-[10px] text-gray-400 mb-2">未找到匹配节点，已显示全部节点。</p>
+            )}
 
             <div className="flex flex-wrap items-center gap-1.5 mb-2">
               {([['all','全部'],['npc','角色'],['location','地点'],['plot','剧情'],['creature','生物'],['other','其他']] as const).map(([k,label])=>(
@@ -1193,8 +1215,9 @@ export default function GameScreen() {
                       const fill = hidden ? '#f3f4f6' : (GRAPH_COLORS[n.type] || GRAPH_COLORS.other);
                       const active = !graphActive.activeId || n.id === graphActive.activeId || graphActive.connected.has(n.id);
                       const focused = n.id === graphFocusId;
-                      const showLabel = graphView.visibleNodes.length <= 16 || active || focused;
-                      const r = focused ? 22 : hidden ? 9 : 14;
+                      const matched = graphSearchIds.includes(n.id);
+                      const showLabel = graphView.visibleNodes.length <= 16 || active || focused || matched;
+                      const r = focused ? 22 : hidden ? 9 : matched ? 17 : 14;
                       return (
                         <g key={n.id}
                           onClick={()=>{ if (!hidden) openGraph(n.id); }}
@@ -1203,10 +1226,11 @@ export default function GameScreen() {
                           className={hidden ? 'cursor-default' : 'cursor-pointer'}
                           opacity={active ? 1 : 0.35}>
                           <title>{n.label}（{GRAPH_TYPE_LABELS[n.type] || n.type}）{n.extra ? ` · ${n.extra}` : ''}</title>
+                          {matched && <circle cx={p.x} cy={p.y} r={r + 4} fill="none" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="3 2" />}
                           <circle cx={p.x} cy={p.y} r={r}
                             fill={fill}
-                            stroke={hidden ? '#9ca3af' : focused ? '#4f46e5' : '#6366f1'}
-                            strokeWidth={focused ? 3 : hidden ? 1 : 1.8} />
+                            stroke={hidden ? '#9ca3af' : focused ? '#4f46e5' : matched ? '#f59e0b' : '#6366f1'}
+                            strokeWidth={focused ? 3 : hidden ? 1 : matched ? 2.4 : 1.8} />
                           {showLabel && (
                             <text x={p.x} y={p.y + r + 12} textAnchor="middle" fontSize={focused ? 11 : 9}
                               fill={hidden ? '#9ca3af' : '#1f2937'} fontWeight="bold"
