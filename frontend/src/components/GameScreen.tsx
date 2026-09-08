@@ -1220,7 +1220,7 @@ export default function GameScreen() {
                       const r = focused ? 22 : hidden ? 9 : matched ? 17 : 14;
                       return (
                         <g key={n.id}
-                          onClick={()=>{ if (!hidden) openGraph(n.id); }}
+                          onClick={()=>{ if (!hidden) openGraph(n.id, ''); }}
                           onMouseEnter={()=>setGraphHoverId(n.id)}
                           onMouseLeave={()=>setGraphHoverId(null)}
                           className={hidden ? 'cursor-default' : 'cursor-pointer'}
