@@ -1530,16 +1530,16 @@ async def list_maps_api(username: str = "default", scenario_id: str | None = Non
 
 @app.post("/api/maps")
 async def add_map_api(payload: dict):
-    from backend.media_manager import add_map, list_maps, update_map
+    from backend.media_manager import add_map, find_map_exact, update_map
     username = str(payload.get("username") or "default")
     name = str(payload.get("name") or "未命名地图")
     scenario_id = str(payload.get("scenario_id") or "")
-    existing = next((it for it in list_maps(username, scenario_id or None)
-                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
+    existing = find_map_exact(username, scenario_id or None, name)
     if existing:
         item = update_map(username, existing["id"], {
             "description": str(payload.get("description") or ""),
-            "image_path": str(payload.get("image_path") or ""),
+            # 前端通常先上传图片再 JSON 补充字段；这里必须保留已有图片，不能被空值覆盖。
+            "image_path": str(payload.get("image_path") or existing.get("image_path") or ""),
             "locations": payload.get("locations") or [],
             "system": str(payload.get("system") or "custom"),
             "details": payload.get("details") or {},
@@ -1569,7 +1569,7 @@ async def upload_map_api(
     locations: str = Form("[]"),
     scenario_id: str = Form(""),
 ):
-    from backend.media_manager import add_map, list_maps, save_image, update_map
+    from backend.media_manager import add_map, find_map_exact, save_image, update_map
     import json as _json
     data = await file.read()
     image_path = save_image(username, data, file.filename or "map.png")
@@ -1577,8 +1577,7 @@ async def upload_map_api(
         locs = _json.loads(locations) if locations.strip() else []
     except Exception:
         locs = []
-    existing = next((it for it in list_maps(username, scenario_id or None)
-                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
+    existing = find_map_exact(username, scenario_id or None, name)
     if existing:
         item = update_map(username, existing["id"], {
             "description": description, "image_path": image_path, "locations": locs,
@@ -1605,11 +1604,11 @@ async def list_spells_api(username: str = "default", scenario_id: str | None = N
 
 @app.post("/api/spells")
 async def add_spell_api(payload: dict):
-    from backend.media_manager import add_spell, list_spells, update_spell
+    from backend.media_manager import add_spell, find_spell_exact, update_spell
     username = str(payload.get("username") or "default")
     name = str(payload.get("name") or "未命名法术")
     scenario_id = str(payload.get("scenario_id") or "")
-    existing = next((it for it in list_spells(username, scenario_id or None) if it.get("name") == name), None)
+    existing = find_spell_exact(username, scenario_id or None, name)
     changes = {
         "system": str(payload.get("system") or "custom"),
         "description": str(payload.get("description") or ""),
@@ -1820,18 +1819,19 @@ async def list_bestiary_api(username: str = "default", scenario_id: str | None =
 
 @app.post("/api/bestiary")
 async def add_bestiary_api(payload: dict):
-    from backend.media_manager import add_bestiary, list_bestiary, update_bestiary
+    from backend.media_manager import add_bestiary, find_bestiary_exact, update_bestiary
     username = str(payload.get("username") or "default")
     name = str(payload.get("name") or "未命名生物")
     scenario_id = str(payload.get("scenario_id") or "")
-    existing = next((it for it in list_bestiary(username, scenario_id or None)
-                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
+    # 只更新同作用域条目；剧本内同名通用图鉴不会被改写。
+    existing = find_bestiary_exact(username, scenario_id or None, name)
     if existing:
         item = update_bestiary(username, existing["id"], {
             "system": str(payload.get("system") or "custom"),
             "description": str(payload.get("description") or ""),
             "stats": payload.get("stats") or {},
-            "image_path": str(payload.get("image_path") or ""),
+            # 前端通常先上传图片再 JSON 补充字段；这里必须保留已有图片，不能被空值覆盖。
+            "image_path": str(payload.get("image_path") or existing.get("image_path") or ""),
             "tags": payload.get("tags") or [],
             "details": payload.get("details") or {},
             "scenario_id": scenario_id,
@@ -1862,7 +1862,7 @@ async def upload_bestiary_api(
     tags: str = Form(""),
     scenario_id: str = Form(""),
 ):
-    from backend.media_manager import add_bestiary, list_bestiary, save_image, update_bestiary
+    from backend.media_manager import add_bestiary, find_bestiary_exact, save_image, update_bestiary
     import json as _json
     data = await file.read()
     image_path = save_image(username, data, file.filename or "creature.png")
@@ -1871,8 +1871,8 @@ async def upload_bestiary_api(
     except Exception:
         stats_data = {}
     tags_list = [t.strip() for t in tags.split(",") if t.strip()]
-    existing = next((it for it in list_bestiary(username, scenario_id or None)
-                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
+    # 只更新同作用域条目；剧本内同名通用图鉴不会被覆盖。
+    existing = find_bestiary_exact(username, scenario_id or None, name)
     if existing:
         item = update_bestiary(username, existing["id"], {
             "system": system,

@@ -1674,11 +1674,23 @@ def _find_bestiary_card(state: GameSessionState, name: str) -> dict | None:
     card = None
     try:
         from backend.media_manager import list_bestiary
-        scenario_id = state.character_info.get("scenario_id", "") or None
-        for item in list_bestiary(state.username or "default", scenario_id):
+        scenario_id = state.character_info.get("scenario_id", "") or ""
+        items = list_bestiary(state.username or "default", scenario_id or None)
+        # 先找当前剧本自己的条目，避免同名通用图鉴抢先命中。
+        for item in items:
+            if str(item.get("scenario_id") or "") != scenario_id:
+                continue
             if str(item.get("name", "")) == name or str(item.get("id", "")) == name:
                 card = dict(item)
                 break
+        # 当前剧本没有同名条目时，才回退到通用参考。
+        if card is None:
+            for item in items:
+                if str(item.get("scenario_id") or ""):
+                    continue
+                if str(item.get("name", "")) == name or str(item.get("id", "")) == name:
+                    card = dict(item)
+                    break
     except Exception:
         pass
     # 本局临时覆写：优先合并到图鉴卡；若图鉴无此卡，则用覆写构造临时卡
@@ -2414,12 +2426,14 @@ async def _exec_update_city(args: dict, state: GameSessionState) -> str:
 
 
 async def _exec_add_scenario_bestiary(args: dict, state: GameSessionState) -> str:
-    from backend.media_manager import add_bestiary, list_bestiary, update_bestiary
+    from backend.media_manager import (
+        add_bestiary, find_bestiary_exact, find_global_bestiary, update_bestiary,
+    )
     username = state.username or "default"
     scenario_id = state.character_info.get("scenario_id", "") or ""
     name = str(args.get("name", "未命名生物"))
-    existing = next((it for it in list_bestiary(username, scenario_id or None)
-                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
+    # 只查找同作用域条目；同名通用图鉴不会被本工具改写。
+    existing = find_bestiary_exact(username, scenario_id or None, name)
     if existing:
         item = update_bestiary(username, existing["id"], {
             "system": _game_system(state),
@@ -2427,17 +2441,23 @@ async def _exec_add_scenario_bestiary(args: dict, state: GameSessionState) -> st
             "stats": args.get("stats") or {},
             "tags": args.get("tags") or [],
             "details": args.get("details") or {},
+            "scenario_id": scenario_id,
         })
         action = "更新"
     else:
+        # 从通用图鉴复制基础数值/图片，保证剧本副本也有图可显示。
+        ref = find_global_bestiary(username, name) or {}
+        ref_stats = dict(ref.get("stats") or {})
+        ref_stats.update(args.get("stats") or {})
         item = add_bestiary(
             username=username,
             name=name,
             system=_game_system(state),
-            description=args.get("description", "") or "",
-            stats=args.get("stats") or {},
-            tags=args.get("tags") or [],
-            details=args.get("details") or {},
+            description=args.get("description", "") or str(ref.get("description", "") or ""),
+            stats=ref_stats,
+            image_path=str(ref.get("image_path", "") or ""),
+            tags=args.get("tags") or list(ref.get("tags", []) or []),
+            details={**(ref.get("details") or {}), **(args.get("details") or {}), "source": "当前剧本"},
             scenario_id=scenario_id,
         )
         action = "新增"
@@ -2446,12 +2466,12 @@ async def _exec_add_scenario_bestiary(args: dict, state: GameSessionState) -> st
 
 
 async def _exec_add_scenario_map(args: dict, state: GameSessionState) -> str:
-    from backend.media_manager import add_map, list_maps, update_map
+    from backend.media_manager import add_map, find_global_map, find_map_exact, update_map
     username = state.username or "default"
     scenario_id = state.character_info.get("scenario_id", "") or ""
     name = str(args.get("name", "未命名地图"))
-    existing = next((it for it in list_maps(username, scenario_id or None)
-                     if it.get("name") == name and not str(it.get("id", "")).startswith("kb-")), None)
+    # 只查找同作用域条目；同名通用地图不会被本工具改写。
+    existing = find_map_exact(username, scenario_id or None, name)
     if existing:
         item = update_map(username, existing["id"], {
             "description": args.get("description", "") or "",
@@ -2462,14 +2482,15 @@ async def _exec_add_scenario_map(args: dict, state: GameSessionState) -> str:
         })
         action = "更新"
     else:
+        ref = find_global_map(username, name) or {}
         item = add_map(
             username=username,
             name=name,
-            description=args.get("description", "") or "",
-            image_path="",
-            locations=args.get("locations") or [],
+            description=args.get("description", "") or str(ref.get("description", "") or ""),
+            image_path=str(ref.get("image_path", "") or ""),
+            locations=args.get("locations") or list(ref.get("locations", []) or []),
             system=_game_system(state),
-            details=args.get("details") or {},
+            details={**(ref.get("details") or {}), **(args.get("details") or {}), "source": "当前剧本"},
             scenario_id=scenario_id,
         )
         action = "新增"
@@ -2478,11 +2499,12 @@ async def _exec_add_scenario_map(args: dict, state: GameSessionState) -> str:
 
 
 async def _exec_add_scenario_spell(args: dict, state: GameSessionState) -> str:
-    from backend.media_manager import add_spell, list_spells, update_spell
+    from backend.media_manager import add_spell, find_global_spell, find_spell_exact, update_spell
     username = state.username or "default"
     scenario_id = state.character_info.get("scenario_id", "") or ""
     name = str(args.get("name", "未命名法术"))
-    existing = next((it for it in list_spells(username, scenario_id or None) if it.get("name") == name), None)
+    # 只查找同作用域条目；同名通用法术不会被本工具改写。
+    existing = find_spell_exact(username, scenario_id or None, name)
     if existing:
         item = update_spell(username, existing["id"], {
             "description": args.get("description", "") or "",
@@ -2498,19 +2520,20 @@ async def _exec_add_scenario_spell(args: dict, state: GameSessionState) -> str:
         })
         action = "更新"
     else:
+        ref = find_global_spell(username, name) or {}
         item = add_spell(
             username=username,
             name=name,
             system=_game_system(state),
-            description=args.get("description", "") or "",
-            level=str(args.get("level", "0")),
-            school=args.get("school", "") or "",
-            ritual=bool(args.get("ritual", False)),
-            casting_time=args.get("casting_time", "") or "",
-            range_=args.get("range", "") or "",
-            components=args.get("components", "") or "",
-            duration=args.get("duration", "") or "",
-            classes=args.get("classes") or [],
+            description=args.get("description", "") or str(ref.get("description", "") or ""),
+            level=str(args.get("level", ref.get("level", "0")) or "0"),
+            school=args.get("school", "") or str(ref.get("school", "") or ""),
+            ritual=bool(args.get("ritual", ref.get("ritual", False))),
+            casting_time=args.get("casting_time", "") or str(ref.get("casting_time", "") or ""),
+            range_=args.get("range", "") or str(ref.get("range", "") or ""),
+            components=args.get("components", "") or str(ref.get("components", "") or ""),
+            duration=args.get("duration", "") or str(ref.get("duration", "") or ""),
+            classes=args.get("classes") or list(ref.get("classes", []) or []),
             scenario_id=scenario_id,
         )
         action = "新增"
@@ -2523,7 +2546,18 @@ async def _exec_search_bestiary(args: dict, state: GameSessionState) -> str:
     query = str(args.get("query", "")).strip().lower()
     top_k = max(1, min(5, int(args.get("top_k", 3) or 3)))
     scenario_id = state.character_info.get("scenario_id", "")
+    scenario_id_str = str(scenario_id or "")
     items = list_bestiary(state.username or "default", scenario_id or None)
+    # 同名时优先当前剧本自己的条目，避免通用参考掩盖剧本数值。
+    deduped: dict[str, dict] = {}
+    for it in items:
+        key = str(it.get("name", ""))
+        if not key:
+            continue
+        prev = deduped.get(key)
+        if prev is None or (scenario_id_str and str(it.get("scenario_id") or "") == scenario_id_str):
+            deduped[key] = it
+    items = list(deduped.values())
     # 合并本局临时覆写，使 adjust_bestiary 的改动对搜索也可见
     overrides = getattr(state, "bestiary_overrides", {}) or {}
     if overrides:
@@ -2559,7 +2593,9 @@ async def _exec_search_bestiary(args: dict, state: GameSessionState) -> str:
     if not picked:
         return "图鉴中没有匹配的生物"
     return "\n".join(
-        f"- {it.get('name','')}: {str(it.get('description_zh','') or it.get('description',''))[:80]}" + (f" | {it.get('stats',{}).get('HP','')}" if it.get('stats',{}).get('HP') else "")
+        f"- [{'当前剧本' if scenario_id_str and str(it.get('scenario_id') or '') == scenario_id_str else '通用'}] "
+        f"{it.get('name','')}: {str(it.get('description_zh','') or it.get('description',''))[:80]}"
+        + (f" | {it.get('stats',{}).get('HP','')}" if it.get('stats',{}).get('HP') else "")
         for it in picked
     )
 
@@ -2840,22 +2876,23 @@ async def _exec_adjust_bestiary(args: dict, state: GameSessionState) -> str:
     delta = int(args.get("delta", 0) or 0)
     if not name or not field:
         return "⚠ 需要 name 与 field"
-    # 先从当前剧本图鉴取现值，找不到再查本局临时覆写
+    # 只从“同作用域”图鉴取现值；剧本局找不到就只写本局临时覆写，绝不改通用图鉴。
     current_stats: dict = {}
+    target_id: str | None = None
     try:
         from backend.media_manager import list_bestiary, update_bestiary
-        scenario_id = state.character_info.get("scenario_id", "") or None
-        for item in list_bestiary(state.username or "default", scenario_id):
+        scenario_id = state.character_info.get("scenario_id", "") or ""
+        for item in list_bestiary(state.username or "default", scenario_id or None):
+            if str(item.get("scenario_id") or "") != scenario_id:
+                continue
             if str(item.get("id", "")).startswith("kb-"):
                 continue
             if item.get("name") == name or item.get("id") == name:
                 current_stats = dict(item.get("stats") or {})
                 target_id = item.get("id", name)
                 break
-        else:
-            target_id = name
     except Exception:
-        target_id = name
+        target_id = None
     override = dict(state.bestiary_overrides.get(name, {}))
     if not current_stats:
         current_stats = dict(override.get("stats", {}))
@@ -2866,11 +2903,12 @@ async def _exec_adjust_bestiary(args: dict, state: GameSessionState) -> str:
     merged_stats = {**current_stats, field: str(new_value)}
     override["stats"] = merged_stats
     state.bestiary_overrides[name] = override
-    try:
-        from backend.media_manager import update_bestiary
-        update_bestiary(state.username or "default", target_id, {"stats": {field: str(new_value)}})
-    except Exception:
-        pass
+    # 只有同作用域条目才落盘；通用图鉴在剧本局只通过临时覆写生效。
+    if target_id:
+        try:
+            update_bestiary(state.username or "default", target_id, {"stats": {field: str(new_value)}})
+        except Exception:
+            pass
     await push_event(state, "bestiary_updated", {})
     return f"✅ 生物 {name} {field}: {new_value}"
 
@@ -2961,9 +2999,14 @@ async def _exec_get_location_card(args: dict, state: GameSessionState) -> str:
     if not name:
         return "⚠ 需要 name"
     from backend.media_manager import list_maps
-    scenario_id = state.character_info.get("scenario_id", "") or None
-    for item in list_maps(state.username or "default", scenario_id):
-        if item.get("name") == name or item.get("id") == name:
+    scenario_id = state.character_info.get("scenario_id", "") or ""
+    items = list_maps(state.username or "default", scenario_id or None)
+    # 先找当前剧本自己的地点，再回退通用参考。
+    for item in items:
+        if str(item.get("scenario_id") or "") == scenario_id and (item.get("name") == name or item.get("id") == name):
+            return _format_location_card(item)
+    for item in items:
+        if not str(item.get("scenario_id") or "") and (item.get("name") == name or item.get("id") == name):
             return _format_location_card(item)
     return f"地点图鉴中未找到: {name}"
 

@@ -140,7 +140,9 @@ export default function GameScreen() {
   const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;stats:Record<string,string>;image_path:string;tags?:string[];scenario_id?:string;details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
   const [beastQuery, setBeastQuery] = useState('');
   const [mapQuery, setMapQuery] = useState('');
-  const [showGlobalRef, setShowGlobalRef] = useState(false);
+  const [showGlobalRefMaps, setShowGlobalRefMaps] = useState(false);
+  const [showGlobalRefBestiary, setShowGlobalRefBestiary] = useState(false);
+  const [showGlobalRefSpells, setShowGlobalRefSpells] = useState(false);
   const [showMapBuilder, setShowMapBuilder] = useState(false);
   const [showBeastBuilder, setShowBeastBuilder] = useState(false);
   const [showSpells, setShowSpells] = useState(false);
@@ -280,12 +282,20 @@ export default function GameScreen() {
   const globalBestiary = bestiary.filter(b => !b.scenario_id);
   const scenarioSpells = spells.filter(s => s.scenario_id === currentSid);
   const globalSpells = spells.filter(s => !s.scenario_id);
-  // 图鉴隔离：有当前剧本时显示“当前剧本 + 通用参考”；隐藏其它剧本
-  const scopedMaps = showGlobalRef || !currentSid ? maps : maps.filter(m => !m.scenario_id || m.scenario_id === currentSid);
-  const scopedBestiary = showGlobalRef || !currentSid ? bestiary : bestiary.filter(b => !b.scenario_id || b.scenario_id === currentSid);
-  const scopedSpells = showGlobalRef || !currentSid ? spells : spells.filter(s => !s.scenario_id || s.scenario_id === currentSid);
+  // 图鉴隔离：有当前剧本时默认只看当前剧本，切换后才合并通用参考。
+  const scopedMaps = currentSid
+    ? (showGlobalRefMaps ? maps : scenarioMaps)
+    : globalMaps;
+  const scopedBestiary = currentSid
+    ? (showGlobalRefBestiary ? bestiary : scenarioBestiary)
+    : globalBestiary;
+  const scopedSpells = currentSid
+    ? (showGlobalRefSpells ? spells : scenarioSpells)
+    : globalSpells;
   const filteredMaps = scopedMaps.filter(m => !mapQuery || q(`${m.name} ${m.description_zh||''} ${m.description} ${(m.locations||[]).map(l=>l.name).join(' ')} ${m.details?.type||''} ${m.details?.status||''} ${m.details?.culture||''} ${m.details?.notable_figures||''} ${m.details?.dangers||''}`).includes(q(mapQuery)));
-  const filteredBestiary = scopedBestiary.filter(b => !beastQuery || q(`${b.name} ${b.description_zh||''} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''} ${b.details?.lore||''}`).includes(q(beastQuery)));
+  const filteredBestiary = scopedBestiary
+    .filter(b => !beastQuery || q(`${b.name} ${b.description_zh||''} ${b.description} ${(b.tags||[]).join(' ')} ${Object.values(b.stats||{}).join(' ')} ${b.details?.habitat||''} ${b.details?.habits||''} ${b.details?.lore||''}`).includes(q(beastQuery)))
+    .sort((a, b) => Number(!!b.scenario_id) - Number(!!a.scenario_id));
 
   const addDmNpc = async () => {
     if (!sessionId || !dmNpc.name.trim()) return;
@@ -466,7 +476,7 @@ export default function GameScreen() {
 
   const translateMedia = async (kind: 'locations' | 'bestiary') => {
     if (!sessionId || mediaTranslate) return;
-    const source = kind === 'locations' ? maps : bestiary;
+    const source = kind === 'locations' ? scopedMaps : scopedBestiary;
     const untranslated = source.filter(s => !s.description_zh);
     if (untranslated.length === 0) {
       alert('没有需要翻译的条目');
@@ -723,9 +733,11 @@ export default function GameScreen() {
                 <button onClick={()=>translateMedia('locations')} disabled={!!mediaTranslate} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
                   {mediaTranslate?.kind==='locations' ? '机翻中...' : '翻译地点描述'}
                 </button>
-                <button onClick={()=>setShowGlobalRef(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
-                  {showGlobalRef ? '仅当前剧本' : '显示通用参考'}
-                </button>
+                {currentSid && (
+                  <button onClick={()=>setShowGlobalRefMaps(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
+                    {showGlobalRefMaps ? '仅当前剧本' : '显示通用参考'}
+                  </button>
+                )}
                 <button onClick={()=>setShowMap(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
               </div>
             </div>
@@ -755,13 +767,16 @@ export default function GameScreen() {
                 <button onClick={()=>{addDmMap(); setShowMapBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本地点库</button>
               </div>
             )}
-            {filteredMaps.length===0&&<div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">🗺️</p><p>没有找到地图。</p><p className="text-[9px] text-gray-300">可以调整搜索，或先导入剧本 / 上传地图图片</p></div>}
+            {filteredMaps.length===0&&<div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">🗺️</p><p>没有找到地图。</p><p className="text-[9px] text-gray-300">{currentSid && !showGlobalRefMaps && scenarioMaps.length===0 ? '当前剧本暂无地点图鉴；点击“显示通用参考”查看通用库。' : '可以调整搜索，或先导入剧本 / 上传地图图片'}</p></div>}
             {filteredMaps.map(m=>{
-              const relatedCreatures = scopedBestiary.filter(b => q(`${b.description} ${b.details?.habitat||''} ${b.details?.lore||''}`).includes(q(m.name)));
+              const relatedCreatures = bestiary.filter(b => q(`${b.description} ${b.details?.habitat||''} ${b.details?.lore||''}`).includes(q(m.name)));
               return (
                 <details key={m.id} className="group mb-3 border border-gray-200 rounded-lg overflow-hidden">
                   <summary className="cursor-pointer select-none list-none p-3 flex items-center justify-between gap-2">
-                    <span className="text-sm font-bold">{m.name}</span>
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm font-bold truncate">{m.name}</span>
+                      <span className={`text-[8px] px-1.5 py-0.5 rounded-full border shrink-0 ${m.scenario_id ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>{m.scenario_id ? '当前剧本' : '通用参考'}</span>
+                    </span>
                     <span className="text-[9px] text-gray-400 shrink-0">
                       {m.details?.type || '地点'} · {m.details?.status || '未知'} · {m.locations.length} 子地点
                       <span className="ml-1 group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span>
@@ -799,7 +814,10 @@ export default function GameScreen() {
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowBeast(false)}>
           <div className="paper-card rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-gray-900">生物图鉴</h3>
+              <div>
+                <h3 className="text-sm font-bold text-gray-900">生物图鉴</h3>
+                <p className="text-[9px] text-gray-400">默认仅显示当前剧本；通用参考需手动切换，且不会被剧本操作覆盖。</p>
+              </div>
               <div className="flex items-center gap-2">
                 <button onClick={()=>setShowBeastBuilder(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
                   {showBeastBuilder ? '收起自建' : '自建生物'}
@@ -807,9 +825,11 @@ export default function GameScreen() {
                 <button onClick={()=>translateMedia('bestiary')} disabled={!!mediaTranslate} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
                   {mediaTranslate?.kind==='bestiary' ? '机翻中...' : '翻译生物描述'}
                 </button>
-                <button onClick={()=>setShowGlobalRef(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
-                  {showGlobalRef ? '仅当前剧本' : '显示通用参考'}
-                </button>
+                {currentSid && (
+                  <button onClick={()=>setShowGlobalRefBestiary(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
+                    {showGlobalRefBestiary ? '仅当前剧本' : '显示通用参考'}
+                  </button>
+                )}
                 <button onClick={()=>setShowBeast(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
               </div>
             </div>
@@ -850,7 +870,7 @@ export default function GameScreen() {
                 <button onClick={()=>{addDmBeast(); setShowBeastBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本生物库</button>
               </div>
             )}
-            {filteredBestiary.length===0&&<div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">🐾</p><p>没有找到生物。</p><p className="text-[9px] text-gray-300">可以调整搜索，或先导入怪物库 / 上传生物图片</p></div>}
+            {filteredBestiary.length===0&&<div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">🐾</p><p>没有找到生物。</p><p className="text-[9px] text-gray-300">{currentSid && !showGlobalRefBestiary && scenarioBestiary.length===0 ? '当前剧本暂无生物图鉴；点击“显示通用参考”查看通用库。' : '可以调整搜索，或先导入怪物库 / 上传生物图片'}</p></div>}
             {filteredBestiary.map(b=>{
               const relatedMaps = scopedMaps.filter(m => q(`${b.details?.habitat||''} ${b.description} ${b.details?.lore||''}`).includes(q(m.name)) || q(m.description).includes(q(b.name)));
               const s = b.stats || {};
@@ -881,15 +901,26 @@ export default function GameScreen() {
                 <details key={b.id} className="group mb-3 border-2 border-amber-900/30 rounded-lg p-3 bg-[#fffdf5] shadow-sm">
                   <summary className="cursor-pointer select-none list-none">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="paper-title text-base font-bold text-gray-900">{b.name}</span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        {b.image_path && <img src={b.image_path} alt="" loading="lazy" decoding="async" onError={e=>{e.currentTarget.style.display='none';}} className="w-9 h-9 object-cover rounded border border-amber-900/20 shrink-0" />}
+                        <span className="paper-title text-base font-bold text-gray-900 truncate">{b.name}</span>
+                        <span className={`text-[8px] px-1.5 py-0.5 rounded-full border shrink-0 ${b.scenario_id ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>{b.scenario_id ? '当前剧本' : '通用参考'}</span>
+                      </div>
                       <span className="text-[9px] text-gray-400 shrink-0">{challenge!=='—'?`CR ${challenge}${xp!=='—'?`（XP ${xp}）`:''} · `:''}HP {get('HP','hp','生命')} · AC {get('AC','ac','护甲')}<span className="ml-1 group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span></span>
                     </div>
                   </summary>
                   <div className="mt-2">
+                  {b.image_path && (
+                    <a href={b.image_path} target="_blank" rel="noreferrer" title="查看原图" className="block mb-3">
+                      <img src={b.image_path} alt={b.name} loading="lazy" decoding="async" onError={e=>{e.currentTarget.style.display='none';}} className="w-full max-h-72 object-contain bg-gray-100 rounded-lg border border-amber-900/20" />
+                    </a>
+                  )}
                   <div className="flex items-start gap-3">
-                    {b.image_path&&<img src={b.image_path} alt={b.name} className="w-20 h-20 object-cover rounded-lg border border-amber-900/20" />}
                     <div className="min-w-0 flex-1">
-                      <p className="text-[10px] text-gray-500 italic">{b.system}{b.tags&&b.tags.length>0?` · ${b.tags.join('、')}`:''}</p>
+                      <p className="text-[10px] text-gray-500 italic">
+                        {b.scenario_id ? <span className="text-emerald-700 font-medium">当前剧本</span> : <span className="text-gray-400 font-medium">通用参考</span>}
+                        {' · '}{b.system}{b.tags&&b.tags.length>0?` · ${b.tags.join('、')}`:''}
+                      </p>
                       <div className="grid grid-cols-3 gap-1 mt-1.5 text-[10px]">
                         <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-gray-500">AC</span> <b>{get('AC','ac','护甲')}</b></div>
                         <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-gray-500">HP</span> <b>{get('HP','hp','生命')}</b></div>
@@ -995,9 +1026,11 @@ export default function GameScreen() {
                 <button onClick={translateSrd} disabled={srdTranslating} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
                   {srdTranslating ? '机翻中...' : '翻译 SRD 法术'}
                 </button>
-                <button onClick={()=>setShowGlobalRef(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
-                  {showGlobalRef ? '仅当前剧本' : '显示通用参考'}
-                </button>
+                {currentSid && (
+                  <button onClick={()=>setShowGlobalRefSpells(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
+                    {showGlobalRefSpells ? '仅当前剧本' : '显示通用参考'}
+                  </button>
+                )}
                 <button onClick={()=>setShowSpells(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
               </div>
             </div>
@@ -1033,11 +1066,14 @@ export default function GameScreen() {
                 <button onClick={()=>{addDmSpell(); setShowSpellBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本法术库</button>
               </div>
             )}
-            {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">✨</p><p>没有找到法术。</p><p className="text-[9px] text-gray-300">可以调整搜索，或先导入法术图鉴 / 自建法术</p></div>}
+            {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">✨</p><p>没有找到法术。</p><p className="text-[9px] text-gray-300">{currentSid && !showGlobalRefSpells && scenarioSpells.length===0 ? '当前剧本暂无法术图鉴；点击“显示通用参考”查看通用库。' : '可以调整搜索，或先导入法术图鉴 / 自建法术'}</p></div>}
             {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).map(s=>(
               <details key={s.id} className="group mb-2 border-2 border-amber-900/30 rounded-lg p-2.5 bg-[#fffdf5]">
                 <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
-                  <span className="paper-title text-sm font-bold">{s.name_zh||s.name}：{Number(s.level)===0?'戏法':`${s.level}环`} {s.school}{s.name_zh&&s.name_zh!==s.name?<span className="text-gray-400 font-normal">（{s.name}）</span>:null}</span>
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="paper-title text-sm font-bold truncate">{s.name_zh||s.name}：{Number(s.level)===0?'戏法':`${s.level}环`} {s.school}{s.name_zh&&s.name_zh!==s.name?<span className="text-gray-400 font-normal">（{s.name}）</span>:null}</span>
+                    <span className={`text-[8px] px-1.5 py-0.5 rounded-full border shrink-0 ${s.scenario_id ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>{s.scenario_id ? '当前剧本' : '通用参考'}</span>
+                  </span>
                   <span className="text-[9px] text-gray-400 shrink-0">{s.ritual?'仪式 · ':''}{s.classes.length>0?`${s.classes.join('、')} · `:''}<span className="group-open:hidden">▸ 详情</span><span className="hidden group-open:inline">▾</span></span>
                 </summary>
                 <div className="mt-2 pt-2 border-t border-amber-900/10 text-[10px] text-gray-600 space-y-1">

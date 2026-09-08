@@ -54,6 +54,13 @@ def _save_meta(username: str, kind: str, items: list[dict]):
     p = _meta_path(username, kind)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 新增/修改/删除后立即失效对应缓存，避免列表接口继续返回旧数据。
+    if kind == "bestiary":
+        _BESTIARY_CACHE.clear()
+    elif kind == "maps":
+        _MAPS_CACHE.clear()
+    elif kind == "spells":
+        _SPELLS_CACHE.clear()
 
 
 def _deleted_builtin_kind_path(username: str, kind: str) -> Path:
@@ -256,6 +263,29 @@ def update_map(username: str, name_or_id: str, changes: dict) -> dict | None:
     return None
 
 
+def list_maps_exact(username: str, scenario_id: str | None = None) -> list[dict]:
+    """只返回指定作用域（当前剧本或通用）自己的地图，不合并通用参考。"""
+    sid = str(scenario_id or "")
+    items = list_maps(username, scenario_id or None)
+    return [i for i in items if str(i.get("scenario_id") or "") == sid]
+
+
+def find_map_exact(username: str, scenario_id: str | None, name: str) -> dict | None:
+    """按名称查找同作用域地图；剧本内操作不会误改通用地图。"""
+    for item in list_maps_exact(username, scenario_id):
+        if str(item.get("name", "")) == name and not str(item.get("id", "")).startswith("kb-"):
+            return item
+    return None
+
+
+def find_global_map(username: str, name: str) -> dict | None:
+    """查找通用地图，用于给剧本地图复制图片/地点。"""
+    for item in list_maps(username, None):
+        if str(item.get("name", "")) == name and not str(item.get("id", "")).startswith("kb-"):
+            return item
+    return None
+
+
 def _import_kb_locations(username: str):
     """从知识库自动抓取地点/城市条目并写入用户地图库（幂等，仅一次）。"""
     user_dir = _user_media_dir(username)
@@ -365,7 +395,7 @@ def sync_scenario_maps(username: str, scenario_id: str, locations: list, system:
     """
     if not scenario_id:
         return
-    existing = {i.get("name") for i in list_maps(username, scenario_id)}
+    existing = {i.get("name") for i in list_maps_exact(username, scenario_id)}
     global_maps = {i.get("name"): i for i in list_maps(username, None)}
     for loc in locations:
         data = asdict(loc) if not isinstance(loc, dict) else dict(loc)
@@ -410,7 +440,8 @@ def sync_scenario_bestiary(username: str, scenario_id: str, creatures: list[dict
     """把世界状态中提取的生物同步到该剧本的生物图鉴（幂等）。"""
     if not scenario_id:
         return
-    existing = {i.get("name") for i in list_bestiary(username, scenario_id)}
+    # 只认当前剧本自己的条目；通用图鉴同名条目只作为参考，不阻止建立剧本副本。
+    existing = {i.get("name") for i in list_bestiary_exact(username, scenario_id)}
     global_bestiary = {i.get("name"): i for i in list_bestiary(username, None)}
     for c in creatures:
         name = str(c.get("name", "")).strip() if isinstance(c, dict) else str(c).strip()
@@ -436,8 +467,12 @@ def sync_scenario_bestiary(username: str, scenario_id: str, creatures: list[dict
                 system=system,
                 description=str(c.get("description", "")) if isinstance(c, dict) else "",
                 stats=c.get("stats") if isinstance(c, dict) else {},
+                image_path=str(c.get("image_path", "") or "") if isinstance(c, dict) else "",
                 tags=c.get("tags") if isinstance(c, dict) else [],
-                details={"source": "剧本生成"},
+                details={
+                    **(c.get("details") if isinstance(c, dict) and isinstance(c.get("details"), dict) else {}),
+                    "source": "剧本生成",
+                },
                 scenario_id=scenario_id,
             )
         existing.add(name)
@@ -692,6 +727,29 @@ def list_bestiary(username: str, scenario_id: str | None = None) -> list[dict]:
     result = [i for i in items if _match_scenario(i, scenario_id)]
     _BESTIARY_CACHE[cache_key] = (now, result)
     return result
+
+
+def list_bestiary_exact(username: str, scenario_id: str | None = None) -> list[dict]:
+    """只返回指定作用域（当前剧本或通用）自己的图鉴条目，不合并通用参考。"""
+    sid = str(scenario_id or "")
+    items = list_bestiary(username, scenario_id or None)
+    return [i for i in items if str(i.get("scenario_id") or "") == sid]
+
+
+def find_bestiary_exact(username: str, scenario_id: str | None, name: str) -> dict | None:
+    """按名称查找同作用域条目；剧本内操作不会误改通用图鉴。"""
+    for item in list_bestiary_exact(username, scenario_id):
+        if str(item.get("name", "")) == name and not str(item.get("id", "")).startswith("kb-"):
+            return item
+    return None
+
+
+def find_global_bestiary(username: str, name: str) -> dict | None:
+    """查找通用图鉴条目，用于给剧本图鉴复制基础数值/图片。"""
+    for item in list_bestiary(username, None):
+        if str(item.get("name", "")) == name and not str(item.get("id", "")).startswith("kb-"):
+            return item
+    return None
 
 
 def delete_bestiary(username: str, beast_id: str) -> bool:
@@ -1252,6 +1310,29 @@ def list_spells(username: str, scenario_id: str | None = None) -> list[dict]:
     return result
 
 
+def list_spells_exact(username: str, scenario_id: str | None = None) -> list[dict]:
+    """只返回指定作用域（当前剧本或通用）自己的法术，不合并通用参考。"""
+    sid = str(scenario_id or "")
+    items = list_spells(username, scenario_id or None)
+    return [i for i in items if str(i.get("scenario_id") or "") == sid]
+
+
+def find_spell_exact(username: str, scenario_id: str | None, name: str) -> dict | None:
+    """按名称查找同作用域法术；剧本内操作不会误改通用法术。"""
+    for item in list_spells_exact(username, scenario_id):
+        if str(item.get("name", "")) == name:
+            return item
+    return None
+
+
+def find_global_spell(username: str, name: str) -> dict | None:
+    """查找通用法术，用于给剧本法术复制基础字段。"""
+    for item in list_spells(username, None):
+        if str(item.get("name", "")) == name:
+            return item
+    return None
+
+
 def delete_spell(username: str, spell_id: str) -> bool:
     items = _load_meta(username, "spells")
     removed = next((i for i in items if i["id"] == spell_id), None)
@@ -1268,7 +1349,7 @@ def sync_scenario_spells(username: str, scenario_id: str, spells: list[dict], sy
     """把世界状态中提取的法术/仪式同步到该剧本的法术图鉴（幂等）。"""
     if not scenario_id:
         return
-    existing = {i.get("name") for i in list_spells(username, scenario_id)}
+    existing = {i.get("name") for i in list_spells_exact(username, scenario_id)}
     global_spells = {i.get("name"): i for i in list_spells(username, None)}
     for s in spells:
         name = str(s.get("name", "")).strip() if isinstance(s, dict) else str(s).strip()

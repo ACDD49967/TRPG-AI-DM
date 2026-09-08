@@ -152,11 +152,13 @@ def auto_register_bestiary_images(
         existing = _load_meta(username, "bestiary")
     except Exception:
         existing = []
-    # 幂等：已存在同 URL 或同“来源页+自动标签”的不重复添加
-    existing_paths = {str(i.get("image_path") or "") for i in existing}
+    # 幂等：只和同作用域（当前剧本或通用）比较，避免通用图鉴同名图片阻止剧本副本。
+    sid = str(scenario_id or "")
+    scoped_existing = [i for i in existing if str(i.get("scenario_id") or "") == sid]
+    existing_paths = {str(i.get("image_path") or "") for i in scoped_existing}
     existing_auto_pages = {
         ((i.get("details") or {}).get("source_page", ""), str(i.get("image_path") or ""))
-        for i in existing if (i.get("details") or {}).get("auto")
+        for i in scoped_existing if (i.get("details") or {}).get("auto")
     }
     for img in images or []:
         if img.auto_type != "bestiary":
@@ -199,7 +201,12 @@ def auto_register_map_images(
         existing = _load_meta(username, "maps")
     except Exception:
         existing = []
-    existing_paths = {str(i.get("image_path") or "") for i in existing}
+    # 幂等：只和同作用域（当前剧本或通用）比较。
+    sid = str(scenario_id or "")
+    existing_paths = {
+        str(i.get("image_path") or "")
+        for i in existing if str(i.get("scenario_id") or "") == sid
+    }
     for img in images or []:
         if img.auto_type != "map":
             continue

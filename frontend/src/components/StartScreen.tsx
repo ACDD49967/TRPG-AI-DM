@@ -2199,7 +2199,8 @@ export default function StartScreen(){
 
               {/* 地图管理 */}
               <div className="border-t border-gray-200 pt-4 space-y-3">
-                <p className="text-xs font-bold text-gray-800">地区地图</p>
+                <p className="text-xs font-bold text-gray-800">通用地区地图（所有剧本可用）</p>
+                <p className="text-[10px] text-gray-400">这里只管理通用图鉴；剧本专属地点请在对局内由 DM 自建，或导入剧本时自动生成。</p>
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
                     <input value={mapName} onChange={e=>setMapName(e.target.value)} placeholder="地图名称" className="input-field text-xs" />
@@ -2225,7 +2226,8 @@ export default function StartScreen(){
 
               {/* 生物图鉴 */}
               <div className="border-t border-gray-200 pt-4 space-y-3">
-                <p className="text-xs font-bold text-gray-800">生物图鉴</p>
+                <p className="text-xs font-bold text-gray-800">通用生物图鉴（所有剧本可用）</p>
+                <p className="text-[10px] text-gray-400">这里只管理通用图鉴；剧本专属生物请在对局内由 DM 自建，避免覆盖通用条目。</p>
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
                     <input value={beastName} onChange={e=>setBeastName(e.target.value)} placeholder="生物名称" className="input-field text-xs" />
