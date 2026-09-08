@@ -16,6 +16,7 @@ import SpellCard from './SpellCard';
 import DndCharacterSheet from './DndCharacterSheet';
 import CocInvestigatorSheet from './CocInvestigatorSheet';
 import { getXpDisplay } from '../gameSystems';
+import { textValue } from '../utils/textValue';
 
 function invName(it: string | { name: string }): string {
   return typeof it === 'string' ? it : it.name || '未知物品';
@@ -490,7 +491,7 @@ export default function GameScreen() {
                     return (
                       <div key={k} className="bg-white rounded-lg border border-gray-200 px-2 py-1 flex justify-between">
                         <span className="text-[10px] text-gray-400">{ATTR_CN[k]||k.toUpperCase()}</span>
-                        <span className="text-xs font-bold">{v}{status.game_system!=='coc' && <span className={`ml-1 text-[9px] ${m>=0?'text-emerald-500':'text-red-400'}`}>({m>=0?'+':''}{m})</span>}</span>
+                        <span className="text-xs font-bold">{textValue(v)}{status.game_system!=='coc' && <span className={`ml-1 text-[9px] ${m>=0?'text-emerald-500':'text-red-400'}`}>({m>=0?'+':''}{m})</span>}</span>
                       </div>
                     );
                   })}
@@ -501,7 +502,7 @@ export default function GameScreen() {
             {((status.skill_proficiencies?.length ?? 0)>0 || (status.feats?.length ?? 0)>0 || (status.race_traits?.length ?? 0)>0 || (status.class_proficiencies?.length ?? 0)>0) && (
               <div className="space-y-2 mb-4">
                 {status.skills && Object.keys(status.skills).length>0 && (
-                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">技能数值</p><div className="flex flex-wrap gap-1">{Object.entries(status.skills).map(([k,v])=><span key={k} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5">{k}: {v}</span>)}</div></div>
+                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">技能数值</p><div className="flex flex-wrap gap-1">{Object.entries(status.skills).map(([k,v])=><span key={k} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5">{k}: {textValue(v)}</span>)}</div></div>
                 )}
                 {status.skill_proficiencies && status.skill_proficiencies.length>0 && (
                   <div><p className="text-[10px] text-gray-400 font-medium mb-1">技能熟练</p><div className="flex flex-wrap gap-1">{status.skill_proficiencies.map((s,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
@@ -536,7 +537,7 @@ export default function GameScreen() {
                   <div><p className="text-[10px] text-gray-400 font-medium mb-1">剧本专属技能</p><div className="flex flex-wrap gap-1">{status.custom_skills.map((s,i)=><span key={i} className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
                 )}
                 {status.extra_attributes && Object.keys(status.extra_attributes).length>0 && (
-                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">额外属性</p><div className="flex flex-wrap gap-1">{Object.entries(status.extra_attributes).map(([k,v],i)=><span key={i} className="text-[10px] bg-gray-100 text-gray-700 border border-gray-200 rounded px-1.5 py-0.5">{k}: {v}</span>)}</div></div>
+                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">额外属性</p><div className="flex flex-wrap gap-1">{Object.entries(status.extra_attributes).map(([k,v],i)=><span key={i} className="text-[10px] bg-gray-100 text-gray-700 border border-gray-200 rounded px-1.5 py-0.5">{k}: {textValue(v)}</span>)}</div></div>
                 )}
               </div>
             )}
@@ -706,7 +707,10 @@ export default function GameScreen() {
             {filteredBestiary.map(b=>{
               const relatedMaps = scopedMaps.filter(m => q(`${b.details?.habitat||''} ${b.description} ${b.details?.lore||''}`).includes(q(m.name)) || q(m.description).includes(q(b.name)));
               const s = b.stats || {};
-              const get = (...keys: string[]) => keys.map(k=>s[k]).find(v=>v!==undefined && v!=='') ?? '—';
+              const get = (...keys: string[]) => {
+                const raw = keys.map(k=>s[k]).find(v=>v!==undefined && v!=='');
+                return raw === undefined ? '—' : textValue(raw);
+              };
               const abilities: Array<[string,string]> = [
                 ['力量', get('力量','STR','str')], ['敏捷', get('敏捷','DEX','dex')],
                 ['体质', get('体质','CON','con')], ['智力', get('智力','INT','int')],

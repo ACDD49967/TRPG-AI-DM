@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
+import { textValue } from '../utils/textValue';
 
 interface CharNote { target:string;comment:string;clue?:string;turn:number; }
 interface NpcView { name:string;race:string;role:string;attitude:string;alive:boolean|null;appearance:string;personality:string;motivation:string;secret:string;relation_to_plot:string;location:string;level?:number;ac?:number;hp?:number;max_hp?:number;attributes?:Record<string,number>;skills?:string[];traits?:string[];equipment?:string[];related_locations?:string[];related_npcs?:string[];related_creatures?:string[];image_path?:string;importance?:'major'|'minor'|string;_fully_revealed:boolean; }
@@ -49,12 +50,12 @@ function NpcCard({npc,cat}:{npc:NpcView;cat:string}){
               {Object.entries(npc.attributes).map(([k,v])=>(
                 <div key={k} className="text-center leading-tight">
                   <p className="text-[7px] uppercase tracking-wide text-gray-400">{attrNames[k]||k}</p>
-                  <p className="text-[10px] font-bold">{v}<span className="ml-0.5 text-[8px] text-gray-500">({mod(Number(v))})</span></p>
+                  <p className="text-[10px] font-bold">{textValue(v)}<span className="ml-0.5 text-[8px] text-gray-500">({mod(Number(v))})</span></p>
                 </div>
               ))}
             </div>
           )}
-          {npc.skills && npc.skills.length>0 && <p className="text-[9px] pt-1 border-t border-gray-100"><span className="font-bold text-gray-500">技能 </span>{npc.skills.join('、')}</p>}
+          {npc.skills && npc.skills.length>0 && <p className="text-[9px] pt-1 border-t border-gray-100"><span className="font-bold text-gray-500">技能 </span>{npc.skills.map(textValue).join('、')}</p>}
           {npc.traits && npc.traits.length>0 && <div className="pt-1 border-t border-gray-100"><p className="text-[8px] font-bold text-gray-500">特性 / 动作</p>{npc.traits.map((t,i)=><p key={i} className="text-[9px] text-gray-700">· {t}</p>)}</div>}
           {npc.equipment && npc.equipment.length>0 && <p className="text-[9px] pt-1 border-t border-gray-100"><span className="font-bold text-gray-500">装备 </span>{npc.equipment.join('、')}</p>}
           {npc.related_locations && npc.related_locations.length>0 && <p className="text-[9px] pt-1 border-t border-gray-100"><span className="font-bold text-gray-500">关联地点 </span>{npc.related_locations.join('、')}</p>}
@@ -89,7 +90,7 @@ function NpcCard({npc,cat}:{npc:NpcView;cat:string}){
           </>
         )}
         {npc.skills && npc.skills.length>0 && (
-          <><div className="my-1 border-t border-amber-900/60" /><p className="text-[9px]"><span className="font-bold text-gray-500">技能 </span>{npc.skills.join('、')}</p></>
+          <><div className="my-1 border-t border-amber-900/60" /><p className="text-[9px]"><span className="font-bold text-gray-500">技能 </span>{npc.skills.map(textValue).join('、')}</p></>
         )}
         {npc.traits && npc.traits.length>0 && (
           <><div className="my-1 border-t border-amber-900/60" /><p className="text-[8px] font-bold text-gray-500">特性 / 动作</p>{npc.traits.map((t,i)=><p key={i} className="text-[9px] text-gray-700">· {t}</p>)}</>

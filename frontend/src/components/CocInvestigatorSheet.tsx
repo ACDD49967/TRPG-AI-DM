@@ -1,6 +1,7 @@
 /** COC 7e 官方调查员卡样式 */
 
 import { useGameStore } from '../store/gameStore';
+import { textValue } from '../utils/textValue';
 import SpellCard from './SpellCard';
 
 const COC_ATTRS: Array<[string, string]> = [
@@ -65,7 +66,7 @@ export default function CocInvestigatorSheet({ onClose }: { onClose?: () => void
             {Object.entries(status.skills).map(([k, v]) => (
               <div key={k} className="bg-white/70 border border-amber-900/20 rounded px-2 py-1 flex items-center justify-between">
                 <span className="text-[10px] text-gray-600">{k}</span>
-                <span className="paper-title text-sm font-bold">{v}</span>
+                <span className="paper-title text-sm font-bold">{textValue(v)}</span>
               </div>
             ))}
           </div>
