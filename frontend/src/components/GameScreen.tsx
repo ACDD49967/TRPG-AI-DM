@@ -1,6 +1,6 @@
 /** 游戏主界面 —— 白色简洁布局 · 顶栏场景信息 */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { useSSE } from '../hooks/useSSE';
 import NarrativeStream from './NarrativeStream';
@@ -20,6 +20,81 @@ import { textValue } from '../utils/textValue';
 
 function invName(it: string | { name: string }): string {
   return typeof it === 'string' ? it : it.name || '未知物品';
+}
+
+type GraphNode = { id: string; type: string; label: string; extra?: string };
+type GraphEdge = { source: string; target: string; relation: string; strength?: number; confidence?: number; notes?: string };
+
+const GRAPH_COLORS: Record<string, string> = {
+  npc: '#c7d2fe', location: '#bbf7d0', plot: '#fde68a', creature: '#fecaca', other: '#e5e7eb',
+};
+const GRAPH_TYPE_LABELS: Record<string, string> = {
+  npc: '角色', location: '地点', plot: '剧情', creature: '生物', other: '其他',
+};
+
+/** 简单的力导向布局：限制节点数后自动分散，减少重叠与连线密集感。 */
+function computeGraphLayout(nodes: GraphNode[], edges: GraphEdge[], focusId?: string | null): Map<string, { x: number; y: number }> {
+  const W = 800, H = 560, cx = W / 2, cy = H / 2;
+  const result = new Map<string, { x: number; y: number }>();
+  if (!nodes.length) return result;
+  const n = nodes.length;
+  const pos = nodes.map((node, i) => {
+    if (focusId && node.id === focusId) return { id: node.id, x: cx, y: cy };
+    const a = (i / Math.max(1, n)) * Math.PI * 2;
+    return { id: node.id, x: cx + Math.cos(a) * 220, y: cy + Math.sin(a) * 180 };
+  });
+  const index = new Map(pos.map((p, i) => [p.id, i]));
+  const area = W * H;
+  const k = Math.sqrt(area / Math.max(1, n)) * 0.9;
+  for (let iter = 0; iter < 120; iter++) {
+    const disp = pos.map(() => ({ x: 0, y: 0 }));
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let dx = pos[i].x - pos[j].x;
+        let dy = pos[i].y - pos[j].y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const force = (k * k) / dist;
+        dx /= dist; dy /= dist;
+        disp[i].x += dx * force; disp[i].y += dy * force;
+        disp[j].x -= dx * force; disp[j].y -= dy * force;
+      }
+    }
+    for (const e of edges) {
+      const i = index.get(e.source), j = index.get(e.target);
+      if (i === undefined || j === undefined) continue;
+      let dx = pos[i].x - pos[j].x;
+      let dy = pos[i].y - pos[j].y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const force = ((dist * dist) / k) * 0.6;
+      dx /= dist; dy /= dist;
+      disp[i].x -= dx * force; disp[i].y -= dy * force;
+      disp[j].x += dx * force; disp[j].y += dy * force;
+    }
+    for (let i = 0; i < n; i++) {
+      const isFocus = !!focusId && pos[i].id === focusId;
+      disp[i].x += (cx - pos[i].x) * (isFocus ? 0.12 : 0.015);
+      disp[i].y += (cy - pos[i].y) * (isFocus ? 0.12 : 0.015);
+    }
+    const temp = Math.max(2, 22 * (1 - iter / 120));
+    for (let i = 0; i < n; i++) {
+      const d = Math.sqrt(disp[i].x ** 2 + disp[i].y ** 2) || 1;
+      pos[i].x += (disp[i].x / d) * Math.min(d, temp);
+      pos[i].y += (disp[i].y / d) * Math.min(d, temp);
+    }
+  }
+  const xs = pos.map(p => p.x), ys = pos.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
+  const scale = Math.min((W - 180) / spanX, (H - 180) / spanY, 1.6);
+  const offsetX = (W - spanX * scale) / 2 - minX * scale;
+  const offsetY = (H - spanY * scale) / 2 - minY * scale;
+  pos.forEach(p => result.set(p.id, { x: p.x * scale + offsetX, y: p.y * scale + offsetY }));
+  const focusPos = focusId ? result.get(focusId) : undefined;
+  if (focusPos) {
+    const dx = cx - focusPos.x, dy = cy - focusPos.y;
+    result.forEach((v, id) => result.set(id, { x: v.x + dx, y: v.y + dy }));
+  }
+  return result;
 }
 
 const ATTR_CN: Record<string, string> = {
@@ -72,8 +147,12 @@ export default function GameScreen() {
   const [showSpellBuilder, setShowSpellBuilder] = useState(false);
   const [showDmTools, setShowDmTools] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
-  const [graphData, setGraphData] = useState<{nodes:Array<{id:string;type:string;label:string;extra?:string}>; edges:Array<{source:string;target:string;relation:string;strength?:number;confidence?:number;notes?:string}>} | null>(null);
+  const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
   const [graphQuery, setGraphQuery] = useState('');
+  const [graphTypeFilter, setGraphTypeFilter] = useState<'all' | 'npc' | 'location' | 'plot' | 'creature' | 'other'>('all');
+  const [graphFocusId, setGraphFocusId] = useState<string | null>(null);
+  const [graphHoverId, setGraphHoverId] = useState<string | null>(null);
+  const [graphZoom, setGraphZoom] = useState(1);
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
   const [dmMap, setDmMap] = useState({ name: '', description: '', type: '', status: '', culture: '', districts: '', notable_figures: '', dangers: '', secret: '', locationsText: '' });
   const [dmBeast, setDmBeast] = useState({ name: '', description: '', ac: '', hp: '', speed: '', str: '', dex: '', con: '', int: '', wis: '', cha: '', skills: '', traits: '', actions: '', habits: '', habitat: '', lore: '', weakness: '', tags: '' });
@@ -102,30 +181,74 @@ export default function GameScreen() {
     } catch {}
   };
 
-  const openGraph = async (name?: string) => {
+  const openGraph = async (name?: string, queryOverride?: string) => {
     if (!sessionId) return;
     try {
       const params = new URLSearchParams();
       params.set('username', status.username || 'default');
       if (name) params.set('name', name);
-      if (graphQuery) params.set('query', graphQuery);
+      const query = queryOverride !== undefined ? queryOverride : graphQuery;
+      if (query) params.set('query', query);
       const r = await fetch(`/api/game/${sessionId}/graph?${params.toString()}`);
       if (!r.ok) return;
       const d = await r.json();
       setGraphData(d.graph || { nodes: [], edges: [] });
+      setGraphFocusId(name || null);
+      setGraphHoverId(null);
+      setGraphZoom(1);
       setShowGraph(true);
     } catch {}
   };
 
   const q = (s: string) => s.toLowerCase();
-  const graphNodes = graphData?.nodes || [];
-  const graphEdges = graphData?.edges || [];
-  const graphIndex = new Map(graphNodes.map((n, i) => [n.id, i]));
-  const graphPos = graphNodes.map((_, i) => {
-    const angle = (i / Math.max(1, graphNodes.length)) * Math.PI * 2;
-    const radius = Math.min(150, 60 + Math.min(graphNodes.length, 14) * 16);
-    return { x: 200 + radius * Math.cos(angle), y: 200 + radius * Math.sin(angle) };
-  });
+  const graphView = useMemo(() => {
+    const allNodes = graphData?.nodes || [];
+    const allEdges = graphData?.edges || [];
+    const degree = new Map<string, number>();
+    allEdges.forEach(e => {
+      degree.set(e.source, (degree.get(e.source) || 0) + 1);
+      degree.set(e.target, (degree.get(e.target) || 0) + 1);
+    });
+    let nodes = allNodes;
+    let focusKeep: Set<string> | null = null;
+    if (graphFocusId) {
+      const focus = allNodes.find(n => n.id === graphFocusId);
+      if (focus) {
+        focusKeep = new Set<string>([focus.id]);
+        allEdges.forEach(e => {
+          if (e.source === focus.id) focusKeep!.add(e.target);
+          if (e.target === focus.id) focusKeep!.add(e.source);
+        });
+      }
+    }
+    if (graphTypeFilter !== 'all') {
+      nodes = nodes.filter(n => n.type === graphTypeFilter || n.id === graphFocusId);
+    }
+    if (focusKeep) nodes = nodes.filter(n => focusKeep!.has(n.id));
+    nodes = [...nodes].sort((a, b) =>
+      (degree.get(b.id) || 0) - (degree.get(a.id) || 0) || a.label.localeCompare(b.label)
+    );
+    const total = nodes.length;
+    const limit = 24;
+    const visibleNodes = nodes.slice(0, limit);
+    const visibleIds = new Set(visibleNodes.map(n => n.id));
+    const visibleEdges = allEdges.filter(e => visibleIds.has(e.source) && visibleIds.has(e.target));
+    const layout = computeGraphLayout(visibleNodes, visibleEdges, graphFocusId);
+    return { allNodes, allEdges, visibleNodes, visibleEdges, layout, total, truncated: total > limit };
+  }, [graphData, graphTypeFilter, graphFocusId]);
+
+  const graphActive = useMemo(() => {
+    const activeId = graphFocusId || graphHoverId;
+    const connected = new Set<string>();
+    if (activeId) {
+      connected.add(activeId);
+      graphView.visibleEdges.forEach(e => {
+        if (e.source === activeId) connected.add(e.target);
+        if (e.target === activeId) connected.add(e.source);
+      });
+    }
+    return { activeId, connected };
+  }, [graphFocusId, graphHoverId, graphView.visibleEdges]);
   const currentSid = status.scenario_id || '';
   const scenarioMaps = maps.filter(m => m.scenario_id === currentSid);
   const globalMaps = maps.filter(m => !m.scenario_id);
@@ -993,13 +1116,21 @@ export default function GameScreen() {
       {/* 知识图谱（玩家视角，未暴露信息显示 ???） */}
       {showGraph && (
         <div className="fixed inset-0 z-[75] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowGraph(false)}>
-          <div className="paper-card rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
+          <div className="paper-card rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="paper-title text-lg font-bold">关系图谱（玩家视角）</h3>
-              <button onClick={()=>setShowGraph(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+              <div>
+                <h3 className="paper-title text-lg font-bold">关系图谱（玩家视角）</h3>
+                <p className="text-[10px] text-gray-400">点击节点查看局部关系；鼠标悬停高亮关联。</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {graphFocusId && (
+                  <button onClick={()=>openGraph(undefined, '')} className="text-xs px-2.5 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">返回全图</button>
+                )}
+                <button onClick={()=>setShowGraph(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+              </div>
             </div>
 
-            <div className="flex gap-2 mb-3">
+            <div className="flex gap-2 mb-2">
               <input
                 value={graphQuery}
                 onChange={e=>setGraphQuery(e.target.value)}
@@ -1010,45 +1141,95 @@ export default function GameScreen() {
               <button onClick={()=>openGraph()} className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200 hover:bg-emerald-100">搜索</button>
             </div>
 
-            <div className="border border-gray-200 rounded-xl bg-white overflow-hidden">
-              <svg viewBox="0 0 400 400" className="w-full h-auto">
-                {graphEdges.map((e, i) => {
-                  const si = graphIndex.get(e.source);
-                  const ti = graphIndex.get(e.target);
-                  if (si === undefined || ti === undefined) return null;
-                  const p1 = graphPos[si];
-                  const p2 = graphPos[ti];
-                  const mx = (p1.x + p2.x) / 2;
-                  const my = (p1.y + p2.y) / 2;
-                  const hidden = e.relation === '???';
-                  return (
-                    <g key={i}>
-                      <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={hidden ? '#d1d5db' : '#a5b4fc'} strokeWidth={hidden ? 1 : 1.5} strokeDasharray={hidden ? '4 3' : undefined} />
-                      {!hidden && (
-                        <text x={mx} y={my - 4} textAnchor="middle" fill="#9ca3af" fontSize="8">{e.relation}</text>
-                      )}
-                    </g>
-                  );
-                })}
-                {graphNodes.map((n, i) => {
-                  const p = graphPos[i];
-                  const hidden = n.label === '???';
-                  const fill = hidden ? '#f3f4f6' : n.type === 'npc' ? '#c7d2fe' : n.type === 'location' ? '#bbf7d0' : n.type === 'plot' ? '#fde68a' : '#e5e7eb';
-                  const stroke = hidden ? '#9ca3af' : '#6366f1';
-                  return (
-                    <g key={n.id} onClick={()=>{ if (!hidden) openGraph(n.id); }} className={hidden ? 'cursor-default' : 'cursor-pointer'}>
-                      <circle cx={p.x} cy={p.y} r={hidden ? 10 : 18} fill={fill} stroke={stroke} strokeWidth={hidden ? 1 : 2} />
-                      <text x={p.x} y={p.y + 4} textAnchor="middle" fontSize={hidden ? 8 : 10} fill={hidden ? '#9ca3af' : '#1f2937'} fontWeight="bold">{n.label}</text>
-                      {!hidden && n.extra && (
-                        <text x={p.x} y={p.y + 32} textAnchor="middle" fontSize="7" fill="#6b7280">{n.extra.slice(0, 14)}</text>
-                      )}
-                    </g>
-                  );
-                })}
-              </svg>
+            <div className="flex flex-wrap items-center gap-1.5 mb-2">
+              {([['all','全部'],['npc','角色'],['location','地点'],['plot','剧情'],['creature','生物'],['other','其他']] as const).map(([k,label])=>(
+                <button key={k} onClick={()=>setGraphTypeFilter(k)} className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${graphTypeFilter===k?'border-indigo-300 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>{label}</button>
+              ))}
+              <span className="ml-auto flex items-center gap-1">
+                <button onClick={()=>setGraphZoom(z=>Math.max(0.6, +(z-0.2).toFixed(2)))} className="w-6 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-50">－</button>
+                <button onClick={()=>setGraphZoom(1)} className="text-[10px] px-2 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-50">重置</button>
+                <button onClick={()=>setGraphZoom(z=>Math.min(2, +(z+0.2).toFixed(2)))} className="w-6 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-50">＋</button>
+              </span>
             </div>
 
-            <p className="text-[10px] text-gray-400 mt-2">灰色虚线表示存在关联但信息尚未暴露；点击已知节点可查看局部关系。</p>
+            {graphView.truncated && (
+              <p className="text-[10px] text-amber-600 mb-2">节点较多，已显示关联最多的 {graphView.visibleNodes.length}/{graphView.total} 个；点击节点可查看局部关系。</p>
+            )}
+
+            <div className="border border-gray-200 rounded-xl bg-white overflow-hidden">
+              {graphView.visibleNodes.length === 0 ? (
+                <div className="h-64 flex items-center justify-center text-xs text-gray-400">没有符合条件的节点。可以搜索节点，或切换类型筛选。</div>
+              ) : (
+                <svg viewBox="0 0 800 560" className="w-full h-auto" style={{maxHeight:'58vh'}}>
+                  <g transform={`translate(${400*(1-graphZoom)} ${280*(1-graphZoom)}) scale(${graphZoom})`}>
+                    {graphView.visibleEdges.map((e, i) => {
+                      const p1 = graphView.layout.get(e.source);
+                      const p2 = graphView.layout.get(e.target);
+                      if (!p1 || !p2) return null;
+                      const mx = (p1.x + p2.x) / 2;
+                      const my = (p1.y + p2.y) / 2;
+                      const hidden = e.relation === '???';
+                      const active = !graphActive.activeId || e.source === graphActive.activeId || e.target === graphActive.activeId;
+                      const showRelation = !!graphActive.activeId || graphView.visibleEdges.length <= 12;
+                      return (
+                        <g key={i}>
+                          <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}
+                            stroke={hidden ? '#d1d5db' : active ? '#818cf8' : '#c7d2fe'}
+                            strokeWidth={active ? 1.6 : 1}
+                            strokeDasharray={hidden ? '4 3' : undefined}
+                            opacity={active ? 1 : 0.18} />
+                          {!hidden && active && showRelation && (
+                            <text x={mx} y={my - 4} textAnchor="middle" fill="#9ca3af" fontSize="9"
+                              stroke="#ffffff" strokeWidth="2.5" paintOrder="stroke" strokeLinejoin="round">{e.relation}</text>
+                          )}
+                          <title>{e.relation}{e.strength ? ` · 亲密度${e.strength}` : ''}{e.confidence ? ` · 置信度${e.confidence}` : ''}</title>
+                        </g>
+                      );
+                    })}
+                    {graphView.visibleNodes.map((n) => {
+                      const p = graphView.layout.get(n.id);
+                      if (!p) return null;
+                      const hidden = n.label === '???';
+                      const fill = hidden ? '#f3f4f6' : (GRAPH_COLORS[n.type] || GRAPH_COLORS.other);
+                      const active = !graphActive.activeId || n.id === graphActive.activeId || graphActive.connected.has(n.id);
+                      const focused = n.id === graphFocusId;
+                      const showLabel = graphView.visibleNodes.length <= 16 || active || focused;
+                      const r = focused ? 22 : hidden ? 9 : 14;
+                      return (
+                        <g key={n.id}
+                          onClick={()=>{ if (!hidden) openGraph(n.id); }}
+                          onMouseEnter={()=>setGraphHoverId(n.id)}
+                          onMouseLeave={()=>setGraphHoverId(null)}
+                          className={hidden ? 'cursor-default' : 'cursor-pointer'}
+                          opacity={active ? 1 : 0.35}>
+                          <title>{n.label}（{GRAPH_TYPE_LABELS[n.type] || n.type}）{n.extra ? ` · ${n.extra}` : ''}</title>
+                          <circle cx={p.x} cy={p.y} r={r}
+                            fill={fill}
+                            stroke={hidden ? '#9ca3af' : focused ? '#4f46e5' : '#6366f1'}
+                            strokeWidth={focused ? 3 : hidden ? 1 : 1.8} />
+                          {showLabel && (
+                            <text x={p.x} y={p.y + r + 12} textAnchor="middle" fontSize={focused ? 11 : 9}
+                              fill={hidden ? '#9ca3af' : '#1f2937'} fontWeight="bold"
+                              stroke="#ffffff" strokeWidth="3" paintOrder="stroke" strokeLinejoin="round">{n.label}</text>
+                          )}
+                          {focused && n.extra && (
+                            <text x={p.x} y={p.y + r + 25} textAnchor="middle" fontSize="8" fill="#6b7280">{n.extra.slice(0, 18)}</text>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </g>
+                </svg>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 mt-2 text-[10px] text-gray-400">
+              <span><span className="inline-block w-2.5 h-2.5 rounded-full align-middle mr-1" style={{background:GRAPH_COLORS.npc}} />角色</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-full align-middle mr-1" style={{background:GRAPH_COLORS.location}} />地点</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-full align-middle mr-1" style={{background:GRAPH_COLORS.plot}} />剧情</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-full align-middle mr-1" style={{background:GRAPH_COLORS.creature}} />生物</span>
+              <span className="ml-auto">灰色虚线 = 关联未暴露</span>
+            </div>
           </div>
         </div>
       )}
