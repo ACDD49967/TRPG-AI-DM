@@ -96,8 +96,8 @@ SUGGEST_CHOICES_TOOL = _tool("suggest_choices",
 # ── 世界状态工具 ──
 
 UPDATE_WORLD_STATE_TOOL = _tool("update_world_state",
-    "修改持久化世界状态——仅在玩家行动已被检定/判定生效后调用。可新增/更新/删除NPC、地点、旗标，也可更新世界规则。",
-    {"action": {"type":"string","enum":["update_npc","add_npc","set_flag","add_location","update_location","set_world_rule","remove_npc","remove_location","remove_flag"]},
+    "修改持久化世界状态——仅在玩家行动已被检定/判定生效后调用。可新增/更新/删除NPC、地点、旗标、值得注意的场景/物品/线索，也可更新世界规则。",
+    {"action": {"type":"string","enum":["update_npc","add_npc","set_flag","add_location","update_location","set_world_rule","add_notable","update_notable","remove_notable","remove_npc","remove_location","remove_flag"]},
      "target": {"type":"string"},
      "changes": {"type":"object"},
      "reason": {"type":"string"}},

@@ -221,6 +221,36 @@ class CharacterNote:
 
 
 @dataclass
+class NotableEntry:
+    """值得注意的场景/物品/线索——冒险笔记“角色和场景”页的数据源。"""
+    name: str
+    entry_type: str = "scene"      # scene | item | object | clue | other
+    description: str = ""
+    location: str = ""
+    status: str = ""
+    importance: str = "minor"      # major | minor
+    discovered: bool = True
+    tags: list[str] = field(default_factory=list)
+    image_path: str = ""
+    turn_added: int = 0
+
+    def to_player_view(self) -> dict:
+        if not self.discovered:
+            return {"name": "???", "entry_type": "???", "description": "尚未发现"}
+        return {
+            "name": self.name,
+            "entry_type": self.entry_type,
+            "description": self.description,
+            "location": self.location,
+            "status": self.status,
+            "importance": self.importance,
+            "tags": self.tags,
+            "image_path": self.image_path,
+            "turn_added": self.turn_added,
+        }
+
+
+@dataclass
 class SceneInfo:
     """当前场景信息——每回合更新。"""
     current_location: str = "未知"
@@ -249,6 +279,9 @@ class WorldState:
 
     # 角色视角笔记
     character_notes: list[CharacterNote] = field(default_factory=list)
+
+    # 值得注意的场景/物品/线索（冒险笔记“角色和场景”页）
+    notables: list[NotableEntry] = field(default_factory=list)
     turn_count: int = 0  # 当前轮数
 
     # 幕后剧情事件：玩家不在场时世界仍在推进
@@ -310,6 +343,13 @@ class WorldState:
             ws.turn_count = data.get("turn_count", 0)
             ws.background_events = data.get("background_events", [])
             ws.relations = data.get("relations", [])
+            ws.notables = [
+                NotableEntry(**{k: v for k, v in n.items()
+                                if k in ["name","entry_type","description","location",
+                                         "status","importance","discovered","tags",
+                                         "image_path","turn_added"]})
+                for n in data.get("notables", [])
+            ]
             return ws
         return cls(session_id=session_id, _storage_dir=storage_dir)
 
@@ -327,6 +367,7 @@ class WorldState:
             "spells": self.spells,
             "scene": asdict(self.scene),
             "character_notes": [asdict(cn) for cn in self.character_notes],
+            "notables": [asdict(n) for n in self.notables],
             "turn_count": self.turn_count,
             "background_events": self.background_events,
             "relations": self.relations,
@@ -378,6 +419,44 @@ class WorldState:
         self.locations.append(entry)
         self._log_change(f"新增地点: {entry.name}")
         self.save()
+
+    def get_notable(self, name: str) -> NotableEntry | None:
+        for n in self.notables:
+            if n.name == name:
+                return n
+        return None
+
+    def add_notable(self, entry: NotableEntry):
+        """新增/更新值得注意的场景或物品（同名更新，不重复追加）。"""
+        for i, n in enumerate(self.notables):
+            if n.name == entry.name:
+                self.notables[i] = entry
+                self._log_change(f"值得注意条目更新: {entry.name}")
+                self.save()
+                return
+        self.notables.append(entry)
+        self._log_change(f"新增值得注意条目: {entry.name} ({entry.entry_type})")
+        self.save()
+
+    def update_notable(self, name: str, **changes) -> bool:
+        n = self.get_notable(name)
+        if n is None:
+            return False
+        for k, v in changes.items():
+            if hasattr(n, k):
+                setattr(n, k, v)
+        self._log_change(f"值得注意条目[{name}] 已更新")
+        self.save()
+        return True
+
+    def remove_notable(self, name: str) -> bool:
+        before = len(self.notables)
+        self.notables = [n for n in self.notables if n.name != name]
+        if len(self.notables) == before:
+            return False
+        self._log_change(f"值得注意条目已移除: {name}")
+        self.save()
+        return True
 
     def set_flag(self, key: str, status: str, description: str = "", consequence: str = "", visible: bool | None = None):
         for f in self.plot_flags:
@@ -583,6 +662,7 @@ class WorldState:
                 {"turn": e.get("turn"), "text": e.get("public_hint") or e.get("event")}
                 for e in self.background_events[-10:] if e.get("public_hint") or e.get("visible")
             ],
+            "notables": [n.to_player_view() for n in self.notables if n.discovered],
             "turn_count": self.turn_count,
         }
 
@@ -674,6 +754,13 @@ class WorldState:
                 for f in active[:6]:
                     tag = " [暗线]" if not f.visible else ""
                     lines.append(f"- {f.key}: {f.status}{tag}")
+
+        if self.notables:
+            notable = [n for n in self.notables if n.discovered]
+            if notable:
+                lines.append("### 值得注意的场景/物品")
+                for n in notable[:6]:
+                    lines.append(f"- {n.name}（{n.entry_type}）{n.description[:50]}")
 
         if self.background_events:
             latest = self.background_events[-1]

@@ -12,6 +12,7 @@ interface JournalData {
   world_events?:{turn?:number;text:string}[];
   locations:{name:string;description:string;status:string;secret?:string;type?:string;culture?:string;notable_figures?:string;dangers?:string;related_locations?:string[];related_npcs?:string[];related_creatures?:string[]}[];
   character_notes:{npc_notes:CharNote[];event_notes:CharNote[];quest_clues:CharNote[];location_notes:CharNote[]};
+  notables?:Array<{name:string;entry_type:string;description:string;location?:string;status?:string;importance?:string;tags?:string[];image_path?:string}>;
   turn_count:number;
 }
 
@@ -156,6 +157,7 @@ export default function PlayerJournal(){
 
   if(!j || !j.npcs) return null;
   const {npcs}=j;
+  const notableCount=j.notables?.length||0;
 
   return (
     <div className="w-64 bg-gray-50/80 border-l border-gray-200 flex flex-col overflow-hidden">
@@ -175,7 +177,7 @@ export default function PlayerJournal(){
       <div className="flex border-b border-gray-200 text-[10px]">
         {['npcs','plot','places','notes'].map(t=>(
           <button key={t} onClick={()=>setTab(t as typeof tab)} className={`flex-1 py-1.5 text-center ${tab===t?'text-indigo-600 border-b-2 border-indigo-500 bg-indigo-50/50':'text-gray-400 hover:text-gray-600'}`}>
-            {{npcs:`角色(${npcs.total})`,plot:'剧情',places:'地点',notes:'笔记'}[t]}
+            {{npcs:`角色和场景(${npcs.total+notableCount})`,plot:'剧情',places:'地点',notes:'笔记'}[t]}
           </button>
         ))}
       </div>
@@ -186,6 +188,21 @@ export default function PlayerJournal(){
           {npcs.enemies.length>0&&<div><p className="text-[9px] text-red-500 font-medium mb-1">敌人</p>{npcs.enemies.map(n=><NpcCard key={n.name} npc={n} cat="enemy"/>)}</div>}
           {npcs.allies.length>0&&<div><p className="text-[9px] text-emerald-500 font-medium mb-1 mt-2">盟友</p>{npcs.allies.map(n=><NpcCard key={n.name} npc={n} cat="ally"/>)}</div>}
           {npcs.neutrals.length>0&&<div><p className="text-[9px] text-gray-400 font-medium mb-1 mt-2">其他</p>{npcs.neutrals.map(n=><NpcCard key={n.name} npc={n} cat="neutral"/>)}</div>}
+          {(j.notables?.length||0)>0&&(
+            <div className="mt-2">
+              <p className="text-[9px] text-sky-600 font-medium mb-1">场景 / 物品</p>
+              {j.notables!.map((n,i)=>(
+                <div key={i} className="bg-white rounded-lg p-1.5 border border-gray-100 text-[10px] mb-1">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-gray-700 font-medium truncate">{n.name}</span>
+                    <span className="text-[8px] text-sky-500 shrink-0">{n.entry_type}{n.importance==='major'?' · 重要':''}</span>
+                  </div>
+                  {n.description&&<p className="text-gray-500 mt-0.5">{n.description}</p>}
+                  {(n.location||n.status)&&<p className="text-gray-400 mt-0.5">{[n.location,n.status].filter(Boolean).join(' · ')}</p>}
+                </div>
+              ))}
+            </div>
+          )}
         </>)}
         {tab==='plot'&&<div className="space-y-1">
           {j.world_events && j.world_events.length>0 && (

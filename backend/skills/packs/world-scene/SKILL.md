@@ -20,3 +20,4 @@ allowed-tools: [update_scene, update_world_state, reveal_info, search_locations,
 - 玩家发现隐藏信息时调用 reveal_info。
 - 需要地点资料时调用 search_locations / get_location_card。
 - 工具执行完成后，用简报说明已更新的场景/世界状态。
+- 值得注意的场景、物品、线索、机关、壁画等，调用 update_world_state(add_notable/update_notable/remove_notable)，让它们进入冒险笔记“角色和场景”页。

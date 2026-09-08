@@ -68,7 +68,7 @@ from backend.engine.rules import (
 from backend.engine.tools import DM_TOOLS
 from backend.engine.background_events import advance_background_plot_if_due
 from backend.engine.world_builder import _derive_npc_stats
-from backend.engine.world_state import WorldState, NpcEntry, PlotFlag, LocationEntry
+from backend.engine.world_state import WorldState, NpcEntry, PlotFlag, LocationEntry, NotableEntry
 from backend.engine.game_systems import build_system_rule_block, build_stat_glossary, get_system
 from backend.engine.focused_subagents import (
     build_dm_brief_tasks, format_dm_brief, get_skill_instruction,
@@ -1902,6 +1902,10 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
         pd = _roll_damage_simple(p_dice) if p_hit else 0
         new_e_hp = max(0, e_hp - pd)
         ed = 0
+        await push_event(state, "dice_roll", {
+            "skill": p_action or "攻击", "dc": p_skill,
+            "roll": pr, "modifier": 0, "result": p_result,
+        })
         # 敌人攻击由 enemy_attack 工具在敌人回合/剧情中单独调用
         lines = [
             f"⚔️ 战斗结算（COC d100）",
@@ -1927,6 +1931,10 @@ async def _exec_combat_round(args: dict, state: GameSessionState) -> str:
     ph, pd = combat_attack_roll("你", e_ac, p_mod, p_dice)
     new_e_hp = max(0, e_hp - pd)
     ed = 0
+    await push_event(state, "dice_roll", {
+        "skill": p_action or "攻击", "dc": e_ac,
+        "roll": ph.roll, "modifier": p_mod, "result": ph.result.value,
+    })
     # 敌人攻击由 enemy_attack 工具在敌人回合/剧情中单独调用，避免“穿反甲”式自动反伤
 
     system_hint = "D&D4e" if system == "dnd4e" else ("D&D5e" if system == "dnd5e" else "自定义")
@@ -1997,11 +2005,19 @@ async def _exec_enemy_attack(args: dict, state: GameSessionState) -> str:
         else:
             ed = 0
             result = "未命中"
+        await push_event(state, "dice_roll", {
+            "skill": f"{enemy}攻击", "dc": e_skill,
+            "roll": er, "modifier": 0, "result": "成功" if ed else "失败",
+        })
         line = f"{enemy}攻击: d100={er} vs {e_skill}% → {result}"
         if ed:
             line += f"，造成 {ed} 点伤害"
     else:
-        _, ed = combat_attack_roll(enemy, player_ac, e_mod, e_dice)
+        enemy_hit, ed = combat_attack_roll(enemy, player_ac, e_mod, e_dice)
+        await push_event(state, "dice_roll", {
+            "skill": f"{enemy}攻击", "dc": player_ac,
+            "roll": enemy_hit.roll, "modifier": e_mod, "result": enemy_hit.result.value,
+        })
         line = f"{enemy}攻击玩家 → AC{player_ac}"
         if ed:
             line += f"，命中造成 {ed} 点伤害"
@@ -2030,6 +2046,12 @@ async def _exec_death_save(args: dict, state: GameSessionState) -> str:
     ds = getattr(state, '_death_saves', DeathSaves())
     result = roll_death_save(ds)
     state._death_saves = ds
+    display_result = "大成功" if result["result"] == "复活" else (
+        "大失败" if result["result"] == "两次失败" else result["result"])
+    await push_event(state, "dice_roll", {
+        "skill": "死亡豁免", "dc": 10,
+        "roll": result["roll"], "modifier": 0, "result": display_result,
+    })
     desc = f"💀 死亡豁免: d20={result['roll']}→{result['result']} [成功{result['successes']}/3 失败{result['failures']}/3]"
     if result.get("hp_restored"):
         desc += "\n自然20！你咳出一口血，睁开了眼睛。"
@@ -2237,6 +2259,35 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
         ))
         await push_event(state, "journal_update", ws.to_player_journal())
         return f"✅ 新增地点: {target} ({reason})"
+    elif action in ("add_notable", "update_notable"):
+        existing_notable = ws.get_notable(target)
+        if existing_notable is not None:
+            for k in ("entry_type", "description", "location", "status", "importance",
+                      "discovered", "tags", "image_path"):
+                if k in changes:
+                    setattr(existing_notable, k, changes[k])
+            ws.save()
+            await push_event(state, "journal_update", ws.to_player_journal())
+            return f"✅ 值得注意条目已更新: {target} ({reason})"
+        ws.add_notable(NotableEntry(
+            name=target,
+            entry_type=changes.get("entry_type", "scene"),
+            description=changes.get("description", ""),
+            location=changes.get("location", ""),
+            status=changes.get("status", ""),
+            importance=changes.get("importance", "minor"),
+            discovered=changes.get("discovered", True),
+            tags=changes.get("tags", []),
+            image_path=changes.get("image_path", ""),
+            turn_added=ws.turn_count,
+        ))
+        await push_event(state, "journal_update", ws.to_player_journal())
+        return f"✅ 新增值得注意条目: {target} ({reason})"
+    elif action == "remove_notable":
+        if not ws.remove_notable(target):
+            return f"⚠ 值得注意条目 {target} 不存在"
+        await push_event(state, "journal_update", ws.to_player_journal())
+        return f"🗑️ 已移除值得注意条目: {target} ({reason})"
     elif action == "remove_npc":
         before = len(ws.npcs)
         ws.npcs = [n for n in ws.npcs if n.name != target]
@@ -2256,6 +2307,7 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
             return f"⚠ 地点 {target} 不存在"
         if ws.scene.current_location == target:
             ws.scene.current_location = "未知"
+        ws.notables = [n for n in ws.notables if n.location != target]
         ws.character_notes = [c for c in ws.character_notes if not (c.target_type == "location" and c.target == target)]
         ws.relations = [r for r in ws.relations if r.get("source") != target and r.get("target") != target]
         ws.save()

@@ -18,8 +18,8 @@ export default function DiceRollOverlay() {
   }, [latest]);
 
   if (!show || !latest) return null;
-  const isCrit = latest.result === '大成功' || latest.result === '大失败';
-  const ok = latest.result === '成功' || latest.result === '大成功';
+  const ok = ['成功','大成功','困难成功','极限成功','复活'].includes(latest.result);
+  const isCrit = ['大成功','大失败'].includes(latest.result) || latest.result === '复活';
 
   return (
     <AnimatePresence>

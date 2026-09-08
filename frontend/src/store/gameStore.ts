@@ -247,7 +247,14 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
   sceneInfo: { ...initialScene },
 
   setSession: (sessionId) =>
-    set({ sessionId, screen: 'playing', isProcessing: true }),
+    set((s) => ({
+      sessionId,
+      screen: 'playing',
+      isProcessing: true,
+      // 切换剧本/存档时清空战斗面板与战斗记录，避免跨存档串场
+      combat: s.sessionId === sessionId ? s.combat : null,
+      combatLog: s.sessionId === sessionId ? s.combatLog : [],
+    })),
 
   setWorldOutline: (outline: string) =>
     set({ worldOutline: outline }),
@@ -435,6 +442,7 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
       isProcessing: false,
       latestDiceRoll: null,
       combat: null,
+      combatLog: [],
       worldOutline: null,
       decisionSuggestions: [],
       journalData: null,
