@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="TRPG AI 跑团主持",
     description="由大语言模型驱动的单人 TRPG 跑团主持",
-    version="0.2.7",
+    version="0.2.8",
     lifespan=lifespan,
 )
 
