@@ -1155,8 +1155,9 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
             "record_plot_memory", "add_character_note",
         }:
             await push_event(state, "journal_update", ws.to_player_journal())
-    except Exception:
-        pass
+    except Exception as e:
+        from backend.logging_utils import get_logger
+        get_logger("dm_agent.journal").warning("journal_update 推送失败: %s", e, exc_info=True)
     return result
 
 
@@ -1691,8 +1692,9 @@ def _find_bestiary_card(state: GameSessionState, name: str) -> dict | None:
                 if str(item.get("name", "")) == name or str(item.get("id", "")) == name:
                     card = dict(item)
                     break
-    except Exception:
-        pass
+    except Exception as e:
+        from backend.logging_utils import get_logger
+        get_logger("dm_agent.bestiary").warning("查找图鉴卡失败: %s", e, exc_info=True)
     # 本局临时覆写：优先合并到图鉴卡；若图鉴无此卡，则用覆写构造临时卡
     override = getattr(state, "bestiary_overrides", {}).get(name)
     if override:
@@ -2752,8 +2754,9 @@ def _search_spell_for_entity(state: GameSessionState, name: str) -> dict | None:
             for s in spells or []:
                 if str(s.get("name", "")).strip() == name.strip():
                     return s
-    except Exception:
-        pass
+    except Exception as e:
+        from backend.logging_utils import get_logger
+        get_logger("dm_agent.spell").warning("检索法术图鉴失败: %s", e, exc_info=True)
     return None
 
 

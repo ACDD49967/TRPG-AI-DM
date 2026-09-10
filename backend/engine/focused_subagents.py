@@ -116,10 +116,25 @@ def _allowed_tool_schemas(pack: Any) -> list[dict]:
     allowed_set = {str(x).strip() for x in allowed if str(x).strip()}
     if not allowed_set:
         return []
+    known = {str(t.get("function", {}).get("name", "")) for t in DM_TOOLS}
+    unknown = sorted(allowed_set - known)
+    if unknown:
+        print(f"[Skills] {getattr(pack, 'id', '')} allowed-tools 含未知名（已忽略）: {unknown}")
     return [
         t for t in DM_TOOLS
         if str(t.get("function", {}).get("name", "")) in allowed_set
     ]
+
+
+# P1-15: 会修改世界/角色/图鉴状态、需要整段串行化的工具
+_WRITE_TOOL_NAMES = {
+    "update_state", "combat_round", "enemy_attack", "death_saving_throw", "take_rest",
+    "equip_item", "update_world_state", "update_scene", "reveal_info",
+    "update_bestiary_entry", "update_city_entry", "add_scenario_bestiary",
+    "add_scenario_map", "add_scenario_spell", "adjust_npc", "adjust_bestiary",
+    "promote_npc", "learn_spell", "forget_spell", "cast_spell",
+    "update_knowledge_graph", "add_memory", "record_plot_memory", "add_character_note",
+}
 
 
 async def run_tool_subagent(
@@ -150,6 +165,8 @@ async def run_tool_subagent(
         )
 
     tools = _allowed_tool_schemas(pack)
+    _tool_names = {str(t.get("function", {}).get("name", "")) for t in tools}
+    _needs_write_lock = bool(_tool_names & _WRITE_TOOL_NAMES)
     system_prompt = (
         f"你是专业子Agent：{pack.name}。\n"
         f"技能说明：{pack.description}\n\n"
@@ -191,6 +208,8 @@ async def run_tool_subagent(
                     return content
                 break
 
+            # 只处理前 4 个调用，并保持 assistant 消息与 tool 响应一一配对
+            selected_calls = list(tool_calls)[:4]
             messages.append({
                 "role": "assistant",
                 "content": msg.content or None,
@@ -203,10 +222,10 @@ async def run_tool_subagent(
                             "arguments": tc.function.arguments or "{}",
                         },
                     }
-                    for tc in tool_calls
+                    for tc in selected_calls
                 ],
             })
-            for tc in tool_calls[:4]:
+            for tc in selected_calls:
                 name = tc.function.name
                 try:
                     args = json.loads(tc.function.arguments or "{}")
@@ -225,6 +244,11 @@ async def run_tool_subagent(
         return "\n".join(observations) or "[子Agent未返回结论]"
 
     try:
+        lock = getattr(state, "agent_write_lock", None)
+        if _needs_write_lock and lock is not None:
+            # 多个写入型子 Agent 串行执行，避免各自基于旧快照交错写入
+            async with lock:
+                return await asyncio.wait_for(_run(), timeout=timeout)
         return await asyncio.wait_for(_run(), timeout=timeout)
     except asyncio.TimeoutError:
         return "[子Agent超时]"

@@ -69,6 +69,8 @@ class GameSessionState:
 
     # 工具执行锁：多个专业子 Agent 并发调用工具时，串行化状态变更
     tool_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    # P1-15: 写入型子 Agent 的整段串行锁（避免读-改-写交错造成丢失更新）
+    agent_write_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def check_rate_limit(self) -> bool:
         """检查距上次操作是否已超过速率限制。"""
