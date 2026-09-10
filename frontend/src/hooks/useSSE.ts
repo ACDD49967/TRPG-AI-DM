@@ -41,6 +41,7 @@ export function useSSE(sessionId: string | null) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const lastSeqRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
 
   const store = useGameStore;
 
@@ -59,6 +60,7 @@ export function useSSE(sessionId: string | null) {
 
     // 连接成功
     es.onopen = () => {
+      reconnectAttemptsRef.current = 0;
       console.log(`[SSE] 已连接到会话 ${sessionId}`);
     };
 
@@ -254,15 +256,22 @@ export function useSSE(sessionId: string | null) {
 
     // 连接错误 → 自动重连
     es.onerror = () => {
-      console.warn('[SSE] 连接断开，3秒后重连...');
       es.close();
-      // EventSource会自动重连，但我们可以做更可控的重连
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
+      // P1-17: 指数退避 + 最大尝试次数，避免后端重启后无限重试。
+      const attempt = reconnectAttemptsRef.current;
+      if (attempt >= 8) {
+        console.error('[SSE] 重连尝试超过 8 次，已停止自动重连；请刷新页面或检查后端。');
+        return;
+      }
+      reconnectAttemptsRef.current = attempt + 1;
+      const delay = Math.min(30000, 1000 * Math.pow(1.6, attempt));
+      console.warn(`[SSE] 连接断开，第 ${attempt + 1} 次重连将在 ${Math.round(delay / 1000)} 秒后开始...`);
       reconnectTimeoutRef.current = setTimeout(() => {
         connect();
-      }, 3000);
+      }, delay);
     };
   }, [sessionId]);
 

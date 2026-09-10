@@ -127,6 +127,9 @@ class KnowledgeBase:
             "local": {},
             "bge": {},
         }
+        # P1-5: 检索缓存（候选/分词/IDF/BM25）与文档修订号
+        self._revision = 0
+        self._retrieval_cache: dict[tuple, dict] = {}
 
     def load(self) -> "KnowledgeBase":
         if self._loaded:
@@ -169,6 +172,9 @@ class KnowledgeBase:
         return self
 
     def save(self):
+        # 文档内容变化后使检索缓存失效
+        self._revision += 1
+        self._retrieval_cache.clear()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
             json.dumps({"documents": self.documents}, ensure_ascii=False, indent=2),
@@ -322,38 +328,51 @@ class KnowledgeBase:
         if not q_terms:
             return []
 
-        candidates = []
-        for doc in self.documents:
-            if not self._visible_to(doc, username):
-                continue
-            if system and doc.get("system") not in ("custom", system):
-                continue
-            doc_scenario = str(doc.get("scenario_id") or "")
-            if scenario_id:
-                # 剧本模式：包含该剧本资料与全局资料，但不包含其它剧本资料
-                if doc_scenario and doc_scenario != scenario_id:
+        cache_key = (username or "", system or "", scenario_id or "", self._revision)
+        cached = self._retrieval_cache.get(cache_key)
+        if cached is None:
+            candidates = []
+            for doc in self.documents:
+                if not self._visible_to(doc, username):
                     continue
-            else:
-                # 全局模式：剧本内资料默认不污染总知识库
-                if doc_scenario:
+                if system and doc.get("system") not in ("custom", system):
                     continue
-            for idx, chunk in enumerate(doc.get("chunks", [])):
-                candidates.append((doc, idx, chunk))
+                doc_scenario = str(doc.get("scenario_id") or "")
+                if scenario_id:
+                    if doc_scenario and doc_scenario != scenario_id:
+                        continue
+                else:
+                    if doc_scenario:
+                        continue
+                for idx, chunk in enumerate(doc.get("chunks", [])):
+                    candidates.append((doc, idx, chunk))
+            if not candidates:
+                return []
+            df: Counter[str] = Counter()
+            for _, _, chunk in candidates:
+                for term in set(_tokenize(chunk)):
+                    df[term] += 1
+            n = max(1, len(candidates))
+            idf = {term: math.log((n + 1) / (freq + 1)) + 1 for term, freq in df.items()}
+            corpus_tokens = [_tokenize(chunk) for _, _, chunk in candidates]
+            cached = {
+                "candidates": candidates,
+                "idf": idf,
+                "corpus_tokens": corpus_tokens,
+                "bm25": BM25Okapi(corpus_tokens),
+            }
+            if len(self._retrieval_cache) > 8:
+                self._retrieval_cache.pop(next(iter(self._retrieval_cache)))
+            self._retrieval_cache[cache_key] = cached
+        candidates = cached["candidates"]
+        idf = cached["idf"]
+        corpus_tokens = cached["corpus_tokens"]
 
         if not candidates:
             return []
 
-        # 文档频率（用于 IDF）
-        df: Counter[str] = Counter()
-        for _, _, chunk in candidates:
-            for term in set(_tokenize(chunk)):
-                df[term] += 1
-        n = max(1, len(candidates))
-        idf = {term: math.log((n + 1) / (freq + 1)) + 1 for term, freq in df.items()}
-
         # TF-IDF 得分
         tfidf_scores: list[float] = []
-        corpus_tokens = [_tokenize(chunk) for _, _, chunk in candidates]
         for _, _, chunk in candidates:
             c_terms = _tokenize(chunk)
             c_tf = Counter(c_terms)
@@ -365,8 +384,8 @@ class KnowledgeBase:
             score = score / (1 + math.log(len(c_terms) + 1))
             tfidf_scores.append(score)
 
-        # BM25 稀疏检索得分
-        bm25 = BM25Okapi(corpus_tokens)
+        # BM25 稀疏检索得分（复用缓存 BM25 对象）
+        bm25 = cached["bm25"]
         bm25_scores = bm25.get_scores(q_terms)
 
         def _norm(vals) -> list[float]:
@@ -384,6 +403,7 @@ class KnowledgeBase:
         provider = get_provider()
         cache = self._vec_caches.setdefault(provider, {})
         q_vec = embed_text(query)
+        pending_vectors: list[dict] = []
         for doc, idx, chunk in candidates:
             key = (doc["id"], idx, hashlib.md5(chunk.encode("utf-8", errors="replace")).hexdigest())
             vec = cache.get(key)
@@ -393,9 +413,18 @@ class KnowledgeBase:
                     vec = stored[0]
                 if vec is None:
                     vec = embed_text(chunk)
-                    save_vector(provider, doc["id"], idx, key[2], vec, None)
+                    pending_vectors.append({
+                        "doc_id": doc["id"], "chunk_index": idx, "content_md5": key[2],
+                        "dense": vec, "sparse": None,
+                    })
                 cache[key] = vec
             dense_scores.append(max(0.0, dense_cosine(q_vec, vec)))
+        if pending_vectors:
+            try:
+                from backend.local_vector_store import save_vectors_batch
+                save_vectors_batch(provider, pending_vectors)
+            except Exception as e:
+                print(f"[KB] 批量写入向量失败（忽略，下次重算）: {e}")
         dense_norm = _norm(dense_scores)
 
         # BGE-M3 稀疏向量（lexical weights）参与混合检索
@@ -405,6 +434,7 @@ class KnowledgeBase:
             sparse_cache = self._sparse_caches.setdefault(provider, {})
             q_sparse = sparse_embed(query)
             bge_sparse_scores = []
+            sparse_pending: list[dict] = []
             for doc, idx, chunk in candidates:
                 key = (doc["id"], idx, hashlib.md5(chunk.encode("utf-8", errors="replace")).hexdigest())
                 svec = sparse_cache.get(key)
@@ -414,9 +444,18 @@ class KnowledgeBase:
                         svec = stored[1]
                     if svec is None:
                         svec = sparse_embed(chunk)
-                        save_vector(provider, doc["id"], idx, key[2], None, svec)
+                        sparse_pending.append({
+                            "doc_id": doc["id"], "chunk_index": idx, "content_md5": key[2],
+                            "dense": None, "sparse": svec,
+                        })
                     sparse_cache[key] = svec
                 bge_sparse_scores.append(sparse_cosine(q_sparse, svec))
+            if sparse_pending:
+                try:
+                    from backend.local_vector_store import save_vectors_batch
+                    save_vectors_batch(provider, sparse_pending)
+                except Exception as e:
+                    print(f"[KB] 批量写入稀疏向量失败（忽略，下次重算）: {e}")
             bge_sparse_norm = _norm(bge_sparse_scores)
 
         # 查询分类动态权重：规则查询偏词法，实体查询偏语义

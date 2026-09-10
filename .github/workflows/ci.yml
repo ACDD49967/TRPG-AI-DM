@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend test deps (skip heavy Paddle OCR)
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi "uvicorn[standard]" openai httpx "sqlalchemy[asyncio]" \
+            aiosqlite pydantic python-dotenv sse-starlette python-multipart \
+            pypdf python-docx pymupdf pdfplumber json-repair jieba rank-bm25 numpy langgraph pyyaml
+      - name: Compile
+        run: python -m compileall -q backend scripts
+      - name: Unit tests
+        env:
+          PYTHONPATH: .
+        run: python -m unittest discover -s tests -v
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build

@@ -75,6 +75,47 @@ def save_vector(
             conn.close()
 
 
+def save_vectors_batch(
+    provider: str,
+    items: list[dict[str, Any]],
+    block_type: str = "text",
+) -> int:
+    """批量写入向量，单连接单事务提交；items 元素：
+    {doc_id, chunk_index, content_md5, dense, sparse}
+    """
+    if not items:
+        return 0
+    with _LOCK:
+        conn = _conn()
+        try:
+            for it in items:
+                conn.execute(
+                    """
+                    INSERT INTO document_vectors
+                        (provider, doc_id, chunk_index, content_md5, block_type, dense, sparse, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(provider, doc_id, chunk_index, content_md5) DO UPDATE SET
+                        block_type = excluded.block_type,
+                        dense = COALESCE(excluded.dense, document_vectors.dense),
+                        sparse = COALESCE(excluded.sparse, document_vectors.sparse),
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (
+                        provider,
+                        str(it.get("doc_id", "")),
+                        int(it.get("chunk_index", 0) or 0),
+                        str(it.get("content_md5", "")),
+                        str(it.get("block_type") or block_type),
+                        json.dumps(it.get("dense"), ensure_ascii=False) if it.get("dense") is not None else None,
+                        json.dumps(it.get("sparse"), ensure_ascii=False) if it.get("sparse") is not None else None,
+                    ),
+                )
+            conn.commit()
+            return len(items)
+        finally:
+            conn.close()
+
+
 def load_vector(
     provider: str,
     doc_id: str,

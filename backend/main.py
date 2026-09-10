@@ -1100,18 +1100,24 @@ async def _run_model_download_task(task_id: str, kind: str):
     )
 
     task_manager.update(task_id, status="running", phase="deps", message="正在安装模型依赖")
+    _cancel = lambda: is_cancel_requested(task_id)
     try:
+        if _cancel():
+            task_manager.update(task_id, status="cancelled", phase="cancelled", message="已取消")
+            return
         if kind == "embedding":
-            await ensure_bge_dependencies()
+            await ensure_bge_dependencies(cancel_check=_cancel)
             target_dir = str(settings.BGE_M3_DIR)
             repo = settings.BGE_M3_REPO
         else:
-            await ensure_reranker_dependencies()
+            await ensure_reranker_dependencies(cancel_check=_cancel)
             target_dir = str(settings.BGE_RERANKER_PATH)
             repo = settings.BGE_RERANKER_REPO
 
         task_manager.update(task_id, status="running", phase="download", message="开始下载模型")
         async def _cb(pct, path):
+            if _cancel():
+                raise TaskCancelled("模型下载已取消")
             task_manager.update(
                 task_id,
                 status="running",
@@ -1120,7 +1126,7 @@ async def _run_model_download_task(task_id: str, kind: str):
                 message=f"下载中：{path}" if path else "下载中",
             )
 
-        await download_hf_repo(repo, target_dir, _cb)
+        await download_hf_repo(repo, target_dir, _cb, cancel_check=_cancel)
         size = sum(f.stat().st_size for f in Path(target_dir).rglob("*") if f.is_file())
         task_manager.update(
             task_id,
@@ -1130,6 +1136,8 @@ async def _run_model_download_task(task_id: str, kind: str):
             message="模型下载完成",
             result={"kind": kind, "path": target_dir, "size": size},
         )
+    except TaskCancelled:
+        task_manager.update(task_id, status="cancelled", phase="cancelled", message="模型下载已取消")
     except Exception as e:
         task_manager.update(task_id, status="failed", phase="download", error=str(e))
 
@@ -1515,6 +1523,12 @@ async def load_save_api(payload: dict):
     if not (state.model_name or settings.LLM_MODEL_NAME):
         raise HTTPException(status_code=400, detail="存档未包含模型配置，请重新开始并选择模型")
     session_manager._sessions[session_id] = state
+    # P1-20：读档生成新 session_id，登记到 DB，避免孤儿会话。
+    try:
+        from backend.session_store import persist_session_snapshot
+        await persist_session_snapshot(state)
+    except Exception:
+        pass
     # 载入存档后重新激活扩展包，确保 RAG 知识库中有对应内容
     if state.character_info.get("extension_ids"):
         from backend.extension_manager import activate_extensions_into_kb
@@ -2938,6 +2952,12 @@ async def _handle_player_action(state: GameSessionState, player_input: str):
     """后台任务：处理玩家行动并推送 SSE 事件。"""
     try:
         await process_player_action(state, player_input)
+        # P1-21：回合结束后把内存权威状态快照回写 SQLite，供审计/恢复辅助。
+        try:
+            from backend.session_store import persist_session_snapshot
+            await persist_session_snapshot(state)
+        except Exception:
+            pass
     except Exception as e:
         await push_event(state, "error", {
             "code": "INTERNAL_ERROR",
