@@ -3470,15 +3470,18 @@ def _mode_instructions(s: GameSessionState, focused: bool = False) -> str:
 MODULE_TOOL_NAMES = {
     "rules": ["dice_roll", "update_state", "get_character_state", "adjust_resource",
               "cast_spell", "search_spells", "search_knowledge", "update_world_state",
-              "suggest_choices"],
+              "learn_spell", "forget_spell", "roll_treasure", "generate_name",
+              "npc_quirk", "equip_item", "add_scenario_spell", "suggest_choices"],
     "combat": ["combat_round", "enemy_attack", "death_saving_throw", "take_rest", "search_npcs",
                "search_bestiary", "update_state", "update_scene", "update_world_state",
-               "suggest_choices"],
+               "get_bestiary_card", "add_scenario_bestiary", "adjust_bestiary",
+               "equip_item", "roll_treasure", "suggest_choices"],
     "scene": ["update_scene", "search_locations", "get_location_card",
-              "reveal_info", "update_world_state", "suggest_choices"],
+              "reveal_info", "update_world_state", "add_scenario_map",
+              "update_city_entry", "generate_name", "suggest_choices"],
     "social": ["search_npcs", "adjust_npc", "add_character_note",
                "update_knowledge_graph", "get_entity_graph", "update_world_state",
-               "suggest_choices"],
+               "promote_npc", "update_bestiary_entry", "suggest_choices"],
     "memory": ["search_knowledge", "search_memory", "get_entity_graph", "get_graph_path",
                "add_memory", "record_plot_memory", "update_world_state",
                "suggest_choices"],
@@ -3576,9 +3579,10 @@ async def _stream_with_tools(client, model, messages, tools, state, max_tokens=2
                     if tc.function.name: tc_map[i]["function"]["name"] = tc.function.name
                     if tc.function.arguments: tc_map[i]["function"]["arguments"] += tc.function.arguments
     await flush_pending()
-    # deepseek-v4-flash 等模型可能只给 reasoning_content；没有内容也没有工具调用时作为兜底
+    # reasoning_content 是模型内部推理，绝不能作为玩家正文下发。
+    # 若模型只返回 reasoning、没有正文也没有工具调用，返回空串，由上层追加一次系统重试。
     if not content.strip() and not tc_map and reasoning_content.strip():
-        content = reasoning_content
+        print("[DM] 模型只返回 reasoning_content，已拦截，不注入玩家叙事")
     return content, list(tc_map.values())
 
 
@@ -3776,6 +3780,7 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
     suggested = False
     error_streak = 0
     combat_guard_count = 0
+    empty_stream_retry = 0
     module_tools = [] if delegation_used else _module_tools(module, skill.tools)
     try:
         while True:
@@ -3792,6 +3797,14 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
                 # 主 DM 默认高思考；只有玩家显式选 low 时才降为快速模式
                 think_mode = "low" if getattr(state, "thinking_strength", "high") == "low" else "high"
             text, tcs = await _stream_with_tools(client, model, messages, module_tools, state, max_tokens, temperature=skill.temperature, thinking_mode=think_mode)
+            # 模型只输出 reasoning、没有正文与工具调用时，追加一次“只输出正文”重试
+            if (not text.strip() and not tcs and not state.aborted
+                    and empty_stream_retry < 1):
+                empty_stream_retry += 1
+                messages.append({"role": "system", "content":
+                    "[系统] 你刚才只返回了内部推理，没有给玩家正文。"
+                    "请直接输出角色扮演叙事（2-4 句，禁止输出推理过程），不要调用工具。"})
+                continue
             full += text
             if any(t.get("function", {}).get("name") == "suggest_choices" for t in tcs):
                 suggested = True

@@ -29,6 +29,7 @@ from backend.engine.game_systems import detect_game_system
 from backend.engine.rag_utils import embed_text, cosine as dense_cosine
 from backend.engine.prompt_guard import extract_json_array, sanitize_user_text
 from backend.engine.llm_utils import strip_refusal as _strip_refusal
+from backend.logging_utils import get_logger
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -698,8 +699,8 @@ async def generate_scenario_from_text(
         sync_scenario_maps(username, saved.id, world_state.locations, system)
         sync_scenario_bestiary(username, saved.id, world_state.creatures, system)
         sync_scenario_spells(username, saved.id, world_state.spells, system)
-    except Exception:
-        pass
+    except Exception as e:
+        get_logger("scenario_import").warning("sync_scenario_* 失败（已忽略）: %s", e, exc_info=True)
 
     # 将剧本细节写入本地知识库（限定到 scenario_id，避免污染总知识库）
     try:

@@ -54,7 +54,8 @@ def install_core() -> bool:
 
 def install_bge() -> bool:
     py = sys.executable
-    if not run([py, "-m", "pip", "install", "-q", "FlagEmbedding", "huggingface_hub"]):
+    # P1-25: download_bge_models.py 使用 ModelScope，必须一并安装 modelscope。
+    if not run([py, "-m", "pip", "install", "-q", "FlagEmbedding", "huggingface_hub", "modelscope"]):
         return False
     script = ROOT / "scripts" / "download_bge_models.py"
     if script.exists():

@@ -241,6 +241,7 @@ async def run_tool_subagents(
     timeout: float = 60,
 ) -> dict[str, str]:
     """并发运行一组可调用工具的专业子 Agent，按 task key 返回简报。"""
+    tasks = list(tasks or [])[:MAX_DELEGATED_TASKS]
     sem = asyncio.Semaphore(max(1, int(max_concurrency)))
 
     async def _one(task: dict) -> tuple[str, str]:
@@ -258,6 +259,9 @@ async def run_tool_subagents(
         if isinstance(item, tuple) and len(item) == 2:
             out[str(item[0])] = str(item[1] or "")
     return out
+
+
+MAX_DELEGATED_TASKS = 3
 
 
 async def plan_task_keys(
@@ -322,10 +326,10 @@ async def plan_task_keys(
             if k in valid and k not in picked:
                 picked.append(k)
         if picked:
-            return picked
+            return picked[:MAX_DELEGATED_TASKS]
     except Exception as e:
-        print(f"[DMPlanner] 任务分配失败，回退全部候选: {e}")
-    return keys
+        print(f"[DMPlanner] 任务分配失败，回退前 {MAX_DELEGATED_TASKS} 个候选: {e}")
+    return keys[:MAX_DELEGATED_TASKS]
 
 
 # ── 专业子 Agent 任务编排 ─────────────────────────────────────

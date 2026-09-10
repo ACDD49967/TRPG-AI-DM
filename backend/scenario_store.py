@@ -16,11 +16,9 @@ SCENARIO_DIR = "scenarios"
 
 
 def _safe_username(username: str | None) -> str:
-    """用户名转安全目录名。"""
-    name = re.sub(r"[^0-9A-Za-z\u4e00-\u9fa5_-]", "_", (username or "").strip())
-    if not name or name in (".", ".."):
-        return "default"
-    return name[:64]
+    """用户名转安全目录名（统一委托 backend.paths）。"""
+    from backend.paths import safe_username
+    return safe_username(username)
 
 
 def _user_scenario_dir(username: str | None) -> str:

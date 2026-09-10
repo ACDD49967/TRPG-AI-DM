@@ -14,8 +14,8 @@ EXT_ROOT = Path("extensions")
 
 
 def _user_dir(username: str) -> Path:
-    safe = "".join(c for c in (username or "default") if c.isalnum() or c in "._-") or "default"
-    return EXT_ROOT / safe
+    from backend.paths import safe_username
+    return EXT_ROOT / safe_username(username)
 
 
 def list_extensions(username: str) -> list[dict]:

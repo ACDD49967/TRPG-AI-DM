@@ -48,8 +48,18 @@ def warmup_rag():
 
 def set_provider(mode: str):
     """运行时切换向量生成模式：local | small | bge（模型不可用时自动回退 local）。"""
-    global _current_provider
+    global _current_provider, _bge_m3, _bge_llm, _small_embedder, _reranker
+    global _bge_m3_tried, _bge_tried, _small_embedder_tried, _reranker_tried
     _current_provider = mode if mode in ("local", "small", "bge") else "local"
+    # 重置惰性加载闩锁，使运行期切换 provider 能立即重新尝试加载
+    _bge_m3_tried = False
+    _bge_tried = False
+    _small_embedder_tried = False
+    _reranker_tried = False
+    _bge_m3 = None
+    _bge_llm = None
+    _small_embedder = None
+    _reranker = None
 
 
 def get_provider() -> str:
@@ -128,12 +138,12 @@ def _local_sparse(text: str) -> dict[str, float]:
 def _load_bge_m3() -> Any | None:
     """惰性加载 BGE-M3 完整模型（FlagEmbedding，支持稠密+稀疏）。"""
     global _bge_m3, _bge_m3_tried
-    if _bge_m3_tried:
-        return _bge_m3
-    _bge_m3_tried = True
     path = (settings.BGE_M3_DIR or "").strip()
     if _current_provider != "bge" or not path or not os.path.isdir(path):
         return None
+    if _bge_m3_tried:
+        return _bge_m3
+    _bge_m3_tried = True
     try:
         from FlagEmbedding import BGEM3FlagModel
         _bge_m3 = BGEM3FlagModel(path, use_fp16=False)
@@ -146,12 +156,12 @@ def _load_bge_m3() -> Any | None:
 def _load_bge_gguf() -> Any | None:
     """惰性加载 BGE-M3 GGUF（通过 llama-cpp-python），仅作为旧版回退。"""
     global _bge_llm, _bge_tried
-    if _bge_tried:
-        return _bge_llm
-    _bge_tried = True
     path = (settings.BGE_MODEL_PATH or "").strip()
     if _current_provider != "bge" or not path or not os.path.exists(path):
         return None
+    if _bge_tried:
+        return _bge_llm
+    _bge_tried = True
     try:
         from llama_cpp import Llama
         _bge_llm = Llama(
@@ -170,12 +180,12 @@ def _load_bge_gguf() -> Any | None:
 def _load_small_embedder() -> Any | None:
     """惰性加载小中文向量模型（sentence-transformers，如 m3e-small）。"""
     global _small_embedder, _small_embedder_tried
-    if _small_embedder_tried:
-        return _small_embedder
-    _small_embedder_tried = True
     path = (settings.SMALL_EMBEDDING_DIR or "").strip()
     if _current_provider != "small" or not path or not os.path.isdir(path):
         return None
+    if _small_embedder_tried:
+        return _small_embedder
+    _small_embedder_tried = True
     try:
         from sentence_transformers import SentenceTransformer
         _small_embedder = SentenceTransformer(path)
@@ -278,14 +288,14 @@ def cosine(a: list[float], b: list[float]) -> float:
 def _load_reranker() -> Callable[[str, list[str]], list[float]] | None:
     """惰性加载 BGE-reranker-base；未配置/失败回退 None。"""
     global _reranker, _reranker_tried
-    if _reranker_tried:
-        return _reranker
-    _reranker_tried = True
     path = (settings.SMALL_RERANKER_DIR or "").strip() if _current_provider == "small" else ""
     if not path or not os.path.exists(path):
         path = (settings.BGE_RERANKER_PATH or "").strip()
     if not path or not os.path.exists(path):
         return None
+    if _reranker_tried:
+        return _reranker
+    _reranker_tried = True
     try:
         from FlagEmbedding import FlagReranker
         model = FlagReranker(path, use_fp16=False)
@@ -302,15 +312,25 @@ def _load_reranker() -> Callable[[str, list[str]], list[float]] | None:
     return _reranker
 
 
-def rerank(query: str, texts: list[str], top_k: int = 5) -> list[tuple[str, float]]:
-    """若配置 BGE-reranker 且可加载，则重排；否则原序返回。"""
+def rerank_or_none(query: str, texts: list[str], top_k: int = 5) -> list[tuple[str, float]] | None:
+    """尝试重排；未配置/加载失败/执行失败时返回 None，由调用方保留原始混合检索分数。"""
     fn = _load_reranker()
     if fn is None or not texts:
-        return [(t, 0.0) for t in texts[:top_k]]
+        return None
     try:
         scores = fn(query, texts)
+        if not scores:
+            return None
         pairs = sorted(zip(texts, scores), key=lambda x: x[1], reverse=True)
         return pairs[:top_k]
     except Exception as e:
-        print(f"[RAG] rerank 失败，按原序返回: {e}")
-        return [(t, 0.0) for t in texts[:top_k]]
+        print(f"[RAG] rerank 失败，保留混合检索原始分数: {e}")
+        return None
+
+
+def rerank(query: str, texts: list[str], top_k: int = 5) -> list[tuple[str, float]]:
+    """兼容旧接口：保留原序返回；新代码请使用 rerank_or_none。"""
+    result = rerank_or_none(query, texts, top_k=top_k)
+    if result is not None:
+        return result
+    return [(t, 0.0) for t in texts[:top_k]]

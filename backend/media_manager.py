@@ -7,6 +7,7 @@ import re
 import shutil
 import time
 import uuid
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -26,8 +27,8 @@ _CACHE_TTL = 3.0
 
 
 def _user_media_dir(username: str) -> Path:
-    safe = "".join(c for c in (username or "default") if c.isalnum() or c in "._-") or "default"
-    return MEDIA_ROOT / safe
+    from backend.paths import safe_username
+    return MEDIA_ROOT / safe_username(username)
 
 
 def _images_dir(username: str) -> Path:
@@ -148,10 +149,80 @@ def _match_default_item(items: list[dict], default_name: str, default_name_en: s
     return None
 
 
+_SEED_VERSION = 2
+
+
+def _seed_marker_version(user_dir: Path) -> int:
+    """读取 seeded.json 的版本；旧文件内容 "1" 视为版本 1。"""
+    marker = user_dir / "seeded.json"
+    if not marker.exists():
+        return 0
+    try:
+        raw = marker.read_text(encoding="utf-8").strip()
+        if not raw:
+            return 0
+        if raw.startswith("{"):
+            import json as _json
+            return int(_json.loads(raw).get("version", 1) or 1)
+        return int(raw or 0)
+    except Exception:
+        return 1
+
+
+def _dedupe_builtin_items(username: str, kind: str, default_names: set[str]) -> int:
+    """清理内置条目的同名重复项：每（名称, 系统, 剧本作用域）保留字段最全的一条。
+
+    只处理名称命中内置列表且 scenario_id 为空的条目，避免误删用户自建内容。
+    """
+    items = _load_meta(username, kind)
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for item in items:
+        sid = str(item.get("scenario_id") or "")
+        name = str(item.get("name") or "")
+        if sid or name not in default_names:
+            continue
+        groups.setdefault((name, str(item.get("system") or "")), []).append(item)
+    removed_ids: set[str] = set()
+    for (_, _), group in groups.items():
+        if len(group) <= 1:
+            continue
+        def _score(it: dict) -> tuple:
+            return (
+                bool(it.get("image_path")),
+                len(str(it.get("description") or "")),
+                len(it.get("stats") or {}),
+                len(it.get("details") or {}),
+                1 if it.get("tags") else 0,
+            )
+        group_sorted = sorted(group, key=_score, reverse=True)
+        keep = group_sorted[0]
+        merged_stats = dict(keep.get("stats") or {})
+        merged_details = dict(keep.get("details") or {})
+        merged_tags = list(keep.get("tags") or [])
+        for other in group_sorted[1:]:
+            removed_ids.add(str(other.get("id") or ""))
+            merged_stats.update({k: v for k, v in (other.get("stats") or {}).items()
+                                 if k not in merged_stats or not merged_stats.get(k)})
+            merged_details.update({k: v for k, v in (other.get("details") or {}).items()
+                                   if k not in merged_details or not merged_details.get(k)})
+            for tag in other.get("tags") or []:
+                if tag not in merged_tags:
+                    merged_tags.append(tag)
+        keep["stats"] = merged_stats
+        keep["details"] = merged_details
+        keep["tags"] = merged_tags
+    if not removed_ids:
+        return 0
+    _save_meta(username, kind, [i for i in items if str(i.get("id") or "") not in removed_ids])
+    return len(removed_ids)
+
+
 def ensure_seeded(username: str):
     """写入/升级内置经典生物与城市背景：新条目补充，已有旧默认条目升级缺失字段。"""
     user_dir = _user_media_dir(username)
     user_dir.mkdir(parents=True, exist_ok=True)
+    if _seed_marker_version(user_dir) >= _SEED_VERSION:
+        return
     beasts = _load_meta(username, "bestiary")
     cities = _load_meta(username, "maps")
     deleted_beasts = _load_deleted_builtin(username, "bestiary")
@@ -217,7 +288,17 @@ def ensure_seeded(username: str):
                 system=city.get("system", "custom"),
                 details=full_details,
             )
-    (user_dir / "seeded.json").write_text("1", encoding="utf-8")
+    # 一次性清理旧版本遗留的内置同名重复条目（只处理 scenario_id 为空的经典条目）
+    try:
+        beast_names = {_localize_default_name(b["name"]) for b in CLASSIC_BESTIARY}
+        beast_names |= {b["name"] for b in CLASSIC_BESTIARY}
+        city_names = {_localize_default_name(c["name"]) for c in COMMON_CITIES}
+        city_names |= {c["name"] for c in COMMON_CITIES}
+        _dedupe_builtin_items(username, "bestiary", beast_names)
+        _dedupe_builtin_items(username, "maps", city_names)
+    except Exception:
+        pass
+    (user_dir / "seeded.json").write_text('{"version": %d}' % _SEED_VERSION, encoding="utf-8")
 
 
 def save_image(username: str, data: bytes, filename: str) -> str:

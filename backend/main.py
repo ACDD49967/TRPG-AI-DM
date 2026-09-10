@@ -4,6 +4,8 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 
+from backend.logging_utils import get_logger
+
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -62,11 +64,30 @@ async def lifespan(app: FastAPI):
         cleanup_world_states(active_session_ids=list(session_manager._sessions.keys()))
     except Exception:
         pass
+    # 后台会话回收任务：定期清理无订阅且超时的会话 + world_states
+    async def _session_gc_loop():
+        while True:
+            await asyncio.sleep(300)
+            try:
+                removed = session_manager.prune_idle()
+                if removed:
+                    print(f"[AI-DM] 回收空闲会话 {len(removed)} 个")
+                from backend.engine.world_state import cleanup_world_states
+                cleanup_world_states(active_session_ids=list(session_manager._sessions.keys()))
+            except Exception as e:
+                print(f"[AI-DM] 会话回收失败（已忽略）: {e}")
+
+    gc_task = asyncio.create_task(_session_gc_loop())
     print(f"[AI-DM] Server started at http://{settings.HOST}:{settings.PORT}")
     print(f"[AI-DM] Database: {settings.DATABASE_URL}")
     print(f"[AI-DM] Model: {settings.MODEL_NAME}")
     yield
-    # 关闭时：清理资源（如有需要）
+    # 关闭时：停止 GC 任务
+    gc_task.cancel()
+    try:
+        await gc_task
+    except asyncio.CancelledError:
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -184,8 +205,8 @@ async def generate_world(request: WorldGenRequest):
         sync_scenario_maps(request.username, scenario_id, world_state.locations, request.game_system)
         sync_scenario_bestiary(request.username, scenario_id, world_state.creatures, request.game_system)
         sync_scenario_spells(request.username, scenario_id, world_state.spells, request.game_system)
-    except Exception:
-        pass
+    except Exception as e:
+        get_logger("scenario_sync").warning("sync_scenario_* 失败（已忽略）: %s", e, exc_info=True)
 
     return {
         "scenario_id": scenario_id,
@@ -987,12 +1008,25 @@ async def _run_knowledge_upload_task(
         _mark_cancelled("完成前已取消")
         return
 
+    # P1-10: 不在 SSE 单帧内联全文/父子块；只回传可索引的摘要，完整内容走知识库接口。
+    doc_summary = {
+        "id": doc.get("id"),
+        "title": doc.get("title"),
+        "system": doc.get("system"),
+        "source": doc.get("source"),
+        "scenario_id": doc.get("scenario_id"),
+        "content_length": len(doc.get("content") or ""),
+        "parent_chunk_count": len(doc.get("parent_chunks") or []),
+        "child_chunk_count": len(doc.get("child_chunks") or []),
+        "image_count": len(doc.get("images") or []),
+        "table_count": len(doc.get("tables") or []),
+    }
     task_manager.update(
         task_id,
         status="completed",
         phase="done",
         message="上传完成",
-        result={"doc": doc, "pipeline": pipeline_meta, "warning": warning or None},
+        result={"doc": doc_summary, "pipeline": pipeline_meta, "warning": warning or None},
     )
 
 @app.post("/api/tasks/upload-document")
@@ -1962,6 +1996,7 @@ async def fetch_models(payload: dict):
     """从 OpenAI 兼容接口获取模型列表，用于前端下拉菜单。"""
     import httpx
     base_url = str(payload.get("base_url") or settings.LLM_BASE_URL).rstrip("/")
+    _verify = _os.environ.get("DND_INSECURE_TLS", "0") != "1"
     api_key = str(payload.get("api_key") or settings.LLM_API_KEY)
     try:
         api_key = ensure_valid_api_key(api_key)
@@ -1972,7 +2007,8 @@ async def fetch_models(payload: dict):
         candidates.append(f"{base_url}/v1/models")
     last_err = None
     try:
-        async with httpx.AsyncClient(timeout=20, verify=False) as hc:
+        _ca_bundle = _os.environ.get("DND_CA_BUNDLE", "").strip()
+        async with httpx.AsyncClient(timeout=20, verify=(_ca_bundle or _verify)) as hc:
             for url in candidates:
                 try:
                     r = await hc.get(url, headers={"Authorization": f"Bearer {api_key}"})
@@ -2911,16 +2947,20 @@ async def _handle_player_action(state: GameSessionState, player_input: str):
 
 
 @app.get("/api/game/{session_id}/stream")
-async def stream_events(session_id: str, last_event_seq: int = 0, username: str = "default"):
+async def stream_events(session_id: str, request: Request, last_event_seq: int = 0, username: str = "default"):
     """SSE 长连接——推送游戏事件流。
 
-    前端通过 EventSource 连接此端点，接收实时叙事、骰子结果、状态更新等事件。
-    支持通过 last_event_seq 参数进行断线重连。
+    支持 last_event_seq 查询参数与标准 Last-Event-ID 头部；
+    重连时只补发缺失事件，不重新生成开场白。
     """
     state = _get_session_for_user(session_id, username)
+    last_id = max(0, int(last_event_seq or 0))
+    header_id = (request.headers.get("last-event-id") or "").strip()
+    if header_id.isdigit():
+        last_id = max(last_id, int(header_id))
 
     return StreamingResponse(
-        sse_event_generator(state),
+        sse_event_generator(state, last_event_id=last_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

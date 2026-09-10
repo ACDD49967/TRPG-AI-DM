@@ -13,6 +13,9 @@ import json
 import os
 import shutil
 import uuid
+
+from backend.logging_utils import get_logger
+from backend.paths import safe_username
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -24,8 +27,28 @@ SAVE_ROOT = Path("saves")
 
 
 def _user_dir(username: str) -> Path:
-    safe = "".join(c for c in (username or "default") if c.isalnum() or c in "._-") or "default"
-    return SAVE_ROOT / safe
+    return SAVE_ROOT / safe_username(username)
+
+
+def _atomic_write_json(path: Path, payload: dict) -> None:
+    """先写临时文件再原子替换，避免中断产生半截存档。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _serialize_dynamic(state: GameSessionState) -> dict:
+    """序列化死亡豁免/生命骰/奥术回想等运行期动态属性（P1-13）。"""
+    ds = getattr(state, "_death_saves", None)
+    if ds is not None and hasattr(ds, "__dataclass_fields__"):
+        from dataclasses import asdict
+        ds = asdict(ds)
+    return {
+        "death_saves": ds,
+        "hit_dice_remaining": getattr(state, "_hit_dice_remaining", None),
+        "arcane_recovery_used": getattr(state, "_arcane_recovery_used", None),
+    }
 
 
 def _save_path(username: str, save_id: str) -> Path:
@@ -111,13 +134,14 @@ def create_save(state: GameSessionState, label: str = "手动存档", auto: bool
             "scenario_id": state.character_info.get("scenario_id", ""),
             "custom_rules": state.character_info.get("custom_rules", ""),
             "extension_ids": state.character_info.get("extension_ids", []),
-            "api_key": state.api_key,
             "model_name": state.model_name,
             "base_url": state.base_url,
+            # 安全：api_key 不落盘；读档时使用 .env / 前端当前配置或旧存档兼容值。
+            "dynamic_state": _serialize_dynamic(state),
         },
     }
     path = _save_path(username, save_id)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_json(path, payload)
     return payload
 
 
@@ -138,7 +162,8 @@ def list_saves(username: str) -> list[dict]:
                 "character_name": data.get("session", {}).get("character_name", ""),
                 "game_system": data.get("session", {}).get("game_system", ""),
             })
-        except Exception:
+        except Exception as e:
+            get_logger("save_manager").warning("跳过损坏存档 %s: %s", p, e)
             continue
     saves.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return saves
@@ -150,7 +175,8 @@ def load_save(username: str, save_id: str) -> dict | None:
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        get_logger("save_manager").warning("读取存档失败 %s: %s", path, e)
         return None
 
 
@@ -187,13 +213,31 @@ def restore_state_from_save(save_data: dict) -> tuple[GameSessionState, dict]:
     )
     state.response_cache = dict(session.get("response_cache", {}))
     state.opening_text = session.get("opening_text", "")
+    # 旧存档兼容：仅在内存中恢复历史 api_key；新存档不再包含该字段。
     state.api_key = session.get("api_key")
     state.model_name = session.get("model_name")
     state.base_url = session.get("base_url")
 
+    dyn = session.get("dynamic_state") or {}
+    try:
+        if dyn.get("death_saves") is not None:
+            from backend.engine.rules import DeathSaves
+            state._death_saves = DeathSaves(**dyn["death_saves"])
+        if dyn.get("hit_dice_remaining") is not None:
+            state._hit_dice_remaining = int(dyn["hit_dice_remaining"])
+        if dyn.get("arcane_recovery_used") is not None:
+            state._arcane_recovery_used = bool(dyn["arcane_recovery_used"])
+    except Exception as e:
+        get_logger("save_manager").warning("动态属性恢复失败: %s", e, exc_info=True)
+
     mem = MemorySystem()
     mem_data = session.get("memory", {})
-    mem.turns = [DialogueTurn(**t) for t in mem_data.get("turns", [])]
+    from dataclasses import fields as _dc_fields
+    _turn_fields = {f.name for f in _dc_fields(DialogueTurn)}
+    mem.turns = [
+        DialogueTurn(**{k: v for k, v in t.items() if k in _turn_fields})
+        for t in mem_data.get("turns", []) if isinstance(t, dict)
+    ]
     mem.summary = mem_data.get("summary", "")
     mem.world_facts = list(mem_data.get("world_facts", []))
     mem.major_events = list(mem_data.get("major_events", []))
@@ -209,9 +253,7 @@ def restore_state_from_save(save_data: dict) -> tuple[GameSessionState, dict]:
         from backend.engine.world_state import WorldState
         ws_dir = Path("world_states")
         ws_dir.mkdir(exist_ok=True)
-        (ws_dir / f"{session_id}.json").write_text(
-            json.dumps(ws_data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _atomic_write_json(ws_dir / f"{session_id}.json", ws_data)
         state.world_state = WorldState.load(session_id)
 
     return state, session_id

@@ -220,6 +220,18 @@ const initialStatus: CharacterStatus = {
   scenario_id: '',
 };
 
+/** P2-14: SSE state_update 允许写入的字段白名单，避免任意字段污染并持久化。 */
+const ALLOWED_STATUS_KEYS = new Set<string>([
+  'hp', 'maxHp', 'mp', 'maxMp', 'xp', 'gold', 'level', 'ac', 'inventory', 'attributes',
+  'character_name', 'race', 'char_class', 'gender', 'game_system', 'username',
+  'character_image', 'scenario_id', 'backstory', 'skill_proficiencies', 'skills', 'saves',
+  'passive_perception', 'feats', 'custom_classes', 'custom_skills', 'extra_attributes',
+  'race_traits', 'class_proficiencies', 'hit_die', 'san', 'maxSan', 'luck',
+  'healing_surges', 'max_healing_surges', 'surge_value', 'speed', 'proficiency_bonus',
+  'spell_slots', 'class_resources', 'known_spells', 'action_points', 'fortitude',
+  'reflex', 'will', 'damage_bonus', 'build',
+]);
+
 const initialScene: SceneInfo = {
   location: '冒险的起点',
   time: '第1天',
@@ -375,7 +387,13 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
 
   updateStatus: (update) =>
     set((s) => {
-      const u: Partial<CharacterStatus> = { ...update };
+      // P2-14: 只接受白名单字段，避免 SSE 任意载荷 spread 进 status 并持久化。
+      const u: Partial<CharacterStatus> = {};
+      for (const [k, v] of Object.entries(update)) {
+        if (ALLOWED_STATUS_KEYS.has(k)) {
+          (u as Record<string, unknown>)[k] = v;
+        }
+      }
       // 兼容后端历史格式：inventory 可能是 {items:[...]}，统一转为数组
       const inv = u.inventory as unknown;
       if (inv && typeof inv === 'object' && !Array.isArray(inv)) {
@@ -451,10 +469,21 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
     }),
 }), {
   name: 'dnd-game-state',
+  version: 1,
+  migrate: (persistedState: unknown, version: number) => {
+    // P1-22: v0 -> v1 时截断历史，避免 localStorage 配额爆炸。
+    if (!persistedState || typeof persistedState !== 'object') return persistedState as never;
+    const p = persistedState as Record<string, unknown>;
+    if (version < 1) {
+      p.narrative = Array.isArray(p.narrative) ? (p.narrative as unknown[]).slice(-80) : [];
+      p.combatLog = Array.isArray(p.combatLog) ? (p.combatLog as unknown[]).slice(-80) : [];
+    }
+    return p as never;
+  },
   partialize: (state) => ({
     sessionId: state.sessionId,
     screen: state.screen,
-    narrative: state.narrative,
+    narrative: state.narrative.slice(-80),
     currentTokenBuffer: state.currentTokenBuffer,
     narrativeId: state.narrativeId,
     status: state.status,
@@ -462,7 +491,7 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
     isProcessing: state.isProcessing,
     latestDiceRoll: state.latestDiceRoll,
     combat: state.combat,
-    combatLog: state.combatLog,
+    combatLog: state.combatLog.slice(-80),
     journalStatus: state.journalStatus,
     worldOutline: state.worldOutline,
     decisionSuggestions: state.decisionSuggestions,

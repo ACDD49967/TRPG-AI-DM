@@ -175,16 +175,16 @@ def build_player_graph(ws: Any) -> dict:
     exposed: set[str] = set()
     id_map: dict[str, str] = {}
     nodes = []
-    hidden_idx = 0
+    hidden_count = 0
     for n in full.get("nodes", []):
         original_id = str(n.get("id", ""))
         label, extra = _resolve_player_node(ws, n)
-        if label != "???":
-            safe_id = original_id
-            exposed.add(original_id)
-        else:
-            hidden_idx += 1
-            safe_id = f"???{hidden_idx}"
+        # 隐藏实体不再逐个生成 ???N 占位节点，否则节点数量与连边拓扑可被推断。
+        if label == "???":
+            hidden_count += 1
+            continue
+        safe_id = original_id
+        exposed.add(original_id)
         id_map[original_id] = safe_id
         nodes.append({**n, "id": safe_id, "label": label, "extra": extra})
 
@@ -192,21 +192,23 @@ def build_player_graph(ws: Any) -> dict:
     for e in full.get("edges", []):
         src = str(e.get("source", ""))
         tgt = str(e.get("target", ""))
-        src_exposed = src in exposed
-        tgt_exposed = tgt in exposed
-        if src_exposed and tgt_exposed:
+        # 只保留两端都已暴露的关系；涉及隐藏实体的边整条丢弃。
+        if src in exposed and tgt in exposed:
             edges.append({
                 "source": id_map.get(src, src),
                 "target": id_map.get(tgt, tgt),
                 "relation": e.get("relation", "related"),
                 **({k: v for k, v in e.items() if k not in ("source", "target", "relation") and v is not None}),
             })
-        else:
-            edges.append({
-                "source": id_map.get(src, src),
-                "target": id_map.get(tgt, tgt),
-                "relation": "???",
-            })
+
+    if hidden_count:
+        # 只提示存在未暴露信息；不泄露数量、名称或连边。
+        nodes.append({
+            "id": "__hidden__",
+            "type": "unknown",
+            "label": "???",
+            "extra": "",
+        })
 
     return {"nodes": nodes, "edges": edges}
 
@@ -336,6 +338,39 @@ def _vectorize_nodes(nodes: list[dict], edges: list[dict] | None = None) -> dict
         text = f"{n.get('label', '')} {n.get('type', '')} {n.get('extra', '')} {edge_text.get(n.get('id', ''), '')}"
         vectors[n.get("id", "")] = Counter(_tokenize(text))
     return vectors
+
+
+def graph_to_context(ws: Any, max_nodes: int = 40) -> str:
+    """把世界状态压缩成 DM 可读的关系图谱摘要。"""
+    try:
+        graph = build_knowledge_graph(ws)
+    except Exception:
+        return ""
+    nodes = graph.get("nodes") or []
+    edges = graph.get("edges") or []
+    if not nodes:
+        return ""
+    degree: Counter = Counter()
+    adjacency: dict[str, list[dict]] = {}
+    for e in edges:
+        src = str(e.get("source", ""))
+        tgt = str(e.get("target", ""))
+        degree[src] += 1
+        degree[tgt] += 1
+        adjacency.setdefault(src, []).append({"direction": "→", "other": tgt,
+                                              "relation": e.get("relation", "related")})
+        adjacency.setdefault(tgt, []).append({"direction": "←", "other": src,
+                                              "relation": e.get("relation", "related")})
+    top = sorted(nodes, key=lambda n: degree.get(str(n.get("id", "")), 0), reverse=True)[:max_nodes]
+    lines = [f"## 关系图谱摘要（节点 {len(nodes)} / 关系 {len(edges)}）"]
+    for n in top:
+        nid = str(n.get("id", ""))
+        label = str(n.get("label") or nid)
+        ntype = str(n.get("type", ""))
+        rels = adjacency.get(nid, [])[:5]
+        rel_text = "；".join(f"{r['direction']}{r['relation']} {r['other']}" for r in rels) or "暂无显式关系"
+        lines.append(f"- {label}（{ntype}，度 {degree.get(nid, 0)}）：{rel_text}")
+    return "\n".join(lines)
 
 
 def search_graph_nodes(graph: dict, query: str, top_k: int = 5) -> list[dict]:

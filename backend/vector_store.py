@@ -16,6 +16,7 @@ from sqlalchemy import text
 
 from backend.config import settings
 from backend.database import engine
+from backend.logging_utils import get_logger
 
 
 def pgvector_enabled() -> bool:
@@ -27,19 +28,47 @@ def pgvector_enabled() -> bool:
     return bool(settings.ENABLE_PGVECTOR and url.startswith("postgresql"))
 
 
+def _embedding_dim() -> int:
+    """动态推导当前 embedding 维度，避免与本地哈希/小模型不一致。"""
+    try:
+        from backend.engine.rag_utils import embed_text
+        vec = embed_text("dimension-probe")
+        if vec:
+            return len(vec)
+    except Exception:
+        pass
+    return 512
+
+
 async def ensure_pgvector_schema() -> None:
     if not pgvector_enabled():
         return
+    dim = _embedding_dim()
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.execute(text("""
+        try:
+            row = await conn.execute(text("""
+                SELECT atttypmod FROM pg_attribute
+                WHERE attrelid = 'document_vectors'::regclass
+                  AND attname = 'vector' AND NOT attisdropped
+            """))
+            existing = row.scalar()
+            if existing not in (None, -1) and int(existing) != dim:
+                get_logger("vector_store").warning(
+                    "pgvector 表维度 %s != 当前 embedding 维度 %s，将重建 document_vectors",
+                    existing, dim,
+                )
+                await conn.execute(text("DROP TABLE IF EXISTS document_vectors CASCADE"))
+        except Exception:
+            pass
+        await conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS document_vectors (
                 id VARCHAR(64) PRIMARY KEY,
                 doc_id VARCHAR(64) NOT NULL,
                 chunk_id VARCHAR(64) NOT NULL,
                 block_type VARCHAR(32) NOT NULL DEFAULT 'text',
                 content TEXT NOT NULL,
-                vector VECTOR(1024)
+                vector VECTOR({dim})
             )
         """))
         await conn.execute(text(
@@ -106,7 +135,11 @@ async def search_document_vectors(query: str, top_k: int = 10) -> list[dict]:
     if not pgvector_enabled():
         return []
     from backend.engine.rag_utils import embed_text
-    await ensure_pgvector_schema()
+    try:
+        await ensure_pgvector_schema()
+    except Exception as e:
+        get_logger("vector_store").warning("pgvector 建表/维度检查失败: %s", e, exc_info=True)
+        return []
     vec = embed_text(query)
     vec_str = "[" + ",".join(f"{float(v):.6f}" for v in vec) + "]"
     async with engine.connect() as conn:

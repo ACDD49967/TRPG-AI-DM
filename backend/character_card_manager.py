@@ -12,8 +12,8 @@ CHAR_ROOT = Path("characters")
 
 
 def _user_dir(username: str) -> Path:
-    safe = "".join(c for c in (username or "default") if c.isalnum() or c in "._-") or "default"
-    return CHAR_ROOT / safe
+    from backend.paths import safe_username
+    return CHAR_ROOT / safe_username(username)
 
 
 def _card_path(username: str, card_id: str) -> Path:

@@ -108,6 +108,17 @@ def build() -> Path:
     out = DIST / f"TRPG-AI-DM-v{ver}.zip"
     print(f"[release] 版本 {ver} -> {out}")
     stage = _stage()
+    # 发布前安全闸门：拒绝包含高置信密钥的源码包
+    scan = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "scan_secrets.py"),
+         "--path", str(stage), "--policy", "high", "--quiet"],
+        capture_output=True, text=True,
+    )
+    if scan.returncode != 0:
+        print(scan.stdout)
+        print(scan.stderr, file=sys.stderr)
+        shutil.rmtree(stage, ignore_errors=True)
+        raise SystemExit("[release] 发布包中检测到高置信密钥，已终止")
     try:
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
             for path in sorted(stage.rglob("*")):

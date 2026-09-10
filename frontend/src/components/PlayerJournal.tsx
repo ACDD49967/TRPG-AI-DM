@@ -5,7 +5,7 @@ import { useGameStore } from '../store/gameStore';
 import { textValue } from '../utils/textValue';
 
 interface CharNote { target:string;comment:string;clue?:string;turn:number; }
-interface NpcView { name:string;race:string;role:string;attitude:string;alive:boolean|null;appearance:string;personality:string;motivation:string;secret:string;relation_to_plot:string;location:string;level?:number;ac?:number;hp?:number;max_hp?:number;attributes?:Record<string,number>;skills?:string[];traits?:string[];equipment?:string[];related_locations?:string[];related_npcs?:string[];related_creatures?:string[];image_path?:string;importance?:'major'|'minor'|string;_fully_revealed:boolean; }
+interface NpcView { name:string;race:string;role:string;attitude:string;alive:boolean|null;appearance:string;personality:string;motivation:string;secret:string;relation_to_plot:string;location:string;level?:number;ac?:number;hp?:number;max_hp?:number;attributes?:Record<string,number>;skills?:string[];traits?:string[];equipment?:string[];related_locations?:string[];related_npcs?:string[];related_creatures?:string[];image_path?:string;importance?:'major'|'minor'|string;fully_revealed:boolean; }
 interface JournalData {
   scene:{location:string;time:string;weather:string;atmosphere:string;npcs_here:string[]};
   npcs:{allies:NpcView[];enemies:NpcView[];neutrals:NpcView[];total:number};
@@ -30,20 +30,24 @@ function NpcCard({npc,cat}:{npc:NpcView;cat:string}){
             {npc.image_path ? <img src={npc.image_path} alt={npc.name} className="w-5 h-5 rounded object-cover border border-gray-200" /> : <span className="w-1.5 h-1.5 rounded-full bg-current opacity-40" />}
             <span className="font-bold text-gray-800 truncate">{npc.name}</span>
           </div>
-          <span className="text-[9px] text-gray-400 shrink-0">HP {npc.hp}/{npc.max_hp} · AC {npc.ac} <span className="group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span></span>
+          <span className="text-[9px] text-gray-400 shrink-0">
+            {npc.hp != null && npc.max_hp != null ? <>HP {npc.hp}/{npc.max_hp} · </> : null}
+            {npc.ac != null ? <>AC {npc.ac} </> : null}
+            <span className="group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span>
+          </span>
         </div>
       </summary>
 
       {/* 未完全揭示的 NPC：只显示简要信息（不泄露 DM 数值） */}
-      {!npc._fully_revealed ? (
+      {!npc.fully_revealed ? (
         <div className="mt-1.5 pt-1.5 border-t border-gray-100 space-y-1 px-1">
           <Row k="身份" v={npc.role}/>
           {npc.race && npc.race !== '???' && <Row k="种族" v={npc.race}/>}
           {npc.location && <Row k="位置" v={npc.location}/>}
           <div className="grid grid-cols-3 gap-1 pt-0.5">
-            <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">HP</span><span className="ml-1 font-bold">{npc.hp}/{npc.max_hp}</span></div>
-            <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">AC</span><span className="ml-1 font-bold">{npc.ac}</span></div>
-            <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">Lv</span><span className="ml-1 font-bold">{npc.level}</span></div>
+            {npc.hp != null && npc.max_hp != null && <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">HP</span><span className="ml-1 font-bold">{npc.hp}/{npc.max_hp}</span></div>}
+            {npc.ac != null && <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">AC</span><span className="ml-1 font-bold">{npc.ac}</span></div>}
+            {npc.level != null && <div className="bg-white rounded px-1 py-0.5 border border-gray-100"><span className="text-gray-400">Lv</span><span className="ml-1 font-bold">{npc.level}</span></div>}
           </div>
           {npc.attributes && Object.keys(npc.attributes).length>0 && (
             <div className="grid grid-cols-3 gap-x-1 gap-y-0.5 pt-1 border-t border-gray-100">

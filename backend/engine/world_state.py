@@ -128,37 +128,44 @@ class NpcEntry:
         result["motivation"] = _show(self.motivation, v.motivation, "")
         result["secret"] = _show(self.secret, v.secret, "")
         result["relation_to_plot"] = _show(self.relation_to_plot, v.relation_to_plot, "")
-        result["level"] = self.level
-        result["ac"] = self.ac
-        result["hp"] = self.hp
-        result["max_hp"] = self.max_hp
-        result["image_path"] = self.image_path
-
-        # 统计隐藏字段数（仅用于后端判定，不下发给玩家）
         hidden_count = sum(
             1 for f in [v.race, v.role, v.appearance, v.personality,
                         v.motivation, v.secret, v.relation_to_plot]
             if f == "hidden"
         )
         fully_revealed = hidden_count == 0
-        # 属性/技能/特性属于 DM 侧数值，只有完全揭示后才对玩家可见
+        result["fully_revealed"] = fully_revealed
+
         if fully_revealed:
-            result["attributes"] = self.attributes
-            result["skills"] = self.skills
-            result["traits"] = self.traits
+            result.update({
+                "level": self.level,
+                "ac": self.ac,
+                "hp": self.hp,
+                "max_hp": self.max_hp,
+                "image_path": self.image_path,
+                "attributes": self.attributes,
+                "skills": self.skills,
+                "traits": self.traits,
+                "equipment": self.equipment,
+                "related_locations": self.related_locations,
+                "related_npcs": self.related_npcs,
+                "related_creatures": self.related_creatures,
+            })
         else:
-            result["attributes"] = {}
-            result["skills"] = []
-            result["traits"] = []
-        # 外貌可见时，随身装备也可被玩家观察到
-        if v.appearance == "visible" or fully_revealed:
-            result["equipment"] = self.equipment
-        else:
-            result["equipment"] = []
-        result["related_locations"] = self.related_locations
-        result["related_npcs"] = self.related_npcs
-        result["related_creatures"] = self.related_creatures
-        result["_fully_revealed"] = fully_revealed
+            result.update({
+                "level": None,
+                "ac": None,
+                "hp": None,
+                "max_hp": None,
+                "image_path": "",
+                "attributes": {},
+                "skills": [],
+                "traits": [],
+                "equipment": [],
+                "related_locations": [],
+                "related_npcs": [],
+                "related_creatures": [],
+            })
 
         return result
 
@@ -724,8 +731,9 @@ class WorldState:
             kg = graph_to_context(self)
             if kg:
                 lines.append("\n" + kg)
-        except Exception:
-            pass
+        except Exception as e:
+            from backend.logging_utils import get_logger
+            get_logger("world_state.graph").warning("graph_to_context 注入失败: %s", e, exc_info=True)
 
         return "\n".join(lines)
 

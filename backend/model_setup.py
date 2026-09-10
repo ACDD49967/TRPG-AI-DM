@@ -44,7 +44,13 @@ async def _download_hf_repo_requests(
 
     os.makedirs(local_dir, exist_ok=True)
     session = requests.Session()
-    session.verify = False
+    # 默认开启 TLS 校验；只有用户显式设置 DND_INSECURE_TLS=1 时才允许降级。
+    if os.environ.get("DND_INSECURE_TLS", "0") == "1":
+        print("[model_setup] 警告：DND_INSECURE_TLS=1，已关闭 TLS 校验")
+        session.verify = False
+    else:
+        ca_bundle = os.environ.get("DND_CA_BUNDLE", "").strip()
+        session.verify = ca_bundle or True
 
     mirror = os.environ.get("HF_MIRROR") or os.environ.get("HF_ENDPOINT") or "https://huggingface.co"
     list_url = f"{mirror}/api/models/{repo_id}/tree/main?recursive=true"

@@ -18,7 +18,13 @@ echo ""
 PYTHON=""
 if [ -f "$SCRIPT_DIR/.venv/Scripts/python.exe" ]; then
     PYTHON="$SCRIPT_DIR/.venv/Scripts/python.exe"
-    echo "[OK] Using .venv Python"
+    echo "[OK] Using .venv Python (Windows layout)"
+elif [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
+    PYTHON="$SCRIPT_DIR/.venv/bin/python3"
+    echo "[OK] Using .venv Python (Unix layout)"
+elif [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+    PYTHON="$SCRIPT_DIR/.venv/bin/python"
+    echo "[OK] Using .venv Python (Unix layout)"
 elif command -v python3 &>/dev/null; then
     PYTHON="$(command -v python3)"
     echo "[OK] Using python3: $PYTHON"
@@ -59,14 +65,33 @@ else
     echo "[WARN] Node.js not found, backend only"
 fi
 
-# ---- 4. Kill old servers ----
+# ---- 4. Kill old servers（跨平台）----
 echo "[..] Checking for running servers..."
-for port in 8000 5173; do
-    PID=$(netstat -ano 2>/dev/null | grep ":$port" | grep "LISTENING" | awk '{print $5}' | head -1)
-    if [ -n "$PID" ]; then
-        taskkill -PID "$PID" -F 2>/dev/null || true
-        echo "[OK] Killed old process on port $port"
+kill_port() {
+    local port="$1"
+    if command -v lsof &>/dev/null; then
+        local pids
+        pids="$(lsof -ti "tcp:$port" 2>/dev/null || true)"
+        if [ -n "$pids" ]; then
+            kill $pids 2>/dev/null || true
+            echo "[OK] Killed old process on port $port"
+            return
+        fi
     fi
+    if command -v fuser &>/dev/null; then
+        fuser -k "${port}/tcp" 2>/dev/null && echo "[OK] Killed old process on port $port" && return
+    fi
+    if command -v netstat &>/dev/null && command -v taskkill &>/dev/null; then
+        local pid
+        pid="$(netstat -ano 2>/dev/null | grep ":$port" | grep "LISTENING" | awk '{print $5}' | head -1)"
+        if [ -n "$pid" ]; then
+            taskkill //PID "$pid" //F 2>/dev/null || true
+            echo "[OK] Killed old process on port $port"
+        fi
+    fi
+}
+for port in 8000 5173; do
+    kill_port "$port"
 done
 sleep 1
 
@@ -76,6 +101,7 @@ echo "============================================================"
 echo "  Starting servers..."
 echo "============================================================"
 
+FRONTEND_PID=""
 "$PYTHON" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --no-access-log --log-level warning &
 BACKEND_PID=$!
 echo "[OK] Backend PID: $BACKEND_PID"
@@ -100,8 +126,14 @@ if [ "$FRONTEND" -eq 1 ]; then
     cd "$SCRIPT_DIR"
     echo "[OK] Frontend PID: $FRONTEND_PID"
     sleep 2
-    # Open browser
-    start "" http://localhost:5173 2>/dev/null || true
+    # Open browser（跨平台）
+    if command -v xdg-open &>/dev/null; then
+        xdg-open "http://localhost:5173" >/dev/null 2>&1 || true
+    elif command -v open &>/dev/null; then
+        open "http://localhost:5173" >/dev/null 2>&1 || true
+    elif command -v cmd.exe &>/dev/null; then
+        cmd.exe /c start "" "http://localhost:5173" >/dev/null 2>&1 || true
+    fi
 fi
 
 # ---- Done ----
@@ -115,7 +147,7 @@ echo "  Press Ctrl+C to stop all servers"
 echo "============================================================"
 
 # Wait for Ctrl+C
-trap "echo ''; echo 'Stopping servers...'; kill $BACKEND_PID 2>/dev/null; kill $FRONTEND_PID 2>/dev/null; echo 'Bye!'; exit 0" INT TERM
+trap "echo ''; echo 'Stopping servers...'; kill $BACKEND_PID 2>/dev/null; [ -n \"$FRONTEND_PID\" ] && kill $FRONTEND_PID 2>/dev/null; echo 'Bye!'; exit 0" INT TERM
 
 # Keep the script running so Ctrl+C works
 while true; do

@@ -6,6 +6,7 @@ MVP 阶段使用内存存储，后续可迁移至 Redis 以支持多进程部署
 import asyncio
 import json
 import time
+from collections import deque
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 
@@ -31,9 +32,11 @@ class GameSessionState:
     resumed: bool = False
     opening_text: str = ""
 
-    # 事件流 —— 通过 asyncio.Queue 跨协程传递 SSE 事件
-    event_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    # 事件流 —— 广播给每个 SSE 订阅者，并保存环形历史用于断线重放
+    subscribers: set[asyncio.Queue] = field(default_factory=set, repr=False)
+    event_history: deque = field(default_factory=lambda: deque(maxlen=500), repr=False)
     seq: int = 0  # 事件序号，用于断线重连
+    last_active_at: float = field(default_factory=time.time)
 
     # 分层记忆
     memory: MemorySystem = field(default_factory=MemorySystem)
@@ -128,7 +131,22 @@ class SessionManager:
 
     def remove_session(self, session_id: str):
         """从内存中移除会话（不影响数据库记录）。"""
-        self._sessions.pop(session_id, None)
+        state = self._sessions.pop(session_id, None)
+        if state is not None:
+            state.subscribers.clear()
+
+    def prune_idle(self, max_idle_seconds: float = 7200.0) -> list[str]:
+        """回收长时间无活动且没有 SSE 订阅者的会话。"""
+        now = time.time()
+        removed: list[str] = []
+        for session_id, state in list(self._sessions.items()):
+            if state.subscribers:
+                continue
+            idle = now - float(getattr(state, "last_active_at", now))
+            if state.status != "active" or idle > max_idle_seconds:
+                self._sessions.pop(session_id, None)
+                removed.append(session_id)
+        return removed
 
     def is_active(self, session_id: str) -> bool:
         """检查会话是否在内存中（是否活跃）。"""
@@ -146,110 +164,118 @@ def _format_sse(event_type: str, data: dict | None = None, seq: int = 0) -> str:
 
     格式: event: <type>\ndata: <json>\n\n
     """
-    payload = json.dumps(data or {}, ensure_ascii=False)
+    payload = json.dumps(data or {}, ensure_ascii=False, default=str)
+    if seq:
+        return f"id: {seq}\nevent: {event_type}\ndata: {payload}\n\n"
     return f"event: {event_type}\ndata: {payload}\n\n"
 
 
 async def sse_event_generator(
     state: GameSessionState,
+    last_event_id: int = 0,
 ) -> AsyncGenerator[str, None]:
-    """异步生成器——从会话队列中读取事件并生成 SSE 格式字符串。
+    """SSE 生成器：广播订阅、断线重放、心跳保活。
 
-    连接建立后，先由 AI 生成动态开场白（打字机流式推送），
-    然后进入事件队列循环。每30秒发送心跳保活。
+    - 每个连接持有独立有界队列，push_event 广播给所有订阅者；
+    - 连接建立时按 Last-Event-ID / last_event_seq 从环形历史补发；
+    - last_event_id > 0 表示重连：不重新生成开场白，只补事件。
     """
-    # 第一步：AI 生成动态开场白
-    from backend.engine.dm_agent import generate_opening_scene
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+    state.subscribers.add(queue)
+    last_sent = int(last_event_id or 0)
 
-    if getattr(state, "resumed", False):
-        # 读档恢复：直接推送完整对话历史，前端原样渲染，不生成新开场
-        turns = [
-            {"player_input": t.player_input, "dm_response": t.dm_response}
-            for t in state.memory.turns
-        ]
-        # 读档不丢失开场白：将保存的开场白作为首条 DM 叙述恢复
-        if getattr(state, "opening_text", "").strip():
-            turns.insert(0, {"player_input": "", "dm_response": state.opening_text})
-        await push_event(state, "history", {"turns": turns})
-        # consumed once: later system prompts should not keep claiming resumed
-        state.resumed = False
-    else:
-        try:
-            await asyncio.wait_for(generate_opening_scene(state), timeout=90)
-        except Exception:
-            await push_narrative_token(state, f"欢迎，{state.character_name}。冒险开始了…")
+    try:
+        if last_event_id <= 0:
+            # 首次连接：生成开场白或恢复历史
+            if getattr(state, "resumed", False):
+                turns = [
+                    {"player_input": t.player_input, "dm_response": t.dm_response}
+                    for t in state.memory.turns
+                ]
+                if getattr(state, "opening_text", "").strip():
+                    turns.insert(0, {"player_input": "", "dm_response": state.opening_text})
+                await push_event(state, "history", {"turns": turns})
+                state.resumed = False
+            else:
+                from backend.engine.dm_agent import generate_opening_scene
+                try:
+                    await asyncio.wait_for(generate_opening_scene(state), timeout=90)
+                except Exception:
+                    await push_narrative_token(state, f"欢迎，{state.character_name}。冒险开始了…")
 
-    # 推送初始角色状态到前端 —— 这样StatusPanel可以正确显示HP/属性/物品
-    info = state.character_info
-    await push_event(state, "state_update", {
-        "hp": info.get("hp", 30),
-        "max_hp": info.get("max_hp", 30),
-        "mp": info.get("mp", 10),
-        "max_mp": info.get("max_mp", 10),
-        "xp": info.get("xp", 0),
-        "gold": info.get("gold", 10),
-        "level": info.get("level", 1),
-        "inventory": info.get("inventory", {}).get("items", []) if isinstance(info.get("inventory"), dict) else [],
-        "attributes": info.get("attributes", {}),
-        "ac": info.get("ac", 12),
-        "character_name": state.character_name,
-        "race": info.get("race", ""),
-        "char_class": info.get("char_class", ""),
-        "gender": info.get("gender", ""),
-        "game_system": info.get("game_system", "dnd5e"),
-        "username": info.get("username", "default"),
-        "character_image": info.get("character_image", ""),
-        "scenario_id": info.get("scenario_id", ""),
-        "backstory": info.get("backstory", ""),
-        "skill_proficiencies": info.get("skill_proficiencies", []),
-        "skills": info.get("skills", {}),
-        "saves": info.get("saves", {}),
-        "passive_perception": info.get("passive_perception", 10),
-        "feats": info.get("feats", []),
-        "custom_classes": info.get("custom_classes", []),
-        "custom_skills": info.get("custom_skills", []),
-        "extra_attributes": info.get("extra_attributes", {}),
-        "race_traits": info.get("race_traits", []),
-        "class_proficiencies": info.get("class_proficiencies", []),
-        "hit_die": info.get("hit_die", ""),
-        "san": info.get("san", info.get("max_san", 0)),
-        "maxSan": info.get("max_san", info.get("san", 0)),
-        "luck": info.get("luck", 0),
-        "healing_surges": info.get("healing_surges", 0),
-        "max_healing_surges": info.get("max_healing_surges", 0),
-        "surge_value": info.get("surge_value", 0),
-        "proficiency_bonus": info.get("proficiency_bonus", 2),
-        "spell_slots": info.get("spell_slots", []),
-        "class_resources": info.get("class_resources", []),
-        "known_spells": info.get("known_spells", []),
-        "action_points": info.get("action_points", 1),
-        "fortitude": info.get("fortitude", 10),
-        "reflex": info.get("reflex", 10),
-        "will": info.get("will", 10),
-        "damage_bonus": info.get("damage_bonus", "0"),
-        "build": info.get("build", 0),
-    })
+            info = state.character_info
+            await push_event(state, "state_update", {
+                "hp": info.get("hp", 30),
+                "max_hp": info.get("max_hp", 30),
+                "mp": info.get("mp", 10),
+                "max_mp": info.get("max_mp", 10),
+                "xp": info.get("xp", 0),
+                "gold": info.get("gold", 10),
+                "level": info.get("level", 1),
+                "inventory": info.get("inventory", {}).get("items", []) if isinstance(info.get("inventory"), dict) else [],
+                "attributes": info.get("attributes", {}),
+                "ac": info.get("ac", 12),
+                "character_name": state.character_name,
+                "race": info.get("race", ""),
+                "char_class": info.get("char_class", ""),
+                "gender": info.get("gender", ""),
+                "game_system": info.get("game_system", "dnd5e"),
+                "username": info.get("username", "default"),
+                "character_image": info.get("character_image", ""),
+                "scenario_id": info.get("scenario_id", ""),
+                "backstory": info.get("backstory", ""),
+                "skill_proficiencies": info.get("skill_proficiencies", []),
+                "skills": info.get("skills", {}),
+                "saves": info.get("saves", {}),
+                "passive_perception": info.get("passive_perception", 10),
+                "feats": info.get("feats", []),
+                "custom_classes": info.get("custom_classes", []),
+                "custom_skills": info.get("custom_skills", []),
+                "extra_attributes": info.get("extra_attributes", {}),
+                "race_traits": info.get("race_traits", []),
+                "class_proficiencies": info.get("class_proficiencies", []),
+                "hit_die": info.get("hit_die", ""),
+                "san": info.get("san", info.get("max_san", 0)),
+                "maxSan": info.get("max_san", info.get("san", 0)),
+                "luck": info.get("luck", 0),
+                "healing_surges": info.get("healing_surges", 0),
+                "max_healing_surges": info.get("max_healing_surges", 0),
+                "surge_value": info.get("surge_value", 0),
+                "proficiency_bonus": info.get("proficiency_bonus", 2),
+                "spell_slots": info.get("spell_slots", []),
+                "class_resources": info.get("class_resources", []),
+                "known_spells": info.get("known_spells", []),
+                "action_points": info.get("action_points", 1),
+                "fortitude": info.get("fortitude", 10),
+                "reflex": info.get("reflex", 10),
+                "will": info.get("will", 10),
+                "damage_bonus": info.get("damage_bonus", "0"),
+                "build": info.get("build", 0),
+            })
+            await push_event(state, "end_of_turn", {})
+        else:
+            # 重连：从环形历史补发缺失事件；订阅之后新产生的事件会在 live queue 中
+            replay = [e for e in list(state.event_history) if e[0] > last_event_id]
+            for seq, event_type, data in replay:
+                if seq <= last_sent:
+                    continue
+                last_sent = seq
+                yield _format_sse(event_type, data, seq)
 
-    # 将 end_of_turn 推入队列（排在叙事token之后）
-    await push_event(state, "end_of_turn", {})
-
-    while state.status == "active":
-        try:
-            event_type, data = await asyncio.wait_for(
-                state.event_queue.get(), timeout=30.0
-            )
-        except asyncio.TimeoutError:
-            # 心跳保活
-            yield ": heartbeat\n\n"
-            continue
-
-        if event_type is None:
-            # 哨兵值，停止生成器
-            break
-
-        state.seq += 1
-        data["seq"] = state.seq
-        yield _format_sse(event_type, data, state.seq)
+        while True:
+            if state.status != "active" and queue.empty():
+                break
+            try:
+                seq, event_type, data = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                yield ": heartbeat\n\n"
+                continue
+            if seq <= last_sent:
+                continue
+            last_sent = seq
+            yield _format_sse(event_type, data, seq)
+    finally:
+        state.subscribers.discard(queue)
 
 
 async def push_event(
@@ -257,8 +283,24 @@ async def push_event(
     event_type: str,
     data: dict | None = None,
 ):
-    """向会话的 SSE 队列推送一个事件。"""
-    await state.event_queue.put((event_type, data or {}))
+    """广播一个事件给所有订阅者，并写入环形历史供断线重放。"""
+    state.seq += 1
+    entry = (state.seq, event_type, data or {})
+    state.last_active_at = time.time()
+    state.event_history.append(entry)
+    dead: list[asyncio.Queue] = []
+    for queue in list(state.subscribers):
+        try:
+            queue.put_nowait(entry)
+        except asyncio.QueueFull:
+            # 慢客户端：丢最旧事件，保证队列有界
+            try:
+                queue.get_nowait()
+                queue.put_nowait(entry)
+            except Exception:
+                dead.append(queue)
+    for queue in dead:
+        state.subscribers.discard(queue)
 
 
 async def push_narrative_token(state: GameSessionState, token: str):

@@ -32,7 +32,7 @@ from backend.engine.game_systems import (
 )
 from backend.local_vector_store import load_vector, save_vector
 from backend.scenario_importer import split_text
-from backend.engine.rag_utils import embed_text, cosine as dense_cosine, rerank as rag_rerank, get_provider, set_provider, model_ready, reranker_ready, sparse_embed, sparse_cosine, sparse_ready
+from backend.engine.rag_utils import embed_text, cosine as dense_cosine, rerank_or_none as rag_rerank_or_none, get_provider, set_provider, model_ready, reranker_ready, sparse_embed, sparse_cosine, sparse_ready
 
 DEFAULT_KB_PATH = Path("knowledge_base/documents.json")
 
@@ -475,9 +475,9 @@ class KnowledgeBase:
         # 可选 BGE-reranker 重排（用户本地配置存在时才启用；否则原序）
         pre_top = scored[:max(5, settings.RAG_RERANK_TOP_K)]
         if pre_top:
-            reranked = rag_rerank(query, [s["text"] for s in pre_top], top_k=top_k)
-            rerank_order = {text: score for text, score in reranked}
-            if rerank_order:
+            reranked = rag_rerank_or_none(query, [s["text"] for s in pre_top], top_k=top_k)
+            if reranked:
+                rerank_order = {text: score for text, score in reranked}
                 scored = [s for s in pre_top if s["text"] in rerank_order]
                 scored.sort(key=lambda s: rerank_order.get(s["text"], 0.0), reverse=True)
                 for s in scored:
