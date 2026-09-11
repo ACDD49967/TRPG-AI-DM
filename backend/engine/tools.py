@@ -96,12 +96,22 @@ SUGGEST_CHOICES_TOOL = _tool("suggest_choices",
 # ── 世界状态工具 ──
 
 UPDATE_WORLD_STATE_TOOL = _tool("update_world_state",
-    "修改持久化世界状态——仅在玩家行动已被检定/判定生效后调用。可新增/更新/删除NPC、地点、旗标、值得注意的场景/物品/线索，也可更新世界规则。",
-    {"action": {"type":"string","enum":["update_npc","add_npc","set_flag","add_location","update_location","set_world_rule","add_notable","update_notable","remove_notable","remove_npc","remove_location","remove_flag"]},
+    "修改持久化世界状态——仅在玩家行动已被检定/判定生效后调用。可新增/更新/删除NPC、地点、旗标、值得注意的场景/物品/线索、角色笔记与关系边；世界状态必须有增有减，过期内容要主动删除，避免冒险笔记只增不减。",
+    {"action": {"type":"string","enum":["update_npc","add_npc","set_flag","add_location","update_location","set_world_rule","add_notable","update_notable","remove_notable","remove_npc","remove_location","remove_flag","remove_character_note","remove_relation"]},
      "target": {"type":"string"},
      "changes": {"type":"object"},
      "reason": {"type":"string"}},
     ["action","target","changes","reason"])
+
+PRUNE_WORLD_STATE_TOOL = _tool("prune_world_state",
+    "清理世界状态中的过期内容：已完成的旧旗标、已解决的值得注意条目、长期未出场且已死亡的次要NPC、已废弃地点、悬空关系、过长日志/笔记。用于防止冒险笔记与世界上下文只增不减。",
+    {"scope": {"type":"string","enum":["all","npcs","locations","flags","notes","notables","relations","logs"],
+               "description":"清理范围，默认 all"},
+     "older_than_turns": {"type":"integer","minimum":1,"maximum":999,
+                          "description":"超过多少轮未更新视为过期，默认 20"},
+     "dry_run": {"type":"boolean",
+                 "description":"true 时只返回将清理多少条，不实际删除"}},
+    [])
 
 REVEAL_INFO_TOOL = _tool("reveal_info",
     "【高频使用】当玩家通过检定/对话/探索揭示了之前隐藏的信息时调用。揭示NPC隐藏字段(性格/动机/秘密等)、发现新地点、公开旗标。信息应随玩家努力逐步解锁——不要一次性揭示全部。每次揭示后更新场景描述。",
@@ -335,7 +345,7 @@ SEARCH_MEMORY_TOOL = _tool("search_memory",
 DM_TOOLS = [
     DICE_ROLL_TOOL, UPDATE_STATE_TOOL, COMBAT_ROUND_TOOL, ENEMY_ATTACK_TOOL,
     DEATH_SAVE_TOOL, REST_TOOL, EQUIP_ITEM_TOOL, ADD_MEMORY_TOOL, RECORD_PLOT_MEMORY_TOOL, SUGGEST_CHOICES_TOOL,
-    UPDATE_WORLD_STATE_TOOL, REVEAL_INFO_TOOL, UPDATE_SCENE_TOOL,
+    UPDATE_WORLD_STATE_TOOL, PRUNE_WORLD_STATE_TOOL, REVEAL_INFO_TOOL, UPDATE_SCENE_TOOL,
     ADD_CHARACTER_NOTE_TOOL, UPDATE_BESTIARY_TOOL, UPDATE_CITY_TOOL,
     ADD_SCENARIO_BESTIARY_TOOL, ADD_SCENARIO_MAP_TOOL, ADD_SCENARIO_SPELL_TOOL,
     GENERATE_NAME_TOOL, ROLL_TREASURE_TOOL, NPC_QUIRK_TOOL, SEARCH_KNOWLEDGE_TOOL,

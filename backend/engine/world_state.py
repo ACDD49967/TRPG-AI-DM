@@ -7,6 +7,7 @@
 - AI可通过 reveal_info 工具修改可见度
 """
 
+import copy
 import json, os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
@@ -105,6 +106,8 @@ class NpcEntry:
     image_path: str = ""
     importance: str = "minor"       # major=重要NPC（完整卡） minor=简单NPC（简要卡）
     discovered: bool = True         # 玩家是否已见过/知道该NPC；False 时不出现在玩家笔记
+    turn_added: int = 0             # 首次进入世界状态的轮数
+    turn_last_seen: int = 0         # 最近一次出场/被提及的轮数
     visibility: NpcVisibility = field(default_factory=NpcVisibility)
 
     def to_player_view(self) -> dict:
@@ -177,6 +180,8 @@ class PlotFlag:
     description: str = ""
     consequence: str = ""
     visible: bool = True  # 对玩家可见？
+    turn_added: int = 0       # 首次出现的轮数
+    turn_resolved: int = 0    # 进入已完成/已失败等终态的轮数
 
     def to_player_view(self) -> dict:
         if not self.visible:
@@ -199,6 +204,8 @@ class LocationEntry:
     related_npcs: list = field(default_factory=list)
     related_creatures: list = field(default_factory=list)
     discovered: bool = True  # 玩家是否已发现
+    turn_added: int = 0          # 首次进入世界状态的轮数
+    turn_last_visited: int = 0   # 最近一次到访/提及的轮数
 
     def to_player_view(self) -> dict:
         if not self.discovered:
@@ -318,15 +325,15 @@ class WorldState:
                                   if k in ["name","race","role","location","attitude",
                                            "alive","appearance","personality","motivation",
                                            "secret","relation_to_plot","notes",
-                                           "level","ac","hp","max_hp","attributes","skills","traits","equipment","related_locations","related_npcs","related_creatures","image_path","importance","discovered"]})
+                                           "level","ac","hp","max_hp","attributes","skills","traits","equipment","related_locations","related_npcs","related_creatures","image_path","importance","discovered","turn_added","turn_last_seen"]})
                 npc.visibility = NpcVisibility.from_dict(vis_data)
                 ws.npcs.append(npc)
 
             ws.plot_flags = [PlotFlag(**{k: v for k, v in p.items()
-                                         if k in ["key","status","description","consequence","visible"]})
+                                         if k in ["key","status","description","consequence","visible","turn_added","turn_resolved"]})
                              for p in data.get("plot_flags", [])]
             ws.locations = [LocationEntry(**{k: v for k, v in l.items()
-                                             if k in ["name","description","status","type","culture","notable_figures","dangers","secrets","secret_revealed","related_locations","related_npcs","related_creatures","discovered"]})
+                                             if k in ["name","description","status","type","culture","notable_figures","dangers","secrets","secret_revealed","related_locations","related_npcs","related_creatures","discovered","turn_added","turn_last_visited"]})
                             for l in data.get("locations", [])]
             ws.creatures = data.get("creatures", [])
             ws.spells = data.get("spells", [])
@@ -357,6 +364,32 @@ class WorldState:
                                          "image_path","turn_added"]})
                 for n in data.get("notables", [])
             ]
+
+            # 旧存档缺少生命周期时间戳：补为当前轮，给它们一个完整的清理宽限期，
+            # 避免升级后的第一次维护一次性清空整个世界。
+            default_turn = int(ws.turn_count or 0)
+            resolved_status = {"已完成", "已失败", "已关闭", "已废弃"}
+            blocked_status = {"已摧毁", "不可访问", "已废弃", "封闭", "已关闭"}
+            resolved_notable = {"已解决", "已拿走", "已取走", "已摧毁", "已关闭", "已离开", "已失效", "已完成"}
+            for n in ws.npcs:
+                n.turn_added = int(n.turn_added or default_turn)
+                # 已死亡 NPC 旧数据直接视为过期；存活 NPC 给完整宽限期
+                n.turn_last_seen = int(n.turn_last_seen or (default_turn if n.alive else 0))
+            for l in ws.locations:
+                l.turn_added = int(l.turn_added or default_turn)
+                blocked = str(l.status or "") in blocked_status
+                l.turn_last_visited = int(l.turn_last_visited or (0 if blocked else default_turn))
+            for f in ws.plot_flags:
+                f.turn_added = int(f.turn_added or default_turn)
+                if str(f.status or "") in resolved_status:
+                    f.turn_resolved = int(f.turn_resolved or 0)
+            for no in ws.notables:
+                resolved = str(no.status or "") in resolved_notable
+                no.turn_added = int(no.turn_added or (0 if resolved else default_turn))
+            for r in ws.relations:
+                r["turn_added"] = int(r.get("turn_added") or default_turn)
+                r["turn_updated"] = int(r.get("turn_updated") or default_turn)
+
             return ws
         return cls(session_id=session_id, _storage_dir=storage_dir)
 
@@ -405,6 +438,8 @@ class WorldState:
         return False
 
     def add_npc(self, entry: NpcEntry):
+        entry.turn_added = entry.turn_added or self.turn_count
+        entry.turn_last_seen = self.turn_count
         self.npcs.append(entry)
         self._log_change(f"新增NPC: {entry.name} ({entry.role})")
         self.save()
@@ -419,10 +454,14 @@ class WorldState:
         """新增/更新地点实体（同名更新描述，不重复追加）。"""
         for i, loc in enumerate(self.locations):
             if loc.name == entry.name:
+                entry.turn_added = entry.turn_added or loc.turn_added or self.turn_count
+                entry.turn_last_visited = self.turn_count
                 self.locations[i] = entry
                 self._log_change(f"地点更新: {entry.name}")
                 self.save()
                 return
+        entry.turn_added = entry.turn_added or self.turn_count
+        entry.turn_last_visited = self.turn_count
         self.locations.append(entry)
         self._log_change(f"新增地点: {entry.name}")
         self.save()
@@ -466,6 +505,7 @@ class WorldState:
         return True
 
     def set_flag(self, key: str, status: str, description: str = "", consequence: str = "", visible: bool | None = None):
+        resolved = {"已完成", "已失败", "已关闭", "已废弃"}
         for f in self.plot_flags:
             if f.key == key:
                 old = f.status
@@ -473,12 +513,18 @@ class WorldState:
                 if description: f.description = description
                 if consequence: f.consequence = consequence
                 if visible is not None: f.visible = visible
+                if status in resolved:
+                    f.turn_resolved = f.turn_resolved or self.turn_count
+                else:
+                    f.turn_resolved = 0
                 self._log_change(f"Flag[{key}]: {old} -> {status}")
                 self.save()
                 return
         self.plot_flags.append(PlotFlag(key=key, status=status,
                                          description=description, consequence=consequence,
-                                         visible=visible if visible is not None else True))
+                                         visible=visible if visible is not None else True,
+                                         turn_added=self.turn_count,
+                                         turn_resolved=self.turn_count if status in resolved else 0))
         self._log_change(f"新增Flag: {key} = {status}")
         self.save()
 
@@ -492,14 +538,19 @@ class WorldState:
             npc = self.get_npc(npc_name)
             if npc is None:
                 self.add_npc(NpcEntry(name=npc_name, role="未知身份", location=self.scene.current_location, attitude="中立", discovered=True))
-            elif not npc.discovered:
-                npc.discovered = True
-                self._log_change(f"NPC[{npc_name}] 已发现")
-        # 玩家进入某个地点后，该地点应被发现
+                npc = self.get_npc(npc_name)
+            if npc is not None:
+                npc.turn_last_seen = self.turn_count
+                if not npc.discovered:
+                    npc.discovered = True
+                    self._log_change(f"NPC[{npc_name}] 已发现")
+        # 玩家进入某个地点后，该地点应被发现并刷新到访轮数
         loc = self.get_location(self.scene.current_location)
-        if loc is not None and not loc.discovered:
-            loc.discovered = True
-            self._log_change(f"地点[{loc.name}] 已发现")
+        if loc is not None:
+            loc.turn_last_visited = self.turn_count
+            if not loc.discovered:
+                loc.discovered = True
+                self._log_change(f"地点[{loc.name}] 已发现")
         self.save()
         # P0-1修复：日志输出，方便追踪Journal数据流
         print(f"[WorldState] 场景更新: location={self.scene.current_location}, "
@@ -582,6 +633,7 @@ class WorldState:
                     rel["confidence"] = confidence
                 if notes:
                     rel["notes"] = notes
+                rel["turn_updated"] = self.turn_count
                 self.save()
                 return rel
         rel = {
@@ -591,6 +643,8 @@ class WorldState:
             "strength": strength if strength is not None else 50.0,
             "confidence": confidence if confidence is not None else 0.5,
             "notes": notes or "",
+            "turn_added": self.turn_count,
+            "turn_updated": self.turn_count,
         }
         self.relations.append(rel)
         self.save()
@@ -614,6 +668,243 @@ class WorldState:
             "time": datetime.now().isoformat(),
             "description": desc,
         })
+
+    def _maintenance_impl(
+        self,
+        scope: str = "all",
+        older_than_turns: int = 20,
+        max_notes: int = 120,
+        max_relations: int = 400,
+        max_change_log: int = 300,
+        max_background: int = 100,
+    ) -> dict:
+        """清理过期/低价值世界状态，返回统计摘要。
+
+        scope: all | npcs | locations | flags | notes | notables | relations | logs
+        设计原则：积极清理“确定过期”的临时内容；长期角色/当前地点/未完成主线不删。
+        """
+        scope = (scope or "all").strip().lower()
+        do_all = scope in ("all", "")
+        now = self.turn_count
+        cutoff = now - max(1, int(older_than_turns or 20))
+        removed = {
+            "npcs": 0, "locations": 0, "flags": 0, "notes": 0,
+            "notables": 0, "relations": 0, "logs": 0,
+            "removed_total": 0,
+        }
+
+        current_loc = (self.scene.current_location or "").strip()
+        visible_here = {str(x).strip() for x in (self.scene.visible_npcs_here or [])}
+
+        # ── NPC ────────────────────────────────────────────────
+        if do_all or scope == "npcs":
+            # 与玩家/主线有强关系（高亲密度或高置信度）的 NPC 不自动删除
+            protected_names: set[str] = set()
+            for rel in self.relations:
+                try:
+                    strong = (float(rel.get("strength") or 0) >= 70
+                              or float(rel.get("confidence") or 0) >= 0.8)
+                except (TypeError, ValueError):
+                    strong = False
+                if strong:
+                    protected_names.add(str(rel.get("source", "")).strip())
+                    protected_names.add(str(rel.get("target", "")).strip())
+            keep_npcs = []
+            removed_names = set()
+            for n in self.npcs:
+                name = (n.name or "").strip()
+                last = int(n.turn_last_seen or n.turn_added or 0) or (now if n.alive else cutoff - 1)
+                is_major = str(getattr(n, "importance", "minor")) == "major"
+                here = name in visible_here or (n.location or "").strip() == current_loc
+                if here or (is_major and n.alive):
+                    keep_npcs.append(n)
+                    continue
+                if is_major and n.alive:
+                    keep_npcs.append(n)
+                    continue
+                if name in protected_names:
+                    keep_npcs.append(n)
+                    continue
+                stale = last < cutoff
+                if stale and (not n.alive or not is_major):
+                    removed_names.add(name)
+                    removed["npcs"] += 1
+                    continue
+                keep_npcs.append(n)
+            if removed_names:
+                self.npcs = keep_npcs
+                # 同步清理指向已移除 NPC 的笔记与关系
+                self.character_notes = [
+                    cn for cn in self.character_notes
+                    if not (cn.target_type == "npc" and cn.target in removed_names)
+                ]
+                self.relations = [
+                    r for r in self.relations
+                    if r.get("source") not in removed_names and r.get("target") not in removed_names
+                ]
+
+        # ── 地点 ────────────────────────────────────────────────
+        if do_all or scope == "locations":
+            keep_locations = []
+            removed_locs = set()
+            blocked_status = {"已摧毁", "不可访问", "已废弃", "封闭", "已关闭"}
+            for loc in self.locations:
+                name = (loc.name or "").strip()
+                if name == current_loc or not loc.discovered:
+                    keep_locations.append(loc)
+                    continue
+                blocked_now = str(loc.status or "") in {"已摧毁", "不可访问", "已废弃", "封闭", "已关闭"}
+                last = int(loc.turn_last_visited or loc.turn_added or 0) or (cutoff - 1 if blocked_now else now)
+                referenced = (
+                    any((n.location or "").strip() == name for n in self.npcs)
+                    or any((no.location or "").strip() == name for no in self.notables)
+                )
+                if (last > 0 and last < cutoff
+                        and str(loc.status or "") in blocked_status
+                        and not referenced):
+                    removed_locs.add(name)
+                    removed["locations"] += 1
+                    continue
+                keep_locations.append(loc)
+            if removed_locs:
+                self.locations = keep_locations
+                self.notables = [no for no in self.notables if (no.location or "").strip() not in removed_locs]
+                self.character_notes = [
+                    cn for cn in self.character_notes
+                    if not (cn.target_type == "location" and cn.target in removed_locs)
+                ]
+                self.relations = [
+                    r for r in self.relations
+                    if r.get("source") not in removed_locs and r.get("target") not in removed_locs
+                ]
+
+        # ── 剧情旗标 ────────────────────────────────────────────
+        if do_all or scope == "flags":
+            resolved_status = {"已完成", "已失败", "已关闭", "已废弃"}
+            keep_flags = []
+            for f in self.plot_flags:
+                if str(f.status or "") not in resolved_status:
+                    keep_flags.append(f)
+                    continue
+                resolved_at = int(f.turn_resolved or f.turn_added or 0) or (cutoff - 1)
+                if resolved_at < cutoff:
+                    removed["flags"] += 1
+                    continue
+                keep_flags.append(f)
+            self.plot_flags = keep_flags
+
+        # ── 值得注意条目 ────────────────────────────────────────
+        if do_all or scope == "notables":
+            resolved_status = {"已解决", "已拿走", "已取走", "已摧毁", "已关闭", "已离开", "已失效", "已完成"}
+            keep_notables = []
+            for no in self.notables:
+                notable_added = int(no.turn_added or 0) or (cutoff - 1)
+                if str(no.status or "") in resolved_status and notable_added < cutoff:
+                    removed["notables"] += 1
+                    continue
+                keep_notables.append(no)
+            self.notables = keep_notables
+
+        # ── 角色笔记：删指向已不存在实体的笔记，并按条数截断 ──
+        if do_all or scope == "notes":
+            npc_names = {(n.name or "").strip() for n in self.npcs}
+            loc_names = {(l.name or "").strip() for l in self.locations}
+            kept = []
+            for cn in self.character_notes:
+                if cn.target_type == "npc" and (cn.target or "").strip() not in npc_names:
+                    removed["notes"] += 1
+                    continue
+                if cn.target_type == "location" and (cn.target or "").strip() not in loc_names:
+                    removed["notes"] += 1
+                    continue
+                kept.append(cn)
+            if len(kept) > max_notes:
+                kept.sort(key=lambda c: int(c.turn_added or 0), reverse=True)
+                removed["notes"] += len(kept) - max_notes
+                kept = kept[:max_notes]
+                kept.sort(key=lambda c: int(c.turn_added or 0))
+            self.character_notes = kept
+
+        # ── 关系：删除悬空边并按强度/更新时间截断 ──────────────
+        if do_all or scope == "relations":
+            known = set()
+            for n in self.npcs:
+                known.add((n.name or "").strip())
+            for l in self.locations:
+                known.add((l.name or "").strip())
+            for f in self.plot_flags:
+                known.add((f.key or "").strip())
+            for no in self.notables:
+                known.add((no.name or "").strip())
+            for c in self.creatures:
+                if isinstance(c, dict):
+                    known.add(str(c.get("name", "")).strip())
+            for sp in self.spells:
+                if isinstance(sp, dict):
+                    known.add(str(sp.get("name", "")).strip())
+            kept = []
+            for r in self.relations:
+                src = str(r.get("source", "")).strip()
+                dst = str(r.get("target", "")).strip()
+                if not src or not dst or src not in known or dst not in known:
+                    removed["relations"] += 1
+                    continue
+                kept.append(r)
+            if len(kept) > max_relations:
+                kept.sort(
+                    key=lambda r: (
+                        float(r.get("turn_updated") or r.get("turn_added") or 0),
+                        float(r.get("strength") or 0),
+                    ),
+                    reverse=True,
+                )
+                removed["relations"] += len(kept) - max_relations
+                kept = kept[:max_relations]
+            self.relations = kept
+
+        # ── 日志/幕后事件：只保留最近 N 条 ─────────────────────
+        if do_all or scope == "logs":
+            if len(self.change_log) > max_change_log:
+                removed["logs"] += len(self.change_log) - max_change_log
+                self.change_log = self.change_log[-max_change_log:]
+            if len(self.background_events) > max_background:
+                removed["logs"] += len(self.background_events) - max_background
+                self.background_events = self.background_events[-max_background:]
+
+        removed["removed_total"] = sum(
+            removed[k] for k in ("npcs", "locations", "flags", "notes", "notables", "relations", "logs")
+        )
+        return removed
+
+    def maintenance(
+        self,
+        scope: str = "all",
+        older_than_turns: int = 20,
+        max_notes: int = 120,
+        max_relations: int = 400,
+        max_change_log: int = 300,
+        max_background: int = 100,
+        dry_run: bool = False,
+    ) -> dict:
+        """清理过期/低价值世界状态；dry_run=True 时在副本上计算，不修改原状态。"""
+        target = copy.deepcopy(self) if dry_run else self
+        summary = target._maintenance_impl(
+            scope=scope,
+            older_than_turns=older_than_turns,
+            max_notes=max_notes,
+            max_relations=max_relations,
+            max_change_log=max_change_log,
+            max_background=max_background,
+        )
+        summary["dry_run"] = bool(dry_run)
+        if not dry_run and summary.get("removed_total"):
+            target._log_change(
+                f"世界状态维护[{scope}]: 清理 {summary['removed_total']} 条过期内容"
+            )
+            if len(target.change_log) > max_change_log:
+                target.change_log = target.change_log[-max_change_log:]
+            target.save()
+        return summary
 
     def to_player_journal(self) -> dict:
         """生成玩家笔记——仅包含可见信息。

@@ -425,6 +425,14 @@ I1. 每轮必须按顺序检查：
 
 I2. 世界状态修改只在玩家行动生效后执行。
     永远不要在检定结果出来之前修改世界。
+I3. 世界状态必须有增有减，防止过期内容堆积：
+    - NPC死亡/离场/不再相关：remove_npc；重要反派/长期盟友可保留，但死亡后超过20轮也应清理。
+    - 地点被摧毁/封闭/探索完毕且无后续作用：remove_location；当前地点不要删。
+    - 旗标已完成/已失败且不再影响主线：remove_flag；仍在影响后续剧情的保留。
+    - 值得注意的物品/线索已取走/摧毁/解决：remove_notable。
+    - 过时角色笔记：update_world_state(remove_character_note)；关系不再成立：remove_relation。
+    - 每10轮或大章节切换时，调用 prune_world_state(scope="all", older_than_turns=20) 做一次清理；
+      不确定时先 dry_run=true 查看会清理什么。
 
 ================================================================================
 J节：信息揭示规则
@@ -627,6 +635,7 @@ COMPACT_DM_PROMPT = """你是 D&D 5e 地下城主。本回合已由主 Agent 分
 - 有失败可能的行为必须 dice_roll；战斗必须 combat_round；HP/金币/物品变化必须 update_state。
 - 场景、时间、天气、在场 NPC 变化必须 update_scene。
 - 发现隐藏信息必须先有成功检定，再 reveal_info。
+- 世界状态有增有减：过期NPC/地点/旗标/物品用 update_world_state(remove_*) 删除；不确认时先 prune_world_state(dry_run=true)。
 - 战斗或查实体前必须先查卡：search_npcs / search_bestiary；无卡先建卡。
 - 重要事件 add_memory；暗线/人物影响 record_plot_memory；关系变化 update_knowledge_graph。
 - 玩家困惑时不要自行生成建议——后台会自动提供可点击选项。
@@ -1095,6 +1104,7 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
         "death_saving_throw": _exec_death_save,
         "take_rest": _exec_rest,
         "update_world_state": _exec_update_world_state,
+        "prune_world_state": _exec_prune_world_state,
         "reveal_info": _exec_reveal_info,
         "update_scene": _exec_update_scene,
         "add_character_note": _exec_character_note,
@@ -1147,7 +1157,7 @@ async def execute_tool(name: str, args: dict, state: GameSessionState) -> str:
     try:
         ws = getattr(state, "world_state", None)
         if ws is not None and name in {
-            "update_state", "combat_round", "update_world_state", "update_scene",
+            "update_state", "combat_round", "update_world_state", "prune_world_state", "update_scene",
             "adjust_npc", "promote_npc", "add_scenario_bestiary", "add_scenario_map",
             "add_scenario_spell", "reveal_info", "update_bestiary_entry",
             "update_city_entry", "adjust_bestiary", "learn_spell", "forget_spell",
@@ -2161,6 +2171,25 @@ async def _exec_suggest_choices(args: dict, state: GameSessionState) -> str:
     return f"建议: {', '.join(cleaned)}"
 
 
+async def _exec_prune_world_state(args: dict, state: GameSessionState) -> str:
+    """主动清理世界状态中的过期内容，避免冒险笔记只增不减。"""
+    ws = getattr(state, "world_state", None)
+    if ws is None:
+        return "⚠ 无世界状态"
+    scope = str(args.get("scope", "all") or "all")
+    older = int(args.get("older_than_turns", 20) or 20)
+    dry = bool(args.get("dry_run", False))
+    summary = ws.maintenance(scope=scope, older_than_turns=older, dry_run=dry)
+    if not dry and summary.get("removed_total"):
+        await push_event(state, "journal_update", ws.to_player_journal())
+    detail = (f"NPC {summary.get('npcs', 0)}、地点 {summary.get('locations', 0)}、"
+              f"旗标 {summary.get('flags', 0)}、笔记 {summary.get('notes', 0)}、"
+              f"场景物品 {summary.get('notables', 0)}、关系 {summary.get('relations', 0)}、"
+              f"日志 {summary.get('logs', 0)}")
+    suffix = "（dry_run，未实际删除）" if dry else ""
+    return f"🧹 世界状态维护[{scope}]：共清理 {summary.get('removed_total', 0)} 条（{detail}）{suffix}"
+
+
 async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
     ws = getattr(state, 'world_state', None)
     if ws is None: return "无世界状态"
@@ -2178,6 +2207,7 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
                     update_data[k] = changes[k]
             if update_data:
                 ws.update_npc(target, **update_data)
+            existing.turn_last_seen = ws.turn_count
             ws.save()
             await push_event(state, "journal_update", ws.to_player_journal())
             return f"✅ 已更新NPC: {target} ({reason})"
@@ -2253,6 +2283,7 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
                       "related_npcs", "related_creatures", "discovered"):
                 if k in changes:
                     setattr(existing_location, k, changes[k])
+            existing_location.turn_last_visited = ws.turn_count
             ws.save()
             await push_event(state, "journal_update", ws.to_player_journal())
             return f"✅ 地点已更新: {target} ({reason})"
@@ -2335,6 +2366,42 @@ async def _exec_update_world_state(args: dict, state: GameSessionState) -> str:
         ws.save()
         await push_event(state, "journal_update", ws.to_player_journal())
         return f"🗑️ 已移除旗标: {target} ({reason})"
+    elif action == "remove_character_note":
+        target_type = str((changes or {}).get("target_type") or "")
+        before = len(ws.character_notes)
+        ws.character_notes = [
+            c for c in ws.character_notes
+            if not ((not target_type or c.target_type == target_type) and c.target == target)
+        ]
+        if len(ws.character_notes) == before:
+            return f"⚠ 角色笔记 {target} 不存在"
+        ws.save()
+        await push_event(state, "journal_update", ws.to_player_journal())
+        return f"🗑️ 已移除角色笔记: {target} ({reason})"
+    elif action == "remove_relation":
+        src = str((changes or {}).get("source") or target or "").strip()
+        dst = str((changes or {}).get("target") or "").strip()
+        rel = str((changes or {}).get("relation") or "").strip()
+
+        def _match(r: dict) -> bool:
+            a = str(r.get("source", "")).strip()
+            b = str(r.get("target", "")).strip()
+            rr = str(r.get("relation", "")).strip()
+            if src and a != src and b != src:
+                return False
+            if dst and a != dst and b != dst:
+                return False
+            if rel and rr != rel:
+                return False
+            return True
+
+        before = len(ws.relations)
+        ws.relations = [r for r in ws.relations if not _match(r)]
+        if len(ws.relations) == before:
+            return f"⚠ 关系不存在: {target}"
+        ws.save()
+        await push_event(state, "journal_update", ws.to_player_journal())
+        return f"🗑️ 已移除关系: {target} ({reason})"
     return f"未知操作: {action}"
 
 
@@ -3473,23 +3540,26 @@ def _mode_instructions(s: GameSessionState, focused: bool = False) -> str:
 MODULE_TOOL_NAMES = {
     "rules": ["dice_roll", "update_state", "get_character_state", "adjust_resource",
               "cast_spell", "search_spells", "search_knowledge", "update_world_state",
-              "learn_spell", "forget_spell", "roll_treasure", "generate_name",
-              "npc_quirk", "equip_item", "add_scenario_spell", "suggest_choices"],
+              "prune_world_state", "learn_spell", "forget_spell", "roll_treasure",
+              "generate_name", "npc_quirk", "equip_item", "add_scenario_spell",
+              "suggest_choices"],
     "combat": ["combat_round", "enemy_attack", "death_saving_throw", "take_rest", "search_npcs",
                "search_bestiary", "update_state", "update_scene", "update_world_state",
                "get_bestiary_card", "add_scenario_bestiary", "adjust_bestiary",
-               "equip_item", "roll_treasure", "suggest_choices"],
+               "prune_world_state", "equip_item", "roll_treasure", "suggest_choices"],
     "scene": ["update_scene", "search_locations", "get_location_card",
-              "reveal_info", "update_world_state", "add_scenario_map",
-              "update_city_entry", "generate_name", "suggest_choices"],
+              "reveal_info", "update_world_state", "prune_world_state",
+              "add_scenario_map", "update_city_entry", "generate_name",
+              "suggest_choices"],
     "social": ["search_npcs", "adjust_npc", "add_character_note",
                "update_knowledge_graph", "get_entity_graph", "update_world_state",
-               "promote_npc", "update_bestiary_entry", "suggest_choices"],
+               "prune_world_state", "promote_npc", "update_bestiary_entry",
+               "suggest_choices"],
     "memory": ["search_knowledge", "search_memory", "get_entity_graph", "get_graph_path",
                "add_memory", "record_plot_memory", "update_world_state",
-               "suggest_choices"],
+               "prune_world_state", "suggest_choices"],
     "graph": ["get_entity_graph", "get_graph_path", "update_knowledge_graph",
-              "update_world_state", "suggest_choices"],
+              "update_world_state", "prune_world_state", "suggest_choices"],
 }
 
 
@@ -3927,6 +3997,16 @@ async def _process_player_action_inner(state: GameSessionState, player_input: st
         ws = getattr(state, 'world_state', None)
         if ws:
             ws.advance_turn()
+            # 世界状态维护：每轮裁剪日志，每 10 轮清理过期实体；避免世界状态只增不减
+            try:
+                if ws.turn_count % 10 == 0:
+                    summary = ws.maintenance(scope="all", older_than_turns=20)
+                    if summary.get("removed_total"):
+                        await push_event(state, "journal_update", ws.to_player_journal())
+                else:
+                    ws.maintenance(scope="logs", older_than_turns=20)
+            except Exception as e:
+                print(f"[WorldState] 自动维护失败（已忽略）: {e}")
             # 低成本后台剧情推进：仅在整轮结束时按频率触发，不阻塞主叙事
             await advance_background_plot_if_due(state)
             ws.save()
