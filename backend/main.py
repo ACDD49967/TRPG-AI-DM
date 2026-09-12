@@ -35,6 +35,8 @@ from backend.task_center import (
 from backend.schemas import (
     ActionAcceptedResponse,
     ActionRequest,
+    AuthRequest,
+    AuthResponse,
     GenerateAttributesRequest,
     GenerateBackstoryRequest,
     NewGameRequest,
@@ -97,7 +99,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="TRPG AI 跑团主持",
     description="由大语言模型驱动的单人 TRPG 跑团主持",
-    version="0.2.8",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -2227,6 +2229,39 @@ async def download_small_models_stream():
             yield f"data: {json.dumps({'type':'error','msg':str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/api/auth/register", response_model=AuthResponse)
+async def auth_register(payload: AuthRequest):
+    """注册本地账号：用户名 + 密码。"""
+    from backend.auth_manager import InvalidAuthInput, UsernameTaken, register_account
+    try:
+        data = await register_account(payload.username, payload.password)
+    except UsernameTaken as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except InvalidAuthInput as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return AuthResponse(username=data["username"], message="注册成功")
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+async def auth_login(payload: AuthRequest):
+    """登录本地账号：用户名 + 密码。"""
+    from backend.auth_manager import AuthError, InvalidAuthInput, login_account
+    try:
+        data = await login_account(payload.username, payload.password)
+    except InvalidAuthInput as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except AuthError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
+    return AuthResponse(username=data["username"], message="登录成功")
+
+
+@app.get("/api/auth/check")
+async def auth_check(username: str = ""):
+    """检查账号是否存在，用于登录页提示/记住账号校验。"""
+    from backend.auth_manager import account_exists
+    return {"exists": await account_exists(username)}
 
 
 @app.get("/api/health")

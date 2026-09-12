@@ -123,7 +123,7 @@ function saveConfig(cfg:{apiKey:string;modelName:string;baseUrl:string;username:
 
 // ═══════════════════════ 组件 ═══════════════════════
 
-export default function StartScreen(){
+export default function StartScreen({ authUsername, onLogout }: { authUsername?: string; onLogout?: () => void }){
   const [step,setStep]=useState(1);
   const cfg=loadConfig();
 
@@ -151,7 +151,12 @@ export default function StartScreen(){
   const [endpointPresets,setEndpointPresets]=useState<Array<{name:string;baseUrl:string;apiKey?:string;modelName?:string}>>(()=>{try{return JSON.parse(localStorage.getItem('dnd_endpoints')||'[]')}catch{return[]}});
   const [endpointName,setEndpointName]=useState('');
   const [scenarioMode,setScenarioMode]=useState<'existing'|'split'|'generate'>('generate');
-  const [username,setUsername]=useState(cfg.username);
+  const [username,setUsername]=useState(authUsername || cfg.username);
+
+  // 登录账号是身份唯一来源：账号切换时同步用户名。
+  useEffect(()=>{
+    if(authUsername && authUsername!==username) setUsername(authUsername);
+  },[authUsername]);
   const [charName,setCharName]=useState('');
   const [gender,setGender]=useState('未指定');
   const [race,setRace]=useState('人类');
@@ -1120,20 +1125,28 @@ export default function StartScreen(){
   // ═══════════════════════ 渲染 ═══════════════════════
 
   return(
-    <div className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-white flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl max-h-screen overflow-y-auto">
-        <div className="text-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">TRPG 跑团</h1>
-          <p className="text-gray-500 text-sm mt-1">单人冒险 · 智能主持</p>
-          <button onClick={()=>setShowRulebook(true)} className="mt-2 text-xs text-indigo-500 hover:text-indigo-700 underline underline-offset-2">打开玩家说明书</button>
-        </div>
+    <div className="min-h-screen flex justify-center p-3 sm:p-6">
+      <div className="w-full max-w-3xl lg:max-w-4xl">
+        <header className="text-center mb-5 sm:mb-7 pt-2">
+          <span className="inline-flex items-center gap-1.5 text-2xs font-medium text-parch-700 bg-parch-100/80 border border-parch-300 rounded-full px-3 py-1 mb-3">
+            <span aria-hidden>🎲</span> 单人跑团 · AI 主持
+          </span>
+          <h1 className="text-3xl sm:text-4xl font-display font-black tracking-tight text-ink-900">TRPG 跑团</h1>
+          <p className="text-ink-500 text-sm mt-2">选剧本 · 建角色 · 让 AI 主持陪你把故事跑完</p>
+          <button onClick={()=>setShowRulebook(true)} className="mt-3 btn-secondary text-xs px-3.5 py-1.5">
+            <span aria-hidden>📕</span> 打开玩家说明书
+          </button>
+        </header>
 
         {/* API 连接设置：放在选择剧本前，突出且必须 */}
-        <div className="card p-4 mb-4 space-y-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-xs font-bold text-gray-800">API 连接</p>
-            <div className="flex items-center gap-1">
-              <button onClick={()=>applyProvider('openai')} className={`text-[10px] px-2.5 py-1 rounded-lg border transition-colors ${provider==='openai'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-500 hover:border-gray-300'}`}>OpenAI 默认</button>
+        <div className="card p-4 sm:p-6 mb-4 space-y-3.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <p className="text-xs font-bold text-ink-800 flex items-center gap-1.5">
+              <span aria-hidden>🔌</span> API 连接
+              <span className="text-2xs font-normal text-ink-500">（必填，用于驱动 AI 主持）</span>
+            </p>
+            <div className="flex items-center gap-2">
+              <button onClick={()=>applyProvider('openai')} className={`text-2xs px-3 py-1.5 rounded-lg border transition-colors shrink-0 ${provider==='openai'?'border-brand-300 bg-brand-50 text-brand-700':'border-ink-200 text-ink-600 hover:border-ink-300'}`}>OpenAI 默认</button>
               <select
                 value=""
                 onChange={e=>{
@@ -1146,7 +1159,7 @@ export default function StartScreen(){
                     if(p.modelName) setModelName(p.modelName);
                   }
                 }}
-                className="input-field text-xs py-1 px-2 w-36"
+                className="field-sm w-full sm:w-40"
               >
                 <option value="">已保存链接...</option>
                 {endpointPresets.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
@@ -1154,12 +1167,18 @@ export default function StartScreen(){
             </div>
           </div>
           <div>
-            <label className="block text-[10px] text-gray-500 mb-1">用户 / 玩家名（自动记住，用于隔离存档、角色卡、扩展与媒体）</label>
-            <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="输入你的用户名" className="input-field text-xs" />
+            <label className="block text-[10px] text-ink-500 mb-1">用户 / 玩家名（登录账号，用于隔离存档、角色卡、扩展与媒体）</label>
+            <div className="flex gap-2">
+              <input value={username} onChange={e=>setUsername(e.target.value)} disabled={!!authUsername} placeholder="输入你的用户名" className="input-field text-xs flex-1 disabled:bg-gray-100 disabled:text-gray-500" />
+              {authUsername && onLogout && (
+                <button onClick={onLogout} className="btn-secondary text-xs px-3 whitespace-nowrap">退出登录</button>
+              )}
+            </div>
+            {authUsername && <p className="text-[10px] text-emerald-600 mt-1">已登录：{authUsername}</p>}
           </div>
           <div className="grid gap-2">
             <div>
-              <label className="block text-[10px] text-gray-500 mb-1">API 地址（OpenAI 兼容格式）</label>
+              <label className="block text-[10px] text-ink-500 mb-1">API 地址（OpenAI 兼容格式）</label>
               <input value={baseUrl} onChange={e=>{setBaseUrl(e.target.value); if(!e.target.value.includes('openai'))setProvider('custom');}} placeholder="https://api.openai.com/v1" className="input-field font-mono text-xs" />
             </div>
             <div className="flex gap-1">
@@ -1177,14 +1196,14 @@ export default function StartScreen(){
               )}
             </div>
             <div>
-              <label className="block text-[10px] text-gray-500 mb-1">API Key</label>
+              <label className="block text-[10px] text-ink-500 mb-1">API Key</label>
               <div className="flex gap-2">
                 <input type={showKey?'text':'password'} value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="sk-..." className="input-field font-mono text-xs flex-1" />
                 <button onClick={()=>setShowKey(!showKey)} className="btn-secondary text-xs px-3">{showKey?'隐藏':'显示'}</button>
               </div>
             </div>
             <div>
-              <label className="block text-[10px] text-gray-500 mb-1">模型（可从服务商自动获取，也可手动填写）</label>
+              <label className="block text-[10px] text-ink-500 mb-1">模型（可从服务商自动获取，也可手动填写）</label>
               <div className="flex gap-2">
                 {modelInputMode==='select' && modelOptions.length>0 ? (
                   <>
@@ -1210,68 +1229,100 @@ export default function StartScreen(){
                 )}
                 <button onClick={fetchModels} disabled={modelFetchBusy || !apiKey} className="btn-secondary text-xs px-3 whitespace-nowrap">{modelFetchBusy?'获取中...':'获取模型'}</button>
               </div>
-              {modelFetchErr&&<p className="text-red-500 text-[10px] mt-1">{modelFetchErr}</p>}
-              {modelOptions.length>0&&<p className="text-[10px] text-gray-400 mt-1">已获取 {modelOptions.length} 个模型，可从下拉中选择。</p>}
+              {modelFetchErr&&<p className="text-red-700 text-[10px] mt-1">{modelFetchErr}</p>}
+              {modelOptions.length>0&&<p className="text-[10px] text-ink-400 mt-1">已获取 {modelOptions.length} 个模型，可从下拉中选择。</p>}
 
             </div>
           </div>
         </div>
 
-        {/* 游玩模式：在最开始选择，影响 token 消耗与扮演深度 */}
-        <div className="grid grid-cols-2 gap-2 mb-4">
-          <button onClick={()=>setPlayMode('lite')} className={`p-3 rounded-xl border text-left transition-all ${playMode==='lite'?'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-200':'border-gray-200 bg-white hover:border-gray-300'}`}>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 rounded px-1.5 py-0.5">精简</span>
-              <div>
-                <div className="text-sm font-bold text-gray-800">精简模式</div>
-                <div className="text-[10px] text-gray-500">低 token 消耗 · 快节奏 · 性价比玩法</div>
-              </div>
-            </div>
-          </button>
-          <button onClick={()=>setPlayMode('deep')} className={`p-3 rounded-xl border text-left transition-all ${playMode==='deep'?'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200':'border-gray-200 bg-white hover:border-gray-300'}`}>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 rounded px-1.5 py-0.5">深度</span>
-              <div>
-                <div className="text-sm font-bold text-gray-800">深度模式</div>
-                <div className="text-[10px] text-gray-500">高 token 消耗 · 高深度扮演 · 沉浸体验</div>
-              </div>
-            </div>
-          </button>
-        </div>
-
-        {/* 思维强度 */}
-        <div className="mb-4">
-          <p className="text-[10px] text-gray-500 mb-1">思维强度（影响推理深度与 token 消耗）</p>
-          <div className="grid grid-cols-3 gap-1.5">
-            {(['low','medium','high'] as const).map(v=>(
-              <button key={v} onClick={()=>setThinkingStrength(v)} className={`p-2 rounded-lg border text-xs transition-all ${
-                thinkingStrength===v?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
-              }`}>
-                {v==='low'?'轻量':v==='medium'?'标准':'深度思考'}
+        {/* 游玩模式 + 思维强度：决定 token 消耗与扮演深度 */}
+        <section className="card p-4 sm:p-6 mb-4 space-y-4">
+          <div>
+            <p className="section-label mb-2">游玩模式</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button onClick={()=>setPlayMode('lite')} aria-pressed={playMode==='lite'} className={`p-3 rounded-xl border text-left transition-all ${playMode==='lite'?'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-200':'border-ink-200 bg-white hover:border-ink-300'}`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xs font-bold text-emerald-700 bg-emerald-100 rounded px-1.5 py-0.5 shrink-0">精简</span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-ink-800">精简模式</div>
+                    <div className="text-2xs text-ink-500 leading-relaxed">低 token 消耗 · 快节奏 · 性价比玩法</div>
+                  </div>
+                </div>
               </button>
-            ))}
+              <button onClick={()=>setPlayMode('deep')} aria-pressed={playMode==='deep'} className={`p-3 rounded-xl border text-left transition-all ${playMode==='deep'?'border-brand-400 bg-brand-50 ring-1 ring-brand-200':'border-ink-200 bg-white hover:border-ink-300'}`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xs font-bold text-brand-700 bg-brand-100 rounded px-1.5 py-0.5 shrink-0">深度</span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-ink-800">深度模式</div>
+                    <div className="text-2xs text-ink-500 leading-relaxed">高 token 消耗 · 高深度扮演 · 沉浸体验</div>
+                  </div>
+                </div>
+              </button>
+            </div>
           </div>
-        </div>
 
-        <div className="flex gap-1 mb-5">
-          {['剧本','角色创建','冒险准备','知识库','存档'].map((s,i)=>(
-            <button key={i} onClick={()=>setStep(i+1)} className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
-              step===i+1?'bg-indigo-600 text-white shadow-sm':step>i+1?'bg-indigo-50 text-indigo-600':'bg-gray-100 text-gray-400'}`}>{s}</button>
-          ))}
-        </div>
+          <div>
+            <p className="section-label mb-2">
+              思维强度 <span className="normal-case font-normal text-ink-400">（影响推理深度与 token 消耗）</span>
+            </p>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(['low','medium','high'] as const).map(v=>(
+                <button key={v} onClick={()=>setThinkingStrength(v)} aria-pressed={thinkingStrength===v} className={`seg ${thinkingStrength===v?'seg-active':''}`}>
+                  {v==='low'?'轻量':v==='medium'?'标准':'深度思考'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
 
-        <div className="card p-6 space-y-5">
+        {/* 步骤向导 */}
+        <nav className="card p-1.5 mb-4 flex items-center gap-1 sticky top-0 z-20 bg-white/95 backdrop-blur" aria-label="创建流程">
+          {['剧本','角色创建','冒险准备','知识库','存档'].map((s,i)=>{
+            const idx = i+1;
+            const done = step > idx;
+            const active = step === idx;
+            const noNumber = s === '知识库' || s === '存档';
+            return (
+              <button
+                key={i}
+                onClick={()=>setStep(idx)}
+                aria-current={active ? 'step' : undefined}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium transition-all duration-150 ${
+                  active ? 'bg-brand-600 text-white shadow-sm'
+                  : done ? 'text-brand-600 bg-brand-50 hover:bg-brand-100'
+                  : 'text-ink-400 hover:bg-ink-50'
+                }`}
+              >
+                {!noNumber && (
+                  <span
+                    className={`w-4 h-4 shrink-0 rounded-full text-3xs font-bold flex items-center justify-center ${
+                      active ? 'bg-white/25' : done ? 'bg-brand-100' : 'bg-ink-100'
+                    }`}
+                    aria-hidden
+                  >
+                    {done ? '✓' : idx}
+                  </span>
+                )}
+                <span className="hidden sm:inline">{s}</span>
+                <span className="sm:hidden">{s.slice(0,2)}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="card p-4 sm:p-6 space-y-5">
           {/* ═══════ 步骤2: 角色创建 ═══════ */}
           {step===2&&(
             <div className="space-y-5">
-              <p className="text-[10px] text-gray-400 bg-gray-50 rounded-lg p-2 border border-gray-200">
+              <p className="text-[10px] text-ink-400 bg-gray-50 rounded-lg p-2 border border-gray-200">
                 剧本系统：{GAME_SYSTEM_LABELS[scenarioSystem]} ｜ 角色系统：自动跟随剧本系统
               </p>
 
               {/* 角色卡库 */}
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-bold text-gray-700">我的角色卡</p>
+                  <p className="text-xs font-bold text-ink-700">我的角色卡</p>
                   <div className="flex items-center gap-1">
                     <input value={charCardName} onChange={e=>setCharCardName(e.target.value)} placeholder="角色卡名称" className="input-field text-xs py-1 px-2 w-28" />
                     <button onClick={saveCharCard} className="btn-secondary text-xs px-2 py-1 whitespace-nowrap">保存当前</button>
@@ -1280,13 +1331,13 @@ export default function StartScreen(){
                 {(() => {
                   const visibleCards = charCards.filter(card => !card.game_system || card.game_system === gameSystem);
                   if (visibleCards.length === 0) {
-                    return <p className="text-[10px] text-gray-400">{charCards.length === 0 ? '暂无角色卡。填写完角色后可保存，方便下次新游戏直接复用。' : `当前规则系统（${GAME_SYSTEM_LABELS[gameSystem]}）下没有角色卡，请先保存一张或切换规则。`}</p>;
+                    return <p className="text-[10px] text-ink-400">{charCards.length === 0 ? '暂无角色卡。填写完角色后可保存，方便下次新游戏直接复用。' : `当前规则系统（${GAME_SYSTEM_LABELS[gameSystem]}）下没有角色卡，请先保存一张或切换规则。`}</p>;
                   }
                   return visibleCards.map(card=>(
                   <div key={card.id} className="flex items-center justify-between bg-white rounded-lg p-2 border border-gray-200">
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-gray-800 truncate">{card.name}</p>
-                      <p className="text-[9px] text-gray-400 truncate">{card.character_name} · {GAME_SYSTEM_LABELS[card.game_system as GameSystem]||card.game_system} · {formatTime(card.updated_at)}</p>
+                      <p className="text-xs font-medium text-ink-800 truncate">{card.name}</p>
+                      <p className="text-[9px] text-ink-400 truncate">{card.character_name} · {GAME_SYSTEM_LABELS[card.game_system as GameSystem]||card.game_system} · {formatTime(card.updated_at)}</p>
                     </div>
                     <div className="flex gap-1 shrink-0">
                       <button onClick={()=>loadCharCard(card.id)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">使用</button>
@@ -1299,26 +1350,26 @@ export default function StartScreen(){
 
               {/* 基础信息 */}
               <div className="grid grid-cols-2 gap-3">
-                <div><label className="block text-xs font-medium text-gray-600 mb-1">玩家</label><input value={username} onChange={e=>setUsername(e.target.value)} placeholder="你的名字" className="input-field" /></div>
-                <div><label className="block text-xs font-medium text-gray-600 mb-1">角色名 <span className="text-red-400">*</span></label><input value={charName} onChange={e=>setCharName(e.target.value)} placeholder="取名..." className="input-field" /></div>
+                <div><label className="block text-xs font-medium text-ink-600 mb-1">玩家</label><input value={username} onChange={e=>setUsername(e.target.value)} disabled={!!authUsername} placeholder="你的名字" className="input-field disabled:bg-gray-100 disabled:text-gray-500" /></div>
+                <div><label className="block text-xs font-medium text-ink-600 mb-1">角色名 <span className="text-red-400">*</span></label><input value={charName} onChange={e=>setCharName(e.target.value)} placeholder="取名..." className="input-field" /></div>
               </div>
 
               {/* 角色图片 */}
               <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-3 border border-gray-200">
-                {characterImage?<img src={characterImage} alt="角色" className="w-16 h-16 object-cover rounded-lg border border-gray-300" />:<div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center text-[9px] text-gray-400">暂无头像</div>}
+                {characterImage?<img src={characterImage} alt="角色" className="w-16 h-16 object-cover rounded-lg border border-gray-300" />:<div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center text-[9px] text-ink-400">暂无头像</div>}
                 <div className="flex-1">
-                  <label className="block text-[10px] text-gray-500 mb-1">角色图片</label>
+                  <label className="block text-[10px] text-ink-500 mb-1">角色图片</label>
                   <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>{const f=e.target.files?.[0]; if(f)uploadCharacterImage(f);}} className="block w-full text-xs" />
-                  {mediaErr&&<p className="text-red-500 text-[10px] mt-1">{mediaErr}</p>}
+                  {mediaErr&&<p className="text-red-700 text-[10px] mt-1">{mediaErr}</p>}
                 </div>
               </div>
 
               {/* 性别 */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-2">性别</label>
+                <label className="block text-xs font-medium text-ink-600 mb-2">性别</label>
                 <div className="flex gap-2">
                   {['未指定','男','女'].map(g=>(
-                    <button key={g} onClick={()=>setGender(g)} className={`px-4 py-1.5 rounded-lg border text-xs transition-all ${gender===g?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>{g}</button>
+                    <button key={g} onClick={()=>setGender(g)} className={`px-4 py-1.5 rounded-lg border text-xs transition-all ${gender===g?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-ink-500 hover:border-gray-300'}`}>{g}</button>
                   ))}
                 </div>
               </div>
@@ -1326,15 +1377,15 @@ export default function StartScreen(){
               {/* 种族（仅 D&D 系） */}
               {(gameSystem==='dnd5e'||gameSystem==='dnd4e')&&(
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-2">种族</label>
+                  <label className="block text-xs font-medium text-ink-600 mb-2">种族</label>
                   <div className="grid grid-cols-2 gap-1.5">
                     {Object.entries(RACES).map(([k,v])=>(
-                      <button key={k} onClick={()=>setRace(k)} className={`p-2 rounded-lg border text-left text-xs transition-all ${race===k?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>{v.name}</button>
+                      <button key={k} onClick={()=>setRace(k)} className={`p-2 rounded-lg border text-left text-xs transition-all ${race===k?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-ink-600 hover:border-gray-300'}`}>{v.name}</button>
                     ))}
                   </div>
                   <div className="mt-2 bg-gray-50 rounded-lg p-2.5 border border-gray-200">
-                    <p className="text-[10px] text-gray-500 font-medium mb-1">{rc.name} 特性</p>
-                    {rc.traits.map((t,i)=><p key={i} className="text-[11px] text-gray-600">· {t}</p>)}
+                    <p className="text-[10px] text-ink-500 font-medium mb-1">{rc.name} 特性</p>
+                    {rc.traits.map((t,i)=><p key={i} className="text-[11px] text-ink-600">· {t}</p>)}
                   </div>
                 </div>
               )}
@@ -1342,17 +1393,17 @@ export default function StartScreen(){
               {/* 职业 / 调查员职业 */}
               {(gameSystem==='dnd5e'||gameSystem==='dnd4e')&&(
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-2">{gameSystem==='dnd4e'?'职业（4e）':'职业'}</label>
+                  <label className="block text-xs font-medium text-ink-600 mb-2">{gameSystem==='dnd4e'?'职业（4e）':'职业'}</label>
                   <div className="grid grid-cols-2 gap-1.5">
                     {[...(gameSystem==='dnd4e'?DND4_CLASSES:Object.keys(CLASSES)), ...customClasses].map(k=>{
                       const v=CLASSES[k]||{name:k,hd:'?',pri:'str',profs:[]};
                       return(
-                        <button key={k} onClick={()=>setCharClass(k)} className={`p-2 rounded-lg border text-left text-xs transition-all ${charClass===k?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>{v.name} {gameSystem==='dnd4e'?'':<span className="text-[9px] text-gray-400">({v.hd})</span>}</button>
+                        <button key={k} onClick={()=>setCharClass(k)} className={`p-2 rounded-lg border text-left text-xs transition-all ${charClass===k?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-ink-600 hover:border-gray-300'}`}>{v.name} {gameSystem==='dnd4e'?'':<span className="text-[9px] text-ink-400">({v.hd})</span>}</button>
                       );
                     })}
                   </div>
                   <div className="mt-2 bg-gray-50 rounded-lg p-2.5 border border-gray-200">
-                    <p className="text-[10px] text-gray-500 font-medium mb-1">{cc.name} · HP{cc.hd} · 主属性:{ATTRS.find(a=>a.k===cc.pri)?.n}</p>
+                    <p className="text-[10px] text-ink-500 font-medium mb-1">{cc.name} · HP{cc.hd} · 主属性:{ATTRS.find(a=>a.k===cc.pri)?.n}</p>
                     <div className="flex flex-wrap gap-1">{cc.profs.map((p,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full border border-indigo-100">{p}</span>)}</div>
                   </div>
                 </div>
@@ -1361,13 +1412,13 @@ export default function StartScreen(){
               {/* 戏法与法术选择（D&D 5e 施法职业） */}
               {gameSystem==='dnd5e' && (cantripQuota>0 || spellQuota>0) && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-2">
+                  <label className="block text-xs font-medium text-ink-600 mb-2">
                     戏法与法术选择
-                    <span className="text-gray-400 font-normal">（戏法 {selectedCantrips.length}/{cantripQuota} · 一环法术 {selectedLevel1.length}/{spellQuota}）</span>
+                    <span className="text-ink-400 font-normal">（戏法 {selectedCantrips.length}/{cantripQuota} · 一环法术 {selectedLevel1.length}/{spellQuota}）</span>
                   </label>
-                  {spellPoolBusy&&<p className="text-[10px] text-gray-400 mb-1">正在加载法术池（首次会从知识库自动抓取 SRD 法术）...</p>}
+                  {spellPoolBusy&&<p className="text-[10px] text-ink-400 mb-1">正在加载法术池（首次会从知识库自动抓取 SRD 法术）...</p>}
                   {!spellPoolBusy && availableCantrips.length===0 && availableLevel1.length===0 && (
-                    <p className="text-[10px] text-gray-400">该职业暂无可用法术列表。</p>
+                    <p className="text-[10px] text-ink-400">该职业暂无可用法术列表。</p>
                   )}
                   {availableCantrips.length>0 && (
                     <div className="mb-2">
@@ -1376,12 +1427,12 @@ export default function StartScreen(){
                         {availableCantrips.map(s=>{
                           const sel=spellPicks.some(p=>p.name===s.name);
                           return (
-                            <button key={s.name} onClick={()=>toggleSpell(s)} className={`w-full text-left p-2 rounded-lg border text-xs transition-all ${sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
+                            <button key={s.name} onClick={()=>toggleSpell(s)} className={`w-full text-left p-2 rounded-lg border text-xs transition-all ${sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-ink-600 hover:border-gray-300'}`}>
                               <div className="flex items-center justify-between">
                                 <span className="font-medium">{s.name_zh||s.name}</span>
-                                <span className="text-[9px] text-gray-400">{s.school}</span>
+                                <span className="text-[9px] text-ink-400">{s.school}</span>
                               </div>
-                              <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{s.description_zh||s.description}</p>
+                              <p className="text-[10px] text-ink-500 mt-0.5 line-clamp-2">{s.description_zh||s.description}</p>
                             </button>
                           );
                         })}
@@ -1395,12 +1446,12 @@ export default function StartScreen(){
                         {availableLevel1.map(s=>{
                           const sel=spellPicks.some(p=>p.name===s.name);
                           return (
-                            <button key={s.name} onClick={()=>toggleSpell(s)} className={`w-full text-left p-2 rounded-lg border text-xs transition-all ${sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
+                            <button key={s.name} onClick={()=>toggleSpell(s)} className={`w-full text-left p-2 rounded-lg border text-xs transition-all ${sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-ink-600 hover:border-gray-300'}`}>
                               <div className="flex items-center justify-between">
                                 <span className="font-medium">{s.name_zh||s.name}</span>
-                                <span className="text-[9px] text-gray-400">{s.school}{s.ritual?' · 仪式':''}</span>
+                                <span className="text-[9px] text-ink-400">{s.school}{s.ritual?' · 仪式':''}</span>
                               </div>
-                              <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{s.description_zh||s.description}</p>
+                              <p className="text-[10px] text-ink-500 mt-0.5 line-clamp-2">{s.description_zh||s.description}</p>
                             </button>
                           );
                         })}
@@ -1415,10 +1466,10 @@ export default function StartScreen(){
 
               {gameSystem==='coc'&&(
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-2">调查员职业</label>
+                  <label className="block text-xs font-medium text-ink-600 mb-2">调查员职业</label>
                   <div className="grid grid-cols-2 gap-1.5">
                     {[...COC_OCCUPATIONS, ...customClasses].map(o=>(
-                      <button key={o} onClick={()=>setOccupation(o)} className={`p-2 rounded-lg border text-left text-xs transition-all ${occupation===o?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>{o}</button>
+                      <button key={o} onClick={()=>setOccupation(o)} className={`p-2 rounded-lg border text-left text-xs transition-all ${occupation===o?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-ink-600 hover:border-gray-300'}`}>{o}</button>
                     ))}
                   </div>
                 </div>
@@ -1427,8 +1478,8 @@ export default function StartScreen(){
               {/* 技能熟练选择（按系统） */}
               {(gameSystem==='dnd5e'||gameSystem==='dnd4e')&&(
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-2">
-                    技能熟练 <span className="text-gray-400 font-normal">（选择2项 — 检定中获得+2熟练加值）</span>
+                  <label className="block text-xs font-medium text-ink-600 mb-2">
+                    技能熟练 <span className="text-ink-400 font-normal">（选择2项 — 检定中获得+2熟练加值）</span>
                   </label>
                   <div className="grid grid-cols-3 gap-1">
                     {SKILLS.map(s=>{
@@ -1437,7 +1488,7 @@ export default function StartScreen(){
                       return(
                         <button key={s.n} onClick={()=>toggleSkill(s.n)}
                           className={`p-1.5 rounded-lg border text-left text-[10px] transition-all ${
-                            sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                            sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-ink-500 hover:border-gray-300'
                           }`}>
                           <div className="font-medium">{s.n}</div>
                           <div className="text-[8px] opacity-60">{attrName} · {s.d}</div>
@@ -1449,7 +1500,7 @@ export default function StartScreen(){
                       return(
                         <button key={s} onClick={()=>toggleSkill(s)}
                           className={`p-1.5 rounded-lg border text-left text-[10px] transition-all ${
-                            sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                            sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-ink-500 hover:border-gray-300'
                           }`}>
                           <div className="font-medium">{s}</div>
                           <div className="text-[8px] opacity-60">剧本专属</div>
@@ -1462,8 +1513,8 @@ export default function StartScreen(){
               )}
               {gameSystem==='coc'&&(
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-2">
-                    职业技能 <span className="text-gray-400 font-normal">（选择最多8项，作为初始技能熟练）</span>
+                  <label className="block text-xs font-medium text-ink-600 mb-2">
+                    职业技能 <span className="text-ink-400 font-normal">（选择最多8项，作为初始技能熟练）</span>
                   </label>
                   <div className="grid grid-cols-3 gap-1">
                     {[...COC_SKILLS, ...customSkills].map(s=>{
@@ -1471,7 +1522,7 @@ export default function StartScreen(){
                       return(
                         <button key={s} onClick={()=>setCocSkillPicks(p=>p.includes(s)?p.filter(x=>x!==s):p.length<8?[...p,s]:p)}
                           className={`p-1.5 rounded-lg border text-left text-[10px] transition-all ${
-                            sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                            sel?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-ink-500 hover:border-gray-300'
                           }`}>
                           <div className="font-medium">{s}</div>
                         </button>
@@ -1484,12 +1535,12 @@ export default function StartScreen(){
                   <div className="mt-3 bg-gray-50 rounded-lg p-3 border border-gray-200">
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div className="bg-white rounded-lg border border-gray-200 p-2">
-                        <p className="text-gray-600">职业技能点（教育×4）</p>
-                        <p>可用 <b className="text-gray-800">{cocOccPool}</b> · 剩余 <b className={cocOccRemain<0?'text-red-500':'text-emerald-600'}>{cocOccRemain}</b></p>
+                        <p className="text-ink-600">职业技能点（教育×4）</p>
+                        <p>可用 <b className="text-ink-800">{cocOccPool}</b> · 剩余 <b className={cocOccRemain<0?'text-red-700':'text-emerald-600'}>{cocOccRemain}</b></p>
                       </div>
                       <div className="bg-white rounded-lg border border-gray-200 p-2">
-                        <p className="text-gray-600">个人兴趣点（智力×2）</p>
-                        <p>可用 <b className="text-gray-800">{cocPerPool}</b> · 剩余 <b className={cocPerRemain<0?'text-red-500':'text-emerald-600'}>{cocPerRemain}</b></p>
+                        <p className="text-ink-600">个人兴趣点（智力×2）</p>
+                        <p>可用 <b className="text-ink-800">{cocPerPool}</b> · 剩余 <b className={cocPerRemain<0?'text-red-700':'text-emerald-600'}>{cocPerRemain}</b></p>
                       </div>
                     </div>
                     <div className="max-h-56 overflow-y-auto mt-2 space-y-1">
@@ -1501,64 +1552,64 @@ export default function StartScreen(){
                         return (
                           <div key={s} className="bg-white rounded-lg border border-gray-200 px-2 py-1">
                             <div className="flex items-center justify-between">
-                              <span className="text-[10px] text-gray-600">{s} <span className="text-gray-400">基础{base} → 最终{final}</span></span>
-                              <span className="text-xs font-bold text-gray-800">{final}</span>
+                              <span className="text-[10px] text-ink-600">{s} <span className="text-ink-400">基础{base} → 最终{final}</span></span>
+                              <span className="text-xs font-bold text-ink-800">{final}</span>
                             </div>
                             <div className="flex items-center gap-1 mt-1 text-[9px]">
-                              <span className="text-gray-400 w-7">职业</span>
-                              <button onClick={()=>decCocOcc(s)} disabled={occ<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-gray-500 disabled:opacity-30">−</button>
+                              <span className="text-ink-400 w-7">职业</span>
+                              <button onClick={()=>decCocOcc(s)} disabled={occ<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-ink-500 disabled:opacity-30">−</button>
                               <span className="w-6 text-center font-medium">{occ}</span>
-                              <button onClick={()=>incCocOcc(s)} disabled={final>=75||cocOccRemain<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-gray-500 disabled:opacity-30">+</button>
-                              <span className="text-gray-400 w-7 ml-2">个人</span>
-                              <button onClick={()=>decCocPer(s)} disabled={per<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-gray-500 disabled:opacity-30">−</button>
+                              <button onClick={()=>incCocOcc(s)} disabled={final>=75||cocOccRemain<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-ink-500 disabled:opacity-30">+</button>
+                              <span className="text-ink-400 w-7 ml-2">个人</span>
+                              <button onClick={()=>decCocPer(s)} disabled={per<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-ink-500 disabled:opacity-30">−</button>
                               <span className="w-6 text-center font-medium">{per}</span>
-                              <button onClick={()=>incCocPer(s)} disabled={final>=75||cocPerRemain<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-gray-500 disabled:opacity-30">+</button>
+                              <button onClick={()=>incCocPer(s)} disabled={final>=75||cocPerRemain<=0} className="w-5 h-5 rounded bg-gray-100 border border-gray-200 text-ink-500 disabled:opacity-30">+</button>
                             </div>
                           </div>
                         );
                       })}
                     </div>
-                    <p className="text-[9px] text-gray-400 mt-1">COC 7e 官方规则：职业技能点=教育×4，个人兴趣点=智力×2；每项最终值=基础+职业+个人，最高75（含基础值）。</p>
+                    <p className="text-[9px] text-ink-400 mt-1">COC 7e 官方规则：职业技能点=教育×4，个人兴趣点=智力×2；每项最终值=基础+职业+个人，最高75（含基础值）。</p>
                   </div>
                 </div>
               )}
               {gameSystem==='custom'&&(
-                <p className="text-[11px] text-gray-500 bg-gray-50 rounded-lg p-2 border border-gray-200">自定义规则：技能与判定方式由你在「自定义规则」文本中定义，AI DM 会按规则文本处理。</p>
+                <p className="text-[11px] text-ink-500 bg-gray-50 rounded-lg p-2 border border-gray-200">自定义规则：技能与判定方式由你在「自定义规则」文本中定义，AI DM 会按规则文本处理。</p>
               )}
 
               {/* 属性分配（按系统） */}
               {(gameSystem==='dnd5e'||gameSystem==='dnd4e')&&(
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-medium text-gray-600">属性分配</label>
+                    <label className="text-xs font-medium text-ink-600">属性分配</label>
                     <div className="flex gap-1">
-                      <button onClick={()=>{setAttrs(gameSystem==='dnd4e'?rollDnd4Attributes():rollDndAttributes()); setAttrMode('manual');}} className="text-[10px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-gray-300">随机</button>
-                      <button onClick={()=>setAttrMode('manual')} className={`text-[10px] px-2.5 py-1 rounded-lg border ${attrMode==='manual'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-400'}`}>手动</button>
-                      <button onClick={()=>setAttrMode('ai')} className={`text-[10px] px-2.5 py-1 rounded-lg border ${attrMode==='ai'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-gray-400'}`}>自动</button>
+                      <button onClick={()=>{setAttrs(gameSystem==='dnd4e'?rollDnd4Attributes():rollDndAttributes()); setAttrMode('manual');}} className="text-[10px] px-2.5 py-1 rounded-lg border border-gray-200 text-ink-500 hover:border-gray-300">随机</button>
+                      <button onClick={()=>setAttrMode('manual')} className={`text-[10px] px-2.5 py-1 rounded-lg border ${attrMode==='manual'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-ink-400'}`}>手动</button>
+                      <button onClick={()=>setAttrMode('ai')} className={`text-[10px] px-2.5 py-1 rounded-lg border ${attrMode==='ai'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 text-ink-400'}`}>自动</button>
                     </div>
                   </div>
 
                   {attrMode==='manual'&&(
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5 border border-gray-200">
-                        <span className="text-[10px] text-gray-500">购点 {pb.total}pt · {pb.min}-{pb.max} · 按官方点数表</span>
+                        <span className="text-[10px] text-ink-500">购点 {pb.total}pt · {pb.min}-{pb.max} · 按官方点数表</span>
                         <div className="flex items-center gap-2">
                           <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full transition-all" style={{width:`${pb.total>0?((pb.total-rm)/pb.total)*100:0}%`}}/></div>
-                          <span className={`text-xs font-bold ${rm<0?'text-red-500':'text-indigo-600'}`}>{rm}</span>
+                          <span className={`text-xs font-bold ${rm<0?'text-red-700':'text-indigo-600'}`}>{rm}</span>
                         </div>
                       </div>
                       {ATTRS.map(a=>{const v=attrs[a.k]||8;const pri=cc.pri===a.k;return(
                         <div key={a.k} className={`flex items-center gap-2 p-2 rounded-lg border ${pri?'border-amber-300 bg-amber-50/50':'border-gray-200 bg-white'}`}>
                           <span className="text-sm w-6 text-center">{a.icon}</span>
-                          <div className="w-12"><span className="text-xs font-semibold text-gray-700">{a.n}</span><span className="text-[9px] text-gray-400 ml-0.5">{a.e}</span></div>
-                          <span className="text-[9px] text-gray-400 hidden sm:block w-20">{a.s}</span>
+                          <div className="w-12"><span className="text-xs font-semibold text-ink-700">{a.n}</span><span className="text-[9px] text-ink-400 ml-0.5">{a.e}</span></div>
+                          <span className="text-[9px] text-ink-400 hidden sm:block w-20">{a.s}</span>
                           {pri&&<span className="text-[9px] bg-amber-100 text-amber-700 px-1 rounded-full">主</span>}
                           <div className="flex items-center gap-1 ml-auto">
-                            <button onClick={()=>dec(a.k)} disabled={v<=pb.min} className="w-6 h-6 rounded bg-gray-100 border border-gray-200 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-xs">−</button>
-                            <span className="w-6 text-center text-xs font-bold text-gray-700">{v}</span>
-                            <button onClick={()=>inc(a.k)} disabled={v>=pb.max||rm<(pb.cost[v+1]||99)-(pb.cost[v]||0)} className="w-6 h-6 rounded bg-gray-100 border border-gray-200 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-xs">+</button>
+                            <button onClick={()=>dec(a.k)} disabled={v<=pb.min} className="w-6 h-6 rounded bg-gray-100 border border-gray-200 text-ink-500 hover:text-ink-700 disabled:opacity-30 text-xs">−</button>
+                            <span className="w-6 text-center text-xs font-bold text-ink-700">{v}</span>
+                            <button onClick={()=>inc(a.k)} disabled={v>=pb.max||rm<(pb.cost[v+1]||99)-(pb.cost[v]||0)} className="w-6 h-6 rounded bg-gray-100 border border-gray-200 text-ink-500 hover:text-ink-700 disabled:opacity-30 text-xs">+</button>
                           </div>
-                          <span className="w-12 text-right text-xs font-bold text-indigo-600">{v}<span className={`ml-0.5 ${(v-10)>=0?'text-emerald-500':'text-red-400'}`}>({mod(v)})</span></span>
+                          <span className="w-12 text-right text-xs font-bold text-indigo-600">{v}<span className={`ml-0.5 ${(v-10)>=0?'text-emerald-700':'text-red-400'}`}>({mod(v)})</span></span>
                         </div>
                       );})}
                     </div>
@@ -1566,12 +1617,12 @@ export default function StartScreen(){
 
                   {attrMode==='ai'&&(
                     <div className="space-y-2">
-                      <p className="text-[11px] text-gray-500">描述角色背景，系统自动分配属性。留空则全自动生成。</p>
+                      <p className="text-[11px] text-ink-500">描述角色背景，系统自动分配属性。留空则全自动生成。</p>
                       <textarea value={backstoryText} onChange={e=>setBackstoryText(e.target.value)} placeholder="例如：森林中长大的精灵，跟随猎人父亲学箭..." rows={3} className="input-field resize-none" />
                     </div>
                   )}
 
-                  {aiErr&&<p className="text-red-500 text-xs">{aiErr}</p>}
+                  {aiErr&&<p className="text-red-700 text-xs">{aiErr}</p>}
 
                   <button onClick={()=>callAI(attrMode==='manual')} disabled={aiBusy} className="mt-2 w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
                     {aiBusy?'生成中...':attrMode==='manual'?'根据属性生成背景故事':'自动生成属性与背景'}
@@ -1579,12 +1630,12 @@ export default function StartScreen(){
 
                   {aiGen&&(
                     <div className="mt-3 bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
-                      {aiGen.backstory&&<div><p className="text-[10px] text-gray-500 font-medium mb-1">背景故事</p><p className="text-xs text-gray-700 leading-relaxed">{aiGen.backstory}</p></div>}
+                      {aiGen.backstory&&<div><p className="text-[10px] text-ink-500 font-medium mb-1">背景故事</p><p className="text-xs text-ink-700 leading-relaxed">{aiGen.backstory}</p></div>}
                       <div className="grid grid-cols-3 gap-1.5">
                         {ATTRS.map(a=>{const v=aiGen.attributes[a.k]||12;return(
                           <div key={a.k} className={`flex items-center gap-1.5 p-1.5 rounded ${cc.pri===a.k?'bg-amber-50':'bg-white'}`}>
-                            <span className="text-xs">{a.icon}</span><span className="text-[10px] text-gray-500">{a.n}</span>
-                            <span className="text-xs font-bold text-indigo-600 ml-auto">{v}</span><span className={`text-[9px] ${(v-10)>=0?'text-emerald-500':'text-red-400'}`}>({mod(v)})</span>
+                            <span className="text-xs">{a.icon}</span><span className="text-[10px] text-ink-500">{a.n}</span>
+                            <span className="text-xs font-bold text-indigo-600 ml-auto">{v}</span><span className={`text-[9px] ${(v-10)>=0?'text-emerald-700':'text-red-400'}`}>({mod(v)})</span>
                           </div>
                         );})}
                       </div>
@@ -1596,18 +1647,18 @@ export default function StartScreen(){
               {gameSystem==='coc'&&(
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-medium text-gray-600">调查员属性（1-99）</label>
+                    <label className="text-xs font-medium text-ink-600">调查员属性（1-99）</label>
                     <button onClick={()=>{setCocAttrs(rollCocAttributes()); setCocLuck(rollCocLuck());}} className="text-[10px] px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100">随机生成</button>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {COC_ATTRIBUTES.map(a=>(
                       <div key={a.key} className="flex items-center gap-2 p-2 rounded-lg border border-gray-200 bg-white">
                         <span className="text-sm">{a.icon}</span>
-                        <span className="text-xs font-semibold text-gray-700 w-12">{a.label}</span>
+                        <span className="text-xs font-semibold text-ink-700 w-12">{a.label}</span>
                         <span className="ml-auto text-xs font-bold text-indigo-600">{cocAttrs[a.key]||50}</span>
                       </div>
                     ))}
-                    <p className="text-[10px] text-gray-400">按 COC 7e 规则掷骰生成：STR/CON/DEX/INT/POW/CHA=3d6×5，SIZ/EDU=(2d6+6)×5；不可自由填写。</p>
+                    <p className="text-[10px] text-ink-400">按 COC 7e 规则掷骰生成：STR/CON/DEX/INT/POW/CHA=3d6×5，SIZ/EDU=(2d6+6)×5；不可自由填写。</p>
                   </div>
                   <div className="mt-3 bg-gray-50 rounded-lg p-3 border border-gray-200 grid grid-cols-2 gap-2 text-xs">
                     <div>HP: <b>{Math.max(1, Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/10))}</b></div>
@@ -1618,11 +1669,11 @@ export default function StartScreen(){
                   <button onClick={()=>callAI(true)} disabled={aiBusy} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
                     {aiBusy?'生成中...':'基于属性+剧本总结生成沉浸式背景'}
                   </button>
-                  {aiErr&&<p className="text-red-500 text-xs">{aiErr}</p>}
+                  {aiErr&&<p className="text-red-700 text-xs">{aiErr}</p>}
                   {aiGen?.backstory&&(
                     <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                      <p className="text-[10px] text-gray-500 font-medium mb-1">背景故事</p>
-                      <p className="text-xs text-gray-700 leading-relaxed">{aiGen.backstory}</p>
+                      <p className="text-[10px] text-ink-500 font-medium mb-1">背景故事</p>
+                      <p className="text-xs text-ink-700 leading-relaxed">{aiGen.backstory}</p>
                     </div>
                   )}
                 </div>
@@ -1630,12 +1681,12 @@ export default function StartScreen(){
 
               {gameSystem==='custom'&&(
                 <div>
-                  <label className="text-xs font-medium text-gray-600 mb-2">自定义属性（可在自定义规则中改名）</label>
+                  <label className="text-xs font-medium text-ink-600 mb-2">自定义属性（可在自定义规则中改名）</label>
                   <div className="grid grid-cols-2 gap-2">
                     {CUSTOM_ATTRIBUTES.map(a=>(
                       <div key={a.key} className="flex items-center gap-2 p-2 rounded-lg border border-gray-200 bg-white">
                         <span className="text-sm">{a.icon}</span>
-                        <span className="text-xs font-semibold text-gray-700 w-12">{a.label}</span>
+                        <span className="text-xs font-semibold text-ink-700 w-12">{a.label}</span>
                         <input type="number" min={1} max={30} value={customAttrs[a.key]||10} onChange={e=>setCustomAttrs(p=>({...p,[a.key]:Math.max(1,Math.min(30,Number(e.target.value)||10))}))} className="input-field text-xs py-1 px-2" />
                       </div>
                     ))}
@@ -1643,11 +1694,11 @@ export default function StartScreen(){
                   <button onClick={()=>callAI(true)} disabled={aiBusy} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-all disabled:opacity-50">
                     {aiBusy?'生成中...':'基于属性+剧本总结生成沉浸式背景'}
                   </button>
-                  {aiErr&&<p className="text-red-500 text-xs">{aiErr}</p>}
+                  {aiErr&&<p className="text-red-700 text-xs">{aiErr}</p>}
                   {aiGen?.backstory&&(
                     <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                      <p className="text-[10px] text-gray-500 font-medium mb-1">背景故事</p>
-                      <p className="text-xs text-gray-700 leading-relaxed">{aiGen.backstory}</p>
+                      <p className="text-[10px] text-ink-500 font-medium mb-1">背景故事</p>
+                      <p className="text-xs text-ink-700 leading-relaxed">{aiGen.backstory}</p>
                     </div>
                   )}
                 </div>
@@ -1655,7 +1706,7 @@ export default function StartScreen(){
 
               {/* 自行填写背景（所有规则系统通用） */}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">角色背景</label>
+                <label className="block text-xs font-medium text-ink-600 mb-1">角色背景</label>
                 <textarea value={backstoryText} onChange={e=>setBackstoryText(e.target.value)} placeholder="在这里直接写下你的角色过往；也可以留空并使用上方 AI 生成" rows={4} className="input-field resize-none" />
               </div>
 
@@ -1669,7 +1720,7 @@ export default function StartScreen(){
           {/* ═══════ 步骤1: 剧本选择与生成 ═══════ */}
           {step===1&&(
             <div className="space-y-5">
-              <h2 className="text-lg font-bold text-gray-900">剧本选择与生成</h2>
+              <h2 className="text-lg font-bold text-ink-900">剧本选择与生成</h2>
 
               {/* 剧本模式：已有 / 切分 / AI 自动生成 */}
               <div className="grid grid-cols-3 gap-2">
@@ -1679,8 +1730,8 @@ export default function StartScreen(){
                   {id:'generate', label:'AI 自动生成', desc:'从描述生成全新剧本'},
                 ] as const).map(mode=>(
                   <button key={mode.id} onClick={()=>setScenarioMode(mode.id)} className={`p-2.5 rounded-xl border text-left transition-all ${scenarioMode===mode.id?'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200':'border-gray-200 bg-white hover:border-gray-300'}`}>
-                    <div className="text-xs font-bold text-gray-800">{mode.label}</div>
-                    <div className="text-[9px] text-gray-500 mt-0.5">{mode.desc}</div>
+                    <div className="text-xs font-bold text-ink-800">{mode.label}</div>
+                    <div className="text-[9px] text-ink-500 mt-0.5">{mode.desc}</div>
                   </button>
                 ))}
               </div>
@@ -1700,11 +1751,11 @@ export default function StartScreen(){
                         <div key={s.id} className={`rounded-lg border text-xs transition-all ${selectedScenario===s.id?'border-indigo-400 bg-indigo-100 ring-1 ring-indigo-300':'border-gray-200 bg-white hover:border-gray-300'}`}>
                           <button onClick={()=>loadScenario(s.id)} className="w-full text-left p-2.5">
                             <div className="flex justify-between items-center">
-                              <span className="font-medium text-gray-800">{s.title}</span>
+                              <span className="font-medium text-ink-800">{s.title}</span>
                               <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${s.score>=80?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}`}>{s.score}分</span>
                             </div>
-                            <div className="flex gap-3 mt-1 text-[10px] text-gray-500"><span>{GAME_SYSTEM_LABELS[(s.system as GameSystem)||'dnd5e']||s.system}</span><span>{s.tone}</span><span>游玩{s.total_sessions}次</span>{s.character_name&&<span>角色:{s.character_name}</span>}</div>
-                            {s.summary&&<p className="mt-1 text-[10px] text-gray-500 line-clamp-2">{s.summary}</p>}
+                            <div className="flex gap-3 mt-1 text-[10px] text-ink-500"><span>{GAME_SYSTEM_LABELS[(s.system as GameSystem)||'dnd5e']||s.system}</span><span>{s.tone}</span><span>游玩{s.total_sessions}次</span>{s.character_name&&<span>角色:{s.character_name}</span>}</div>
+                            {s.summary&&<p className="mt-1 text-[10px] text-ink-500 line-clamp-2">{s.summary}</p>}
                           </button>
                           <div className="flex gap-1 px-2 pb-2">
                             <button onClick={()=>loadScenario(s.id)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">选择/编辑</button>
@@ -1723,7 +1774,7 @@ export default function StartScreen(){
               {scenarioMode==='generate'&&(
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">世界描述</label>
+                    <label className="block text-xs font-medium text-ink-600 mb-1">世界描述</label>
                     <textarea value={worldDesc} onChange={e=>setWorldDesc(e.target.value)} placeholder="描述你想要的冒险..." rows={3} className="input-field resize-none" />
                   </div>
 
@@ -1735,15 +1786,15 @@ export default function StartScreen(){
                           <div key={cs.name} className="bg-white border border-amber-100 rounded-lg p-2">
                             <div className="flex items-center justify-between">
                               <div>
-                                <p className="text-xs font-bold text-gray-800">{cs.name}</p>
-                                <p className="text-[9px] text-gray-400">{cs.system} · {cs.tone} · {cs.source}</p>
+                                <p className="text-xs font-bold text-ink-800">{cs.name}</p>
+                                <p className="text-[9px] text-ink-400">{cs.system} · {cs.tone} · {cs.source}</p>
                               </div>
                               <button
                                 onClick={()=>{ setWorldDesc(cs.summary); setWorldTone(cs.tone); setGameSystem((cs.system==='coc'||cs.system==='dnd5e'||cs.system==='dnd4e'||cs.system==='custom')?cs.system as GameSystem:'dnd5e'); }}
                                 className="text-[10px] px-2 py-1 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100"
                               >使用此背景</button>
                             </div>
-                            <p className="text-[10px] text-gray-500 mt-1">{cs.summary}</p>
+                            <p className="text-[10px] text-ink-500 mt-1">{cs.summary}</p>
                           </div>
                         ))}
                       </div>
@@ -1752,7 +1803,7 @@ export default function StartScreen(){
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">基调</label>
+                      <label className="block text-xs font-medium text-ink-600 mb-1">基调</label>
                       <select
                         value={toneCustom ? '__custom__' : worldTone}
                         onChange={e=>{
@@ -1779,13 +1830,13 @@ export default function StartScreen(){
                       )}
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">参考剧本</label>
+                      <label className="block text-xs font-medium text-ink-600 mb-1">参考剧本</label>
                       <textarea value={referenceScript} onChange={e=>setReferenceScript(e.target.value)} placeholder="粘贴参考文本..." rows={2} className="input-field resize-none" />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">备注</label>
+                    <label className="block text-xs font-medium text-ink-600 mb-1">备注</label>
                     <textarea value={worldNote} onChange={e=>setWorldNote(e.target.value)} placeholder="特殊规则、限制..." rows={2} className="input-field resize-none" />
                   </div>
                 </div>
@@ -1793,11 +1844,11 @@ export default function StartScreen(){
 
               {scenarioMode==='generate'&&(
                 <div className="bg-indigo-50/40 rounded-lg p-3 border border-indigo-100 space-y-2">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">剧本规则系统（角色系统自动跟随）</label>
+                  <label className="block text-xs font-medium text-ink-700 mb-1">剧本规则系统（角色系统自动跟随）</label>
                   <div className="grid grid-cols-2 gap-1.5">
                     {GAME_SYSTEM_OPTIONS.map(opt=>(
                       <button key={opt.id} onClick={()=>setGameSystem(opt.id)} className={`p-2 rounded-lg border text-left text-xs transition-all ${
-                        gameSystem===opt.id?'border-indigo-400 bg-indigo-100 text-indigo-800':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                        gameSystem===opt.id?'border-indigo-400 bg-indigo-100 text-indigo-800':'border-gray-200 bg-white text-ink-600 hover:border-gray-300'
                       }`}>
                         <span className="font-bold">{opt.label}</span>
                         <span className="block text-[9px] opacity-70">{opt.short} · {opt.description}</span>
@@ -1806,17 +1857,17 @@ export default function StartScreen(){
                   </div>
                   {gameSystem==='custom'&&(
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">自定义规则</label>
+                      <label className="block text-xs font-medium text-ink-600 mb-1">自定义规则</label>
                       <textarea value={customRules} onChange={e=>setCustomRules(e.target.value)} placeholder="粘贴你的自定义规则，例如属性名称、判定方式、特殊机制..." rows={3} className="input-field resize-none" />
                     </div>
                   )}
-                  <p className="text-[10px] text-gray-400">生成时按此规则系统创建剧本；角色系统由剧本系统决定，角色卡库不绑定具体剧本。</p>
+                  <p className="text-[10px] text-ink-400">生成时按此规则系统创建剧本；角色系统由剧本系统决定，角色卡库不绑定具体剧本。</p>
                 </div>
               )}
 
               {scenarioMode!=='existing'&&(
                 <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
-                  <p className="text-xs font-medium text-gray-700">剧本专属扩展</p>
+                  <p className="text-xs font-medium text-ink-700">剧本专属扩展</p>
                   <input value={customClassesText} onChange={e=>setCustomClassesText(e.target.value)} placeholder="专属职业/身份，逗号分隔，如：守夜人、符文工匠" className="input-field text-xs" />
                   <input value={customSkillsText} onChange={e=>setCustomSkillsText(e.target.value)} placeholder="专属技能，逗号分隔，如：符文解读、夜间追踪" className="input-field text-xs" />
                   <textarea value={extraAttributesText} onChange={e=>setExtraAttributesText(e.target.value)} placeholder="额外属性/规则特色，每行一个：名称:值" rows={2} className="input-field resize-none text-xs" />
@@ -1826,7 +1877,7 @@ export default function StartScreen(){
               {scenarioMode==='split'&&(
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">上传剧本文件</label>
+                  <label className="block text-xs font-medium text-ink-600 mb-1">上传剧本文件</label>
                   <input
                     type="file"
                     accept=".txt,.md,.markdown,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp"
@@ -1835,14 +1886,14 @@ export default function StartScreen(){
                       if(f)importScenario(f);
                       e.target.value='';
                     }}
-                    className="block w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:text-xs file:font-medium hover:file:bg-indigo-100"
+                    className="block w-full text-xs text-ink-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:text-xs file:font-medium hover:file:bg-indigo-100"
                   />
-                  {importFileName&&<p className="text-[10px] text-gray-400 mt-1">已选择: {importFileName}</p>}
+                  {importFileName&&<p className="text-[10px] text-ink-400 mt-1">已选择: {importFileName}</p>}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">切分方式</label>
+                    <label className="block text-xs font-medium text-ink-600 mb-1">切分方式</label>
                     <select value={splitter} onChange={e=>setSplitter(e.target.value as 'semantic'|'llm'|'recursive')} className="input-field">
                       <option value="recursive">递归切分</option>
                       <option value="semantic">语义切分</option>
@@ -1850,7 +1901,7 @@ export default function StartScreen(){
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">单块字数</label>
+                    <label className="block text-xs font-medium text-ink-600 mb-1">单块字数</label>
                     <input type="number" min={200} max={4000} step={100} value={chunkSize} onChange={e=>setChunkSize(Number(e.target.value)||900)} className="input-field" />
                   </div>
                 </div>
@@ -1861,12 +1912,12 @@ export default function StartScreen(){
                     <div className="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                       <div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{width:`${importProgress}%`}} />
                     </div>
-                    <p className="text-[9px] text-gray-400 mt-0.5">{importProgress}%</p>
+                    <p className="text-[9px] text-ink-400 mt-0.5">{importProgress}%</p>
                     <button onClick={cancelImport} className="mt-1 text-[10px] px-2 py-1 rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100">取消导入</button>
-                    {importLive && <pre className="text-[9px] text-gray-500 bg-white rounded p-2 mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap">{importLive}</pre>}
+                    {importLive && <pre className="text-[9px] text-ink-500 bg-white rounded p-2 mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap">{importLive}</pre>}
                   </div>
                 )}
-                {importErr&&<p className="text-red-500 text-xs">{importErr}</p>}
+                {importErr&&<p className="text-red-700 text-xs">{importErr}</p>}
               </div>
               )}
 
@@ -1874,35 +1925,35 @@ export default function StartScreen(){
                 <button onClick={genWorld} disabled={worldGenBusy} className="w-full btn-primary">{worldGenBusy?'正在生成世界...':'生成世界大纲'}</button>
               )}
               {scenarioMode==='existing'&&selectedScenario&&(
-                <p className="text-xs text-gray-500 text-center">已加载已有剧本，无需生成。直接进入下一步。</p>
+                <p className="text-xs text-ink-500 text-center">已加载已有剧本，无需生成。直接进入下一步。</p>
               )}
 
               {worldGenBusy&&(
                 <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 space-y-2">
-                  <div className="flex items-center gap-2 text-sm font-medium text-gray-700"><span className="animate-pulse">●</span>铸造世界中</div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-ink-700"><span className="animate-pulse">●</span>铸造世界中</div>
                   <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-1000" style={{width:`${((worldGenStage+1)/WORLD_STAGES.length)*100}%`}}/></div>
                   {worldGenDetail&&<p className="text-xs text-indigo-600 animate-pulse">{worldGenDetail}</p>}
-                  {worldGenLive && <pre className="text-[9px] text-gray-500 bg-white rounded p-2 mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap">{worldGenLive}</pre>}
+                  {worldGenLive && <pre className="text-[9px] text-ink-500 bg-white rounded p-2 mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap">{worldGenLive}</pre>}
                   <div className="space-y-0.5">
-                    {WORLD_STAGES.map((st,i)=>(<div key={st.key} className={`flex items-center gap-2 text-xs ${i<worldGenStage?'text-emerald-600':i===worldGenStage?'text-indigo-600 font-medium':'text-gray-400'}`}><span>{i<worldGenStage?'✓':i===worldGenStage?'◉':'○'}</span><span>{st.label}</span>{i===worldGenStage&&<span className="text-gray-400 font-normal">— {st.desc}</span>}</div>))}
+                    {WORLD_STAGES.map((st,i)=>(<div key={st.key} className={`flex items-center gap-2 text-xs ${i<worldGenStage?'text-emerald-600':i===worldGenStage?'text-indigo-600 font-medium':'text-ink-400'}`}><span>{i<worldGenStage?'✓':i===worldGenStage?'◉':'○'}</span><span>{st.label}</span>{i===worldGenStage&&<span className="text-ink-400 font-normal">— {st.desc}</span>}</div>))}
                   </div>
                 </div>
               )}
 
-              {worldGenErr&&<p className="text-red-500 text-xs">{worldGenErr}</p>}
+              {worldGenErr&&<p className="text-red-700 text-xs">{worldGenErr}</p>}
 
               {worldOutline&&!worldGenBusy&&(
                 <div className="space-y-2">
                   {worldScore!==null&&(
                     <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-2.5 border border-gray-200">
-                      <span className={`text-lg font-bold ${worldScore>=90?'text-emerald-600':worldScore>=75?'text-amber-600':'text-red-500'}`}>{worldScore}/100</span>
+                      <span className={`text-lg font-bold ${worldScore>=90?'text-emerald-600':worldScore>=75?'text-amber-700':'text-red-700'}`}>{worldScore}/100</span>
                       <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className={`h-full rounded-full ${worldScore>=90?'bg-emerald-500':worldScore>=75?'bg-amber-500':'bg-red-500'}`} style={{width:`${worldScore}%`}}/></div>
                     </div>
                   )}
                   {scenarioSummary&&(
                     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
                       <p className="text-[10px] text-emerald-700 font-medium mb-1">剧本总结</p>
-                      <p className="text-xs text-gray-700 leading-relaxed">{scenarioSummary}</p>
+                      <p className="text-xs text-ink-700 leading-relaxed">{scenarioSummary}</p>
                     </div>
                   )}
                   <div className="flex flex-wrap gap-1">
@@ -1912,71 +1963,69 @@ export default function StartScreen(){
                   </div>
                   {scenarioId ? (
                     <div className="space-y-2">
-                      <label className="text-[10px] text-gray-500 font-medium">编辑剧本大纲</label>
+                      <label className="text-[10px] text-ink-500 font-medium">编辑剧本大纲</label>
                       <textarea value={worldOutline} onChange={e=>setWorldOutline(e.target.value)} rows={8} className="input-field text-xs resize-y" />
                       <button onClick={()=>updateScenario()} className="text-[10px] px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">保存修改</button>
                     </div>
                   ) : (
                     <details className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                      <summary className="text-xs text-gray-500 cursor-pointer select-none">展开完整大纲</summary>
-                      <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed mt-2 max-h-64 overflow-y-auto">{worldOutline.slice(0,2500)}{worldOutline.length>2500?'...':''}</pre>
+                      <summary className="text-xs text-ink-500 cursor-pointer select-none">展开完整大纲</summary>
+                      <pre className="text-xs text-ink-700 whitespace-pre-wrap font-sans leading-relaxed mt-2 max-h-64 overflow-y-auto">{worldOutline.slice(0,2500)}{worldOutline.length>2500?'...':''}</pre>
                     </details>
                   )}
                   {sourceChunks.length>0&&(
-                    <p className="text-[10px] text-gray-400">已切分为 {sourceChunks.length} 个片段 · 切分方式: {splitter==='llm'?'LLM 智能切分':splitter==='recursive'?'递归切分':'语义切分'}</p>
+                    <p className="text-[10px] text-ink-400">已切分为 {sourceChunks.length} 个片段 · 切分方式: {splitter==='llm'?'LLM 智能切分':splitter==='recursive'?'递归切分':'语义切分'}</p>
                   )}
-                  {scenarioId&&<p className="text-[10px] text-gray-400">已保存 · 可在下次游戏时直接加载</p>}
+                  {scenarioId&&<p className="text-[10px] text-ink-400">已保存 · 可在下次游戏时直接加载</p>}
                 </div>
               )}
-
-              <button onClick={()=>setStep(2)} className="w-full btn-primary">继续 → 角色创建</button>
             </div>
           )}
 
           {/* ═══════ 步骤3: 冒险准备 ═══════ */}
           {step===3&&(
             <div className="space-y-5">
-              <h2 className="text-lg font-bold text-gray-900">冒险准备</h2>
+              <h2 className="text-lg font-bold text-ink-900">冒险准备</h2>
 
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">额外剧本</label>
+                <label className="block text-xs font-medium text-ink-600 mb-1">额外剧本</label>
                 <textarea value={scenarioText} onChange={e=>setScenarioText(e.target.value)} placeholder="粘贴自定义剧本..." rows={4} className="input-field resize-none" />
               </div>
 
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="flex">
                   <div className="w-24 h-28 bg-gray-100 flex items-center justify-center shrink-0">
-                    {characterImage?<img src={characterImage} alt="角色" className="w-full h-full object-cover" />:<span className="text-[9px] text-gray-400">暂无头像</span>}
+                    {characterImage?<img src={characterImage} alt="角色" className="w-full h-full object-cover" />:<span className="text-[9px] text-ink-400">暂无头像</span>}
                   </div>
                   <div className="flex-1 p-3">
-                    <p className="text-sm font-bold text-gray-900">{charName||'???'}</p>
-                    <p className="text-[10px] text-gray-500">{gameSystem==='coc'?`${occupation}（调查员）`:gameSystem==='custom'?'自定义角色':`${rc.name} ${cc.name} Lv.1`} · {GAME_SYSTEM_LABELS[gameSystem]}</p>
+                    <p className="text-sm font-bold text-ink-900">{charName||'???'}</p>
+                    <p className="text-[10px] text-ink-500">{gameSystem==='coc'?`${occupation}（调查员）`:gameSystem==='custom'?'自定义角色':`${rc.name} ${cc.name} Lv.1`} · {GAME_SYSTEM_LABELS[gameSystem]}</p>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2">
                       {gameSystem==='coc'?(
                         <>
-                          <span className="text-[10px] text-gray-500">HP <b className="text-gray-800">{Math.max(1, Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/10))}</b></span>
-                          <span className="text-[10px] text-gray-500">MP <b className="text-gray-800">{Math.max(1, Math.floor((cocAttrs.pow||50)/5))}</b></span>
-                          <span className="text-[10px] text-gray-500">SAN <b className="text-gray-800">{cocAttrs.pow||50}</b></span>
-                          <span className="text-[10px] text-gray-500">幸运 <b className="text-gray-800">{cocLuck}</b></span>
+                          <span className="text-[10px] text-ink-500">HP <b className="text-ink-800">{Math.max(1, Math.floor(((cocAttrs.con||50)+(cocAttrs.siz||50))/10))}</b></span>
+                          <span className="text-[10px] text-ink-500">MP <b className="text-ink-800">{Math.max(1, Math.floor((cocAttrs.pow||50)/5))}</b></span>
+                          <span className="text-[10px] text-ink-500">SAN <b className="text-ink-800">{cocAttrs.pow||50}</b></span>
+                          <span className="text-[10px] text-ink-500">幸运 <b className="text-ink-800">{cocLuck}</b></span>
                         </>
                       ):(
                         <>
-                          <span className="text-[10px] text-gray-500">HP <b className="text-gray-800">{gameSystem==='dnd4e'?d4Derived.hp:gameSystem==='dnd5e'?d5Derived.hp:30}</b></span>
-                          <span className="text-[10px] text-gray-500">AC <b className="text-gray-800">12</b></span>
-                          {gameSystem==='dnd4e'&&<span className="text-[10px] text-gray-500">回复力 <b className="text-gray-800">{d4Derived.healingSurges}</b></span>}
-                          <span className="text-[10px] text-gray-500">{playMode==='lite'?'精简模式':'深度模式'}</span>
+                          <span className="text-[10px] text-ink-500">HP <b className="text-ink-800">{gameSystem==='dnd4e'?d4Derived.hp:gameSystem==='dnd5e'?d5Derived.hp:30}</b></span>
+                          <span className="text-[10px] text-ink-500">AC <b className="text-ink-800">12</b></span>
+                          {gameSystem==='dnd4e'&&<span className="text-[10px] text-ink-500">回复力 <b className="text-ink-800">{d4Derived.healingSurges}</b></span>}
+                          <span className="text-[10px] text-ink-500">{playMode==='lite'?'精简模式':'深度模式'}</span>
                         </>
                       )}
                     </div>
-                    {gameSystem==='coc'&&cocSkillPicks.length>0&&<p className="text-[10px] text-gray-500 mt-1">技能: {cocSkillPicks.join('、')}</p>}
-                    {gameSystem!=='coc'&&skillPicks.length>0&&<p className="text-[10px] text-gray-500 mt-1">技能: {skillPicks.join('、')}</p>}
+                    {gameSystem==='coc'&&cocSkillPicks.length>0&&<p className="text-[10px] text-ink-500 mt-1">技能: {cocSkillPicks.join('、')}</p>}
+                    {gameSystem!=='coc'&&skillPicks.length>0&&<p className="text-[10px] text-ink-500 mt-1">技能: {skillPicks.join('、')}</p>}
                   </div>
                 </div>
                 <div className="border-t border-gray-200 p-3 grid grid-cols-3 gap-1.5 bg-gray-50/60">
                   {Object.entries(gameSystem==='coc'?cocAttrs:finalAttrs).map(([k,v])=>(
                     <div key={k} className="bg-white rounded border border-gray-200 px-2 py-1 flex items-center justify-between">
-                      <span className="text-[9px] text-gray-400 uppercase">{k}</span>
-                      <span className="text-[11px] font-bold text-gray-800">{v}</span>
+                      <span className="text-[9px] text-ink-400 uppercase">{k}</span>
+                      <span className="text-[11px] font-bold text-ink-800">{v}</span>
                     </div>
                   ))}
                 </div>
@@ -1995,12 +2044,7 @@ export default function StartScreen(){
                 </ul>
               </div>
 
-              {error&&<p className="text-red-500 text-xs">{error}</p>}
-
-              <div className="flex gap-2">
-                <button onClick={()=>setStep(2)} className="flex-1 btn-secondary">← 返回</button>
-                <button onClick={start} disabled={loading} className="flex-[2] btn-primary text-base">{loading?'准备冒险中...':'开始冒险'}</button>
-              </div>
+              {error&&<p className="text-red-700 text-xs">{error}</p>}
             </div>
           )}
 
@@ -2008,7 +2052,7 @@ export default function StartScreen(){
           {step===4&&(
             <div className="space-y-5">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold text-gray-900">知识库 / RAG 设定库</h2>
+                <h2 className="text-lg font-bold text-ink-900">知识库 / RAG 设定库</h2>
                 <div className="flex items-center gap-2">
                   <button onClick={llmProcessKb} disabled={kbLlmBusy || kbBusy} className="text-[10px] px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
                     {kbLlmBusy ? 'LLM 处理中...' : 'LLM 智能切分与图鉴注入'}
@@ -2023,7 +2067,7 @@ export default function StartScreen(){
               <div className="grid md:grid-cols-2 gap-4">
                 {/* 添加文字备注 */}
                 <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
-                  <p className="text-xs font-medium text-gray-700">添加文字备注</p>
+                  <p className="text-xs font-medium text-ink-700">添加文字备注</p>
                   <input value={kbTitle} onChange={e=>setKbTitle(e.target.value)} placeholder="标题（可选）" className="input-field text-xs" />
                   <select value={kbSystem} onChange={e=>setKbSystem(e.target.value as GameSystem)} className="input-field text-xs">
                     {GAME_SYSTEM_OPTIONS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
@@ -2035,12 +2079,12 @@ export default function StartScreen(){
 
                 {/* 上传文件 */}
                 <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
-                  <p className="text-xs font-medium text-gray-700">上传 PDF/DOCX/TXT/MD</p>
+                  <p className="text-xs font-medium text-ink-700">上传 PDF/DOCX/TXT/MD</p>
                   <input
                     type="file"
                     accept=".txt,.md,.markdown,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.bmp"
                     onChange={e=>setKbUploadFile(e.target.files?.[0]||null)}
-                    className="block w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:text-xs file:font-medium"
+                    className="block w-full text-xs text-ink-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:text-xs file:font-medium"
                   />
                   <input value={kbTitle} onChange={e=>setKbTitle(e.target.value)} placeholder="标题（默认文件名）" className="input-field text-xs" />
                   <select value={kbSystem} onChange={e=>setKbSystem(e.target.value as GameSystem)} className="input-field text-xs">
@@ -2048,7 +2092,7 @@ export default function StartScreen(){
                   </select>
                   <input value={kbTags} onChange={e=>setKbTags(e.target.value)} placeholder="标签，用逗号分隔" className="input-field text-xs" />
                   <div>
-                    <label className="block text-[10px] text-gray-500 mb-1">切分方式</label>
+                    <label className="block text-[10px] text-ink-500 mb-1">切分方式</label>
                     <select value={splitter} onChange={e=>setSplitter(e.target.value as 'semantic'|'llm'|'recursive')} className="input-field text-xs">
                       <option value="recursive">递归切分</option>
                       <option value="semantic">语义切分</option>
@@ -2057,7 +2101,7 @@ export default function StartScreen(){
                   </div>
                   {!bgeDownloaded && (
                     <div className="pt-1 border-t border-gray-200 space-y-1.5">
-                      <p className="text-[10px] font-medium text-gray-500">下载向量模型</p>
+                      <p className="text-[10px] font-medium text-ink-500">下载向量模型</p>
                       <button onClick={()=>downloadBge('embedding')} disabled={bgeBusy!==null} className="btn-secondary text-xs px-3 whitespace-nowrap">
                         {bgeBusy==='embedding' ? '下载中...' : '下载 BGE-M3'}
                       </button>
@@ -2074,7 +2118,7 @@ export default function StartScreen(){
                   )}
                   {!bgeRerankerDownloaded && (
                     <div className="pt-1 border-t border-gray-200 space-y-1.5">
-                      <p className="text-[10px] font-medium text-gray-500">可选重排模型</p>
+                      <p className="text-[10px] font-medium text-ink-500">可选重排模型</p>
                       <button onClick={()=>downloadBge('reranker')} disabled={bgeBusy!==null} className="btn-secondary text-xs px-3 whitespace-nowrap">
                         {bgeBusy==='reranker' ? '下载中...' : '下载 BGE-Reranker-base'}
                       </button>
@@ -2085,7 +2129,7 @@ export default function StartScreen(){
                       )}
                     </div>
                   )}
-                  {bgeStatus&&<p className={`text-[10px] ${bgeStatus.startsWith('下载失败')?'text-red-500':'text-emerald-600'}`}>{bgeStatus}</p>}
+                  {bgeStatus&&<p className={`text-[10px] ${bgeStatus.startsWith('下载失败')?'text-red-700':'text-emerald-600'}`}>{bgeStatus}</p>}
                   <button onClick={()=>kbUploadFile&&uploadKb(kbUploadFile)} disabled={kbBusy || !kbUploadFile} className="w-full py-2 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium disabled:opacity-50">
                     {kbBusy?'处理中...':'上传到知识库'}
                   </button>
@@ -2094,7 +2138,7 @@ export default function StartScreen(){
                       <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
                         <div className="h-full bg-emerald-500 transition-all" style={{width:`${Math.max(2,Math.min(100,kbProgress.progress||5))}%`}} />
                       </div>
-                      <p className="text-[10px] text-gray-500">
+                      <p className="text-[10px] text-ink-500">
                         {kbProgress.phase}：{kbProgress.message||'处理中'}
                         {kbProgress.total>0&&(` (${kbProgress.current}/${kbProgress.total})`)}
                       </p>
@@ -2111,7 +2155,7 @@ export default function StartScreen(){
                   <p className="text-[10px] text-amber-700">轻量中文向量模型 + 重排模型约占用 1GB+ 磁盘空间，运行时还会占用一定内存。是否现在下载？</p>
                   <div className="flex gap-2">
                     <button onClick={downloadSmall} className="text-xs px-3 py-1.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600">确认下载</button>
-                    <button onClick={()=>setSmallDeclined(true)} className="text-xs px-3 py-1.5 bg-white text-gray-500 rounded-lg border border-gray-200 hover:bg-gray-50">暂不</button>
+                    <button onClick={()=>setSmallDeclined(true)} className="text-xs px-3 py-1.5 bg-white text-ink-500 rounded-lg border border-gray-200 hover:bg-gray-50">暂不</button>
                   </div>
                 </div>
               )}
@@ -2125,41 +2169,41 @@ export default function StartScreen(){
                       <div className="h-full bg-sky-500 animate-pulse" style={{width:'100%'}} />
                     )}
                   </div>
-                  {smallStatus && <p className="text-[10px] text-sky-600">{smallStatus}</p>}
+                  {smallStatus && <p className="text-[10px] text-sky-700">{smallStatus}</p>}
                 </div>
               )}
 
               {/* 向量检索模式：小模型为固定基底，BGE 下载后自动替换 */}
               <div className="bg-white rounded-lg p-3 border border-gray-200 space-y-2">
-                <p className="text-xs font-medium text-gray-700">向量检索模式</p>
+                <p className="text-xs font-medium text-ink-700">向量检索模式</p>
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={()=>setVectorModeNow('local')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='local'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>基底</button>
-                  <button onClick={()=>setVectorModeNow('bge')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='bge'?'border-emerald-400 bg-emerald-50 text-emerald-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`} disabled={!bgeDownloaded}>BGE</button>
+                  <button onClick={()=>setVectorModeNow('local')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='local'?'border-indigo-400 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-ink-500 hover:border-gray-300'}`}>基底</button>
+                  <button onClick={()=>setVectorModeNow('bge')} className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${vectorMode==='bge'?'border-emerald-400 bg-emerald-50 text-emerald-700':'border-gray-200 bg-white text-ink-500 hover:border-gray-300'}`} disabled={!bgeDownloaded}>BGE</button>
                 </div>
               </div>
 
-              {kbErr&&<p className="text-red-500 text-xs">{kbErr}</p>}
+              {kbErr&&<p className="text-red-700 text-xs">{kbErr}</p>}
 
               <div className="space-y-1.5">
-                <p className="text-xs font-medium text-gray-700">已有知识条目（{kbDocs.length}）</p>
-                {kbDocs.length===0&&<p className="text-xs text-gray-400">暂无条目，点击上方“重置内置规则备注”或添加内容。</p>}
+                <p className="text-xs font-medium text-ink-700">已有知识条目（{kbDocs.length}）</p>
+                {kbDocs.length===0&&<p className="text-xs text-ink-400">暂无条目，点击上方“重置内置规则备注”或添加内容。</p>}
                 {kbDocs.map(d=>(
                   <div key={d.id} className="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-200">
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-gray-800 truncate">{d.title}</p>
-                      <p className="text-[10px] text-gray-500">{GAME_SYSTEM_LABELS[(d.system as GameSystem)||'custom']} · {d.source} · {d.chunk_count} 块 · {d.tags.join(' / ')||'无标签'}</p>
+                      <p className="text-xs font-medium text-ink-800 truncate">{d.title}</p>
+                      <p className="text-[10px] text-ink-500">{GAME_SYSTEM_LABELS[(d.system as GameSystem)||'custom']} · {d.source} · {d.chunk_count} 块 · {d.tags.join(' / ')||'无标签'}</p>
                     </div>
-                    <button onClick={()=>deleteKb(d.id)} className="text-[10px] text-red-500 hover:text-red-700 px-2 py-1">删除</button>
+                    <button onClick={()=>deleteKb(d.id)} className="text-[10px] text-red-700 hover:text-red-700 px-2 py-1">删除</button>
                   </div>
                 ))}
               </div>
 
               {/* 扩展包管理 */}
               <div className="border-t border-gray-200 pt-4 space-y-3">
-                <p className="text-xs font-bold text-gray-800">扩展包（增强游戏性与个性）</p>
+                <p className="text-xs font-bold text-ink-800">扩展包（增强游戏性与个性）</p>
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
-                    <p className="text-xs font-medium text-gray-700">手动添加扩展包</p>
+                    <p className="text-xs font-medium text-ink-700">手动添加扩展包</p>
                     <input value={extName} onChange={e=>setExtName(e.target.value)} placeholder="扩展包名称" className="input-field text-xs" />
                     <input value={extDesc} onChange={e=>setExtDesc(e.target.value)} placeholder="一句话简介" className="input-field text-xs" />
                     <select value={extSystem} onChange={e=>setExtSystem(e.target.value as GameSystem)} className="input-field text-xs">
@@ -2170,7 +2214,7 @@ export default function StartScreen(){
                     <button onClick={addExt} disabled={extBusy || !extContent.trim()} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium disabled:opacity-50">保存扩展包</button>
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
-                    <p className="text-xs font-medium text-gray-700">AI 生成扩展包</p>
+                    <p className="text-xs font-medium text-ink-700">AI 生成扩展包</p>
                     <select value={extSystem} onChange={e=>setExtSystem(e.target.value as GameSystem)} className="input-field text-xs">
                       {GAME_SYSTEM_OPTIONS.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
                     </select>
@@ -2178,19 +2222,19 @@ export default function StartScreen(){
                     <button onClick={genExt} disabled={extBusy || !extGenDesc.trim()} className="w-full py-2 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium disabled:opacity-50">{extBusy?'生成中...':'让 AI 生成扩展包'}</button>
                   </div>
                 </div>
-                {extErr&&<p className="text-red-500 text-xs">{extErr}</p>}
+                {extErr&&<p className="text-red-700 text-xs">{extErr}</p>}
                 <div className="space-y-1.5">
-                  <p className="text-xs font-medium text-gray-700">已有扩展包（{extList.length}）· 勾选后将在新游戏中启用</p>
-                  {extList.length===0&&<p className="text-xs text-gray-400">暂无扩展包，可手动添加或让 AI 生成。</p>}
+                  <p className="text-xs font-medium text-ink-700">已有扩展包（{extList.length}）· 勾选后将在新游戏中启用</p>
+                  {extList.length===0&&<p className="text-xs text-ink-400">暂无扩展包，可手动添加或让 AI 生成。</p>}
                   {extList.map(e=>(
                     <label key={e.id} className={`flex items-center justify-between bg-white rounded-lg p-2.5 border cursor-pointer ${activeExtIds.includes(e.id)?'border-indigo-300 bg-indigo-50/40':'border-gray-200'}`}>
                       <span className="min-w-0">
-                        <span className="text-xs font-medium text-gray-800 truncate">{e.name}</span>
-                        <span className="block text-[10px] text-gray-500">{GAME_SYSTEM_LABELS[(e.system as GameSystem)||'custom']} · {e.source} · {e.description}</span>
+                        <span className="text-xs font-medium text-ink-800 truncate">{e.name}</span>
+                        <span className="block text-[10px] text-ink-500">{GAME_SYSTEM_LABELS[(e.system as GameSystem)||'custom']} · {e.source} · {e.description}</span>
                       </span>
                       <span className="flex items-center gap-2">
                         <input type="checkbox" checked={activeExtIds.includes(e.id)} onChange={()=>setActiveExtIds(ids=>ids.includes(e.id)?ids.filter(x=>x!==e.id):[...ids,e.id])} />
-                        <button onClick={()=>deleteExt(e.id)} className="text-[10px] text-red-500 hover:text-red-700 px-2 py-1">删除</button>
+                        <button onClick={()=>deleteExt(e.id)} className="text-[10px] text-red-700 hover:text-red-700 px-2 py-1">删除</button>
                       </span>
                     </label>
                   ))}
@@ -2199,8 +2243,8 @@ export default function StartScreen(){
 
               {/* 地图管理 */}
               <div className="border-t border-gray-200 pt-4 space-y-3">
-                <p className="text-xs font-bold text-gray-800">通用地区地图（所有剧本可用）</p>
-                <p className="text-[10px] text-gray-400">这里只管理通用图鉴；剧本专属地点请在对局内由 DM 自建，或导入剧本时自动生成。</p>
+                <p className="text-xs font-bold text-ink-800">通用地区地图（所有剧本可用）</p>
+                <p className="text-[10px] text-ink-400">这里只管理通用图鉴；剧本专属地点请在对局内由 DM 自建，或导入剧本时自动生成。</p>
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
                     <input value={mapName} onChange={e=>setMapName(e.target.value)} placeholder="地图名称" className="input-field text-xs" />
@@ -2212,12 +2256,12 @@ export default function StartScreen(){
                     <button onClick={()=>mapFile&&uploadMap(mapFile)} disabled={mediaBusy||!mapFile} className="w-full py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium disabled:opacity-50">上传地图</button>
                   </div>
                   <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                    {maps.length===0&&<p className="text-xs text-gray-400">暂无地图</p>}
+                    {maps.length===0&&<p className="text-xs text-ink-400">暂无地图</p>}
                     {maps.map(m=>(
                       <div key={m.id} className="flex items-center gap-2 bg-white rounded-lg p-2 border border-gray-200">
                         {m.image_path&&<img src={m.image_path} alt={m.name} className="w-10 h-10 object-cover rounded border" />}
-                        <div className="min-w-0 flex-1"><p className="text-xs font-medium truncate">{m.name}</p><p className="text-[9px] text-gray-400">{m.locations.length} 个地点</p></div>
-                        {!String(m.id).startsWith('kb-') && <button onClick={()=>deleteMap(m.id)} className="text-[10px] text-red-500">删除</button>}
+                        <div className="min-w-0 flex-1"><p className="text-xs font-medium truncate">{m.name}</p><p className="text-[9px] text-ink-400">{m.locations.length} 个地点</p></div>
+                        {!String(m.id).startsWith('kb-') && <button onClick={()=>deleteMap(m.id)} className="text-[10px] text-red-700">删除</button>}
                       </div>
                     ))}
                   </div>
@@ -2226,8 +2270,8 @@ export default function StartScreen(){
 
               {/* 生物图鉴 */}
               <div className="border-t border-gray-200 pt-4 space-y-3">
-                <p className="text-xs font-bold text-gray-800">通用生物图鉴（所有剧本可用）</p>
-                <p className="text-[10px] text-gray-400">这里只管理通用图鉴；剧本专属生物请在对局内由 DM 自建，避免覆盖通用条目。</p>
+                <p className="text-xs font-bold text-ink-800">通用生物图鉴（所有剧本可用）</p>
+                <p className="text-[10px] text-ink-400">这里只管理通用图鉴；剧本专属生物请在对局内由 DM 自建，避免覆盖通用条目。</p>
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 space-y-2">
                     <input value={beastName} onChange={e=>setBeastName(e.target.value)} placeholder="生物名称" className="input-field text-xs" />
@@ -2241,12 +2285,12 @@ export default function StartScreen(){
                     <button onClick={()=>beastFile&&uploadBeast(beastFile)} disabled={mediaBusy||!beastFile} className="w-full py-2 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium disabled:opacity-50">上传生物</button>
                   </div>
                   <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                    {bestiary.length===0&&<p className="text-xs text-gray-400">暂无生物</p>}
+                    {bestiary.length===0&&<p className="text-xs text-ink-400">暂无生物</p>}
                     {bestiary.map(b=>(
                       <div key={b.id} className="flex items-center gap-2 bg-white rounded-lg p-2 border border-gray-200">
                         {b.image_path&&<img src={b.image_path} alt={b.name} className="w-10 h-10 object-cover rounded border" />}
-                        <div className="min-w-0 flex-1"><p className="text-xs font-medium truncate">{b.name}</p><p className="text-[9px] text-gray-400">{b.system} · {Object.keys(b.stats||{}).length} 项属性</p></div>
-                        {!String(b.id).startsWith('kb-') && <button onClick={()=>deleteBeast(b.id)} className="text-[10px] text-red-500">删除</button>}
+                        <div className="min-w-0 flex-1"><p className="text-xs font-medium truncate">{b.name}</p><p className="text-[9px] text-ink-400">{b.system} · {Object.keys(b.stats||{}).length} 项属性</p></div>
+                        {!String(b.id).startsWith('kb-') && <button onClick={()=>deleteBeast(b.id)} className="text-[10px] text-red-700">删除</button>}
                       </div>
                     ))}
                   </div>
@@ -2258,15 +2302,15 @@ export default function StartScreen(){
 
           {step===5&&(
             <div className="space-y-5">
-              <h2 className="text-lg font-bold text-gray-900">存档</h2>
-              <p className="text-[10px] text-gray-400 bg-gray-50 rounded-lg p-2 border border-gray-200">每轮自动存档，也可手动存档；这里只管理存档，不与其他内容混杂。</p>
+              <h2 className="text-lg font-bold text-ink-900">存档</h2>
+              <p className="text-[10px] text-ink-400 bg-gray-50 rounded-lg p-2 border border-gray-200">每轮自动存档，也可手动存档；这里只管理存档，不与其他内容混杂。</p>
               <div className="space-y-1.5">
-                {saves.length===0&&<p className="text-xs text-gray-400">暂无存档。开始游戏后每轮会自动存档。</p>}
+                {saves.length===0&&<p className="text-xs text-ink-400">暂无存档。开始游戏后每轮会自动存档。</p>}
                 {saves.map(s=>(
                   <div key={s.id} className="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-200">
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-gray-800">{s.label} {s.auto?'(自动)':'(手动)'}</p>
-                      <p className="text-[10px] text-gray-500">{s.character_name} · {GAME_SYSTEM_LABELS[(s.game_system as GameSystem)||'dnd5e']} · {formatTime(s.created_at)}</p>
+                      <p className="text-xs font-medium text-ink-800">{s.label} {s.auto?'(自动)':'(手动)'}</p>
+                      <p className="text-[10px] text-ink-500">{s.character_name} · {GAME_SYSTEM_LABELS[(s.game_system as GameSystem)||'dnd5e']} · {formatTime(s.created_at)}</p>
                     </div>
                     <div className="flex gap-1">
                       <button onClick={()=>loadSaveGame(s.id)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-200 hover:bg-indigo-100">载入</button>
@@ -2278,6 +2322,28 @@ export default function StartScreen(){
             </div>
           )}
 
+          {/* 向导底部导航：吸底常驻，拇指始终可及（负边距让它在卡片内通栏） */}
+          <div className="sticky bottom-0 z-20 -mx-4 sm:-mx-6 -mb-4 sm:-mb-6 mt-2 px-4 sm:px-6 py-3 bg-white/95 backdrop-blur border-t border-ink-100 rounded-b-2xl flex items-center gap-2">
+            <button
+              onClick={()=>setStep(s=>Math.max(1, s-1))}
+              disabled={step===1}
+              className="btn-secondary text-xs px-4 py-2.5"
+            >
+              ← 上一步
+            </button>
+            <span className="text-2xs text-ink-500 mx-auto font-mono">
+              {step <= 3 ? `第 ${step} / 3 步` : step === 4 ? '知识库' : '存档'}
+            </span>
+            {step===3 ? (
+              <button onClick={start} disabled={loading} className="btn-primary text-sm px-6 py-2.5">
+                {loading?'准备冒险中…':'开始冒险'}
+              </button>
+            ) : step < 5 ? (
+              <button onClick={()=>setStep(s=>Math.min(5, s+1))} className="btn-primary text-sm px-5 py-2.5">
+                下一步 →
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
       {showRulebook&&<RulebookModal onClose={()=>setShowRulebook(false)} />}

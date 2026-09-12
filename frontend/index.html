@@ -2,11 +2,37 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="单人 TRPG 跑团工具：AI 担任主持人，支持 D&D 5e / 4e、COC 7e 与自定义规则。" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#faf6ec" />
     <title>AI 跑团主持</title>
+    <style>
+      /* 首屏防白闪：与 index.css 的纸面底色保持一致，脚本加载前先铺底 */
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: linear-gradient(180deg, #fbf7ee 0%, #f0e7d6 100%) fixed;
+        color: #2c2925;
+        font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+      }
+      #boot {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        color: #8a8378;
+        letter-spacing: 0.08em;
+      }
+    </style>
   </head>
-  <body class="bg-white text-gray-800">
-    <div id="root"></div>
+  <body>
+    <div id="root">
+      <!-- 脚本加载/构建失败时的兜底提示（React 挂载后会被替换） -->
+      <div id="boot">正在准备冒险…</div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

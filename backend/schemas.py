@@ -80,6 +80,12 @@ class ActionRequest(BaseModel):
     player_input: str = Field(min_length=1, max_length=2000)
 
 
+class AuthRequest(BaseModel):
+    """注册/登录请求：用户名 + 密码。"""
+    username: str = Field(min_length=2, max_length=32)
+    password: str = Field(min_length=6, max_length=128)
+
+
 class WorldGenRequest(BaseModel):
     """世界大纲生成请求。"""
     description: str = Field(min_length=1, max_length=3000)  # 玩家对世界的描述
@@ -112,6 +118,12 @@ class NewGameResponse(BaseModel):
 
 class ActionAcceptedResponse(BaseModel):
     accepted: bool = True
+
+
+class AuthResponse(BaseModel):
+    ok: bool = True
+    username: str
+    message: str = ""
 
 
 # ── SSE 事件数据模型 ──────────────────────────────────────

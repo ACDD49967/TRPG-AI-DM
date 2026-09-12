@@ -37,8 +37,8 @@ pyyaml>=6.0
 # 旧版 .doc（二进制 Word 97-2003）在 Windows 上如需 Word COM 提取：
 # pywin32>=306
 #
-# v0.2.8 可选：PaddleLayout / PP-StructureV3 版面解析
+# v0.3.0 可选：PaddleLayout / PP-StructureV3 版面解析
 # paddlex[ocr]>=3.7.2
 #
-# v0.2.8 可选：pgvector 向量存储
+# v0.3.0 可选：pgvector 向量存储
 # pgvector>=0.3.0

@@ -1,7 +1,8 @@
-/** 游戏主界面 —— 白色简洁布局 · 顶栏场景信息 */
+/** 游戏主界面 —— 三栏布局（状态 / 叙事 / 笔记），移动端折叠为抽屉 */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
+import { useToastStore } from '../store/toastStore';
 import { useSSE } from '../hooks/useSSE';
 import NarrativeStream from './NarrativeStream';
 import StatusPanel from './StatusPanel';
@@ -15,6 +16,9 @@ import RulebookModal from './RulebookModal';
 import SpellCard from './SpellCard';
 import DndCharacterSheet from './DndCharacterSheet';
 import CocInvestigatorSheet from './CocInvestigatorSheet';
+import Modal from './ui/Modal';
+import ProgressBar from './ui/ProgressBar';
+import EmptyState from './ui/EmptyState';
 import { getXpDisplay } from '../gameSystems';
 import { textValue } from '../utils/textValue';
 
@@ -31,17 +35,19 @@ const GRAPH_COLORS: Record<string, string> = {
 const GRAPH_TYPE_LABELS: Record<string, string> = {
   npc: '角色', location: '地点', plot: '剧情', creature: '生物', other: '其他',
 };
+const GRAPH_W = 1200;
+const GRAPH_H = 800;
 
 /** 简单的力导向布局：限制节点数后自动分散，减少重叠与连线密集感。 */
 function computeGraphLayout(nodes: GraphNode[], edges: GraphEdge[], focusId?: string | null): Map<string, { x: number; y: number }> {
-  const W = 800, H = 560, cx = W / 2, cy = H / 2;
+  const W = GRAPH_W, H = GRAPH_H, cx = W / 2, cy = H / 2;
   const result = new Map<string, { x: number; y: number }>();
   if (!nodes.length) return result;
   const n = nodes.length;
   const pos = nodes.map((node, i) => {
     if (focusId && node.id === focusId) return { id: node.id, x: cx, y: cy };
     const a = (i / Math.max(1, n)) * Math.PI * 2;
-    return { id: node.id, x: cx + Math.cos(a) * 220, y: cy + Math.sin(a) * 180 };
+    return { id: node.id, x: cx + Math.cos(a) * 320, y: cy + Math.sin(a) * 250 };
   });
   const index = new Map(pos.map((p, i) => [p.id, i]));
   const area = W * H;
@@ -85,7 +91,7 @@ function computeGraphLayout(nodes: GraphNode[], edges: GraphEdge[], focusId?: st
   const xs = pos.map(p => p.x), ys = pos.map(p => p.y);
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
   const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
-  const scale = Math.min((W - 180) / spanX, (H - 180) / spanY, 1.6);
+  const scale = Math.min((W - 180) / spanX, (H - 180) / spanY, 1.15);
   const offsetX = (W - spanX * scale) / 2 - minX * scale;
   const offsetY = (H - spanY * scale) / 2 - minY * scale;
   pos.forEach(p => result.set(p.id, { x: p.x * scale + offsetX, y: p.y * scale + offsetY }));
@@ -136,6 +142,8 @@ export default function GameScreen() {
   const [showBeast, setShowBeast] = useState(false);
   const [showRulebook, setShowRulebook] = useState(false);
   const [showCharSheet, setShowCharSheet] = useState(false);
+  /** 移动端抽屉：状态 / 笔记（桌面端三栏常驻，不需要抽屉） */
+  const [mobilePanel, setMobilePanel] = useState<'status' | 'journal' | null>(null);
   const [maps, setMaps] = useState<Array<{id:string;name:string;description:string;description_zh?:string;image_path:string;locations:Array<{name:string;x:number;y:number}>;system?:string;scenario_id?:string;details?:{type?:string;status?:string;culture?:string;districts?:string[];notable_figures?:string;dangers?:string;secret?:string;related_creatures?:string[];population?:string}}>>([]);
   const [bestiary, setBestiary] = useState<Array<{id:string;name:string;system:string;description:string;description_zh?:string;stats:Record<string,string>;image_path:string;tags?:string[];scenario_id?:string;details?:{habits?:string;habitat?:string;lore?:string;weakness?:string}}>>([]);
   const [beastQuery, setBeastQuery] = useState('');
@@ -160,6 +168,10 @@ export default function GameScreen() {
   const [graphFocusId, setGraphFocusId] = useState<string | null>(null);
   const [graphHoverId, setGraphHoverId] = useState<string | null>(null);
   const [graphZoom, setGraphZoom] = useState(1);
+  const [graphPan, setGraphPan] = useState({ x: 0, y: 0 });
+  const graphSvgRef = useRef<SVGSVGElement | null>(null);
+  const graphDragRef = useRef<{ dragging: boolean; startX: number; startY: number; startPanX: number; startPanY: number; moved: boolean } | null>(null);
+  const graphSuppressClickRef = useRef(false);
   const [graphSearchIds, setGraphSearchIds] = useState<string[]>([]);
   const [graphSearchEmpty, setGraphSearchEmpty] = useState(false);
   const [dmNpc, setDmNpc] = useState({ name: '', role: '', location: '', hp: 10, ac: 10, level: 1 });
@@ -180,14 +192,24 @@ export default function GameScreen() {
   }, [status.username, status.game_system, status.scenario_id, mediaVersion]);
 
   const saveGame = async () => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      useToastStore.getState().showToast('还没有进行中的游戏，无法存档', 'error');
+      return;
+    }
     try {
-      await fetch(`/api/game/${sessionId}/save`, {
+      const r = await fetch(`/api/game/${sessionId}/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label: '手动存档' }),
       });
-    } catch {}
+      if (r.ok) {
+        useToastStore.getState().showToast('已保存到存档列表', 'success');
+      } else {
+        useToastStore.getState().showToast('存档失败，请稍后再试', 'error');
+      }
+    } catch {
+      useToastStore.getState().showToast('存档失败：网络错误', 'error');
+    }
   };
 
   const openGraph = async (name?: string, queryOverride?: string) => {
@@ -202,10 +224,15 @@ export default function GameScreen() {
       const r = await fetch(`/api/game/${sessionId}/graph?${params.toString()}`);
       if (!r.ok) return;
       const d = await r.json();
+      const graphNodes = d.graph?.nodes || [];
       setGraphData(d.graph || { nodes: [], edges: [] });
       setGraphFocusId(name || null);
       setGraphHoverId(null);
-      setGraphZoom(1);
+      // 稀疏图谱自动放大，避免大画布上节点过小；密集图谱保持全景
+      const nodeCount = graphNodes.length;
+      const initialZoom = nodeCount <= 6 ? 1.35 : nodeCount <= 12 ? 1.15 : nodeCount <= 24 ? 1.0 : 0.9;
+      setGraphZoom(initialZoom);
+      setGraphPan({ x: (GRAPH_W / 2) * (1 - initialZoom), y: (GRAPH_H / 2) * (1 - initialZoom) });
       if (queryOverride !== undefined) setGraphQuery(queryOverride);
       const results = name ? [] : (d.search || []).map((s: { node?: { id?: string } }) => s.node?.id).filter(Boolean);
       setGraphSearchIds(results);
@@ -275,6 +302,46 @@ export default function GameScreen() {
     }
     return { activeId, connected };
   }, [graphFocusId, graphHoverId, graphView.visibleEdges]);
+
+  const clampGraphZoom = (z: number) => Math.max(0.35, Math.min(3, +z.toFixed(3)));
+  const zoomGraphAt = (next: number, cursor: { x: number; y: number }) => {
+    const z = clampGraphZoom(next);
+    const factor = z / graphZoom;
+    setGraphPan(p => ({
+      x: cursor.x - (cursor.x - p.x) * factor,
+      y: cursor.y - (cursor.y - p.y) * factor,
+    }));
+    setGraphZoom(z);
+  };
+
+  // 原生 wheel 监听：以鼠标位置为中心缩放（React 的 onWheel 默认 passive，无法 preventDefault）
+  useEffect(() => {
+    const svg = graphSvgRef.current;
+    if (!svg || !showGraph) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      let cursor = { x: GRAPH_W / 2, y: GRAPH_H / 2 };
+      try {
+        const pt = svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        const ctm = svg.getScreenCTM();
+        if (ctm) {
+          const p = pt.matrixTransform(ctm.inverse());
+          cursor = { x: p.x, y: p.y };
+        }
+      } catch { /* 极端情况下回退到中心缩放 */ }
+      const next = clampGraphZoom(graphZoom * (e.deltaY > 0 ? 0.9 : 1.1));
+      const factor = next / graphZoom;
+      setGraphPan(prev => ({
+        x: cursor.x - (cursor.x - prev.x) * factor,
+        y: cursor.y - (cursor.y - prev.y) * factor,
+      }));
+      setGraphZoom(next);
+    };
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    return () => svg.removeEventListener('wheel', onWheel);
+  }, [showGraph, graphZoom]);
   const currentSid = status.scenario_id || '';
   const scenarioMaps = maps.filter(m => m.scenario_id === currentSid);
   const globalMaps = maps.filter(m => !m.scenario_id);
@@ -507,118 +574,208 @@ export default function GameScreen() {
     }
   };
 
+  const hpPct = status.maxHp > 0 ? Math.max(0, Math.min(100, (status.hp / status.maxHp) * 100)) : 0;
+  const hpTone =
+    hpPct < 30
+      ? 'text-red-700 border-red-200 bg-red-50 hover:bg-red-100'
+      : hpPct < 60
+        ? 'text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100'
+        : 'text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100';
+
+  /**
+   * 导航按钮：桌面显示图标+文字；移动端只留图标
+   * （9 个按钮在 390px 下横滑会藏掉一半，收成图标后一行放得下，
+   *   并保留 aria-label / title 维持可访问性）。
+   */
+  const navItems = (
+    <>
+      <button onClick={() => setShowRulebook(true)} className="nav-btn" title="玩家说明书" aria-label="玩家说明书">
+        <span aria-hidden>📕</span><span className="hidden sm:inline">说明书</span>
+      </button>
+      <button onClick={() => setShowCharSheet(true)} className="nav-btn" title="角色卡" aria-label="角色卡">
+        <span aria-hidden>🧙</span><span className="hidden sm:inline">角色卡</span>
+      </button>
+      <button onClick={() => openGraph(undefined, '')} className="nav-btn" title="关系图谱" aria-label="关系图谱">
+        <span aria-hidden>🕸️</span><span className="hidden sm:inline">图谱</span>
+      </button>
+      <button onClick={() => setShowMap(true)} className="nav-btn" title="地点 / 地图图鉴" aria-label="地图图鉴">
+        <span aria-hidden>🗺️</span><span className="hidden sm:inline">地图</span>
+      </button>
+      <button onClick={() => setShowBeast(true)} className="nav-btn" title="生物图鉴" aria-label="生物图鉴">
+        <span aria-hidden>🐾</span><span className="hidden sm:inline">图鉴</span>
+      </button>
+      <button onClick={() => setShowSpells(true)} className="nav-btn" title="法术 / 仪式" aria-label="法术图鉴">
+        <span aria-hidden>✨</span><span className="hidden sm:inline">法术</span>
+      </button>
+      <span className="hidden sm:block w-px h-4 bg-ink-200 mx-0.5" aria-hidden />
+      <button onClick={() => setShowDmTools(true)} className="nav-btn text-amber-700 hover:bg-amber-50" title="DM 工具" aria-label="DM 工具">
+        <span aria-hidden>🛠️</span><span className="hidden sm:inline">DM</span>
+      </button>
+      <button onClick={saveGame} className="nav-btn" title="手动存档" aria-label="手动存档">
+        <span aria-hidden>💾</span><span className="hidden sm:inline">存档</span>
+      </button>
+      <button onClick={goToStart} className="nav-btn" title="返回大厅" aria-label="返回大厅">
+        <span aria-hidden>🚪</span><span className="hidden sm:inline">大厅</span>
+      </button>
+    </>
+  );
+
   return (
-    <div className="h-screen flex flex-col bg-white">
-      {/* 顶栏：标题 + 场景信息 + 角色名 */}
-      <header className="h-11 bg-white border-b border-gray-200 flex items-center justify-between px-4 flex-shrink-0 gap-4">
-        <div className="flex items-center gap-3">
-          <h1 className="text-indigo-600 font-semibold text-xs tracking-wide shrink-0">TRPG 跑团</h1>
+    <div className="h-screen h-[100dvh] flex flex-col bg-white/60">
+      {/* 顶栏：品牌 + 场景 + 角色数值 + 导航 */}
+      <header className="flex-shrink-0 bg-white/90 backdrop-blur border-b border-ink-200">
+        <div className="h-12 px-4 flex items-center gap-3">
+          {/* 左：品牌与剧本标记（窄屏隐藏，避免空容器占用 gap 造成左导轨不齐） */}
+          <div className="hidden sm:flex items-center gap-2 shrink-0">
+            <span className="w-7 h-7 rounded-xl bg-brand-600 text-white text-2xs font-black hidden sm:flex items-center justify-center shadow-sm" aria-hidden>
+              TR
+            </span>
+            <span className="text-xs font-bold text-ink-800 hidden lg:inline">TRPG 跑团</span>
+            {currentSid && <span className="tag-purple hidden sm:inline-flex" title="当前剧本专属内容">剧本</span>}
+          </div>
+
+          {/* 中：场景信息 */}
+          <div className="flex-1 min-w-0 flex items-center gap-2 sm:gap-3 text-2xs">
+            {sceneInfo.location && sceneInfo.location !== '冒险的起点' && sceneInfo.location !== '未知' && (
+              <span className="text-ink-700 font-medium truncate" title={sceneInfo.location}>
+                <span aria-hidden className="hidden sm:inline">📍 </span>{sceneInfo.location}
+              </span>
+            )}
+            <span className="text-ink-500 shrink-0 font-mono">{sceneInfo.time}</span>
+          </div>
+
+          {/* 右：角色数值 + 移动端抽屉入口 + 桌面导航 */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => setShowCharSheet(true)}
+              className={`inline-flex items-center gap-1.5 text-2xs font-mono font-semibold px-2 py-1 rounded-lg border transition-colors ${hpTone}`}
+              title="查看角色卡"
+            >
+              <span aria-hidden>❤</span>
+              {status.hp}/{status.maxHp}
+            </button>
+            <span className="text-2xs text-ink-600 hidden xl:inline max-w-[10rem] truncate" title={status.character_name}>
+              {status.character_name || '冒险者'}
+              {status.race && <span className="text-ink-400"> · {status.race}{status.char_class}</span>}
+            </span>
+            <span className="text-2xs text-ink-400 font-mono hidden 2xl:inline">#{sessionId?.slice(0, 6)}</span>
+
+            {/* 移动端：状态 / 笔记抽屉 */}
+            <div className="flex items-center gap-1 md:hidden">
+              <button onClick={() => setMobilePanel('status')} className="nav-btn" aria-label="角色状态">
+                <span aria-hidden>📋</span>
+              </button>
+              <button onClick={() => setMobilePanel('journal')} className="nav-btn" aria-label="冒险笔记">
+                <span aria-hidden>📓</span>
+              </button>
+            </div>
+          </div>
         </div>
 
-        {/* 场景信息 */}
-        <div className="flex items-center gap-4 text-[10px] flex-1 justify-center min-w-0">
-          {sceneInfo.location !== '冒险的起点' && sceneInfo.location !== '未知' && (
-            <span className="text-gray-700 font-medium truncate" title={sceneInfo.location}>
-              地点：{sceneInfo.location}
-            </span>
-          )}
-          <span className="text-gray-500 shrink-0">时间：{sceneInfo.time}</span>
-          {sceneInfo.weather && (
-            <span className="text-gray-400 truncate hidden sm:inline" title={sceneInfo.weather}>天气：{sceneInfo.weather}</span>
-          )}
-          {sceneInfo.npcs_here.length > 0 && (
-            <span className="text-gray-500 truncate hidden md:inline">
-              在场：{sceneInfo.npcs_here.slice(0, 3).join(', ')}{sceneInfo.npcs_here.length > 3 ? ` +${sceneInfo.npcs_here.length - 3}` : ''}
-            </span>
-          )}
-        </div>
-
-        {/* 角色信息 + 返回 */}
-        <div className="flex items-center gap-3 shrink-0">
-          <span className="text-[10px] text-gray-600 hidden sm:inline">
-            {status.character_name || '冒险者'}
-            {status.race && <span className="text-gray-400"> · {status.race} {status.char_class}</span>}
-          </span>
-          <span className="text-[10px] text-gray-700 font-medium">
-            HP {status.hp}/{status.maxHp}
-          </span>
-          <span className="text-[10px] text-gray-400 font-mono hidden sm:inline">#{sessionId?.slice(0, 6)}</span>
-          {currentSid && <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100">剧本</span>}
-          <button onClick={()=>setShowRulebook(true)} className="text-xs text-indigo-500 hover:text-indigo-700 transition-colors">说明书</button>
-          <button onClick={()=>setShowCharSheet(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">角色卡</button>
-          <button onClick={()=>setShowDmTools(true)} className="text-xs text-amber-600 hover:text-amber-800 transition-colors">DM</button>
-          <button onClick={()=>openGraph(undefined, '')} className="text-xs text-emerald-600 hover:text-emerald-800 transition-colors">图谱</button>
-          <button onClick={()=>setShowMap(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">地图</button>
-          <button onClick={()=>setShowBeast(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">图鉴</button>
-          <button onClick={()=>setShowSpells(true)} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">法术</button>
-          <button onClick={saveGame} className="text-xs text-gray-500 hover:text-gray-700 transition-colors">存档</button>
-          <button onClick={goToStart} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">大厅</button>
+        {/* 第二行：导航工具条（窄屏图标化，不横滑藏内容）+ 场景补充信息（宽屏显示） */}
+        <div className="px-4 pb-2 flex items-center gap-2">
+          <nav
+            className="flex items-center gap-0.5 overflow-x-auto no-scrollbar min-w-0 rounded-xl bg-ink-50/80 ring-1 ring-ink-200/70 p-1"
+            aria-label="主要功能"
+          >
+            {navItems}
+          </nav>
+          <div className="hidden xl:flex items-center gap-3 ml-auto pl-3 shrink-0 text-2xs text-ink-500">
+            {sceneInfo.weather && <span className="shrink-0" title={sceneInfo.weather}>☁ {sceneInfo.weather}</span>}
+            {sceneInfo.npcs_here.length > 0 && (
+              <span className="truncate max-w-[20rem]" title={sceneInfo.npcs_here.join('、')}>
+                👥 在场：{sceneInfo.npcs_here.slice(0, 4).join('、')}
+                {sceneInfo.npcs_here.length > 4 ? ` +${sceneInfo.npcs_here.length - 4}` : ''}
+              </span>
+            )}
+          </div>
         </div>
       </header>
 
       <div className="flex flex-1 min-h-0">
-        <StatusPanel onOpenSheet={() => setShowCharSheet(true)} />
-        <div className="flex-1 flex flex-col min-w-0 border-x border-gray-200">
+        {/* 桌面三栏：状态面板在 md 以上常驻；移动端走底部抽屉 */}
+        <div className="hidden md:flex">
+          <StatusPanel onOpenSheet={() => setShowCharSheet(true)} />
+        </div>
+        <main className="flex-1 flex flex-col min-w-0 md:border-x border-ink-200 bg-white/40">
           <NarrativeStream />
           <DecisionPanel />
           <Choices />
           <CombatLogPanel />
           <InputArea />
+        </main>
+        <div className="hidden md:flex">
+          <PlayerJournal />
         </div>
-        <PlayerJournal />
       </div>
+
+      {/* 移动端抽屉：复用桌面面板组件 */}
+      <Modal open={mobilePanel === 'status'} onClose={() => setMobilePanel(null)} placement="bottom" title="角色状态" icon="📋">
+        <div className="-mx-4 -my-4">
+          <StatusPanel onOpenSheet={() => { setMobilePanel(null); setShowCharSheet(true); }} />
+        </div>
+      </Modal>
+      <Modal open={mobilePanel === 'journal'} onClose={() => setMobilePanel(null)} placement="bottom" title="冒险笔记" icon="📓">
+        <div className="-mx-4 -my-4">
+          <PlayerJournal />
+        </div>
+      </Modal>
+
       <DiceRollOverlay />
 
-      {showCharSheet && (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowCharSheet(false)}>
+      <Modal
+        open={showCharSheet}
+        onClose={() => setShowCharSheet(false)}
+        paper
+        size="xl"
+        icon="🧙"
+        title="角色卡"
+        subtitle={`${status.character_name || '冒险者'} · ${status.race || '?'} ${status.char_class || '?'} · ${status.game_system || 'dnd5e'}`}
+      >
           {isDndSheet ? (
-            <DndCharacterSheet onClose={()=>setShowCharSheet(false)} />
+            <DndCharacterSheet embedded />
           ) : (status.game_system as string) === 'coc' ? (
-            <CocInvestigatorSheet onClose={()=>setShowCharSheet(false)} />
+            <CocInvestigatorSheet embedded />
           ) : (
-          <div className="paper-card rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="paper-title text-lg font-bold text-gray-900">角色卡</h3>
-              <button onClick={()=>setShowCharSheet(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
-            </div>
+          <div className="space-y-4">
 
             {/* 身份 */}
             <div className="flex items-center gap-3 mb-4">
-              {status.character_image ? <img src={status.character_image} alt="角色" className="w-20 h-20 object-cover rounded-xl border border-gray-200" /> : <div className="w-20 h-20 bg-gray-100 rounded-xl flex items-center justify-center text-[9px] text-gray-400">暂无头像</div>}
+              {status.character_image ? <img src={status.character_image} alt="角色" className="w-20 h-20 object-cover rounded-xl border border-gray-200" /> : <div className="w-20 h-20 bg-gray-100 rounded-xl flex items-center justify-center text-[9px] text-ink-400">暂无头像</div>}
               <div>
                 <p className="text-base font-bold">{status.character_name||'冒险者'}</p>
-                <p className="text-[10px] text-gray-500">{status.race||'?'} {status.char_class||'?'} · {status.game_system||'dnd5e'}</p>
-                {status.hit_die && <p className="text-[10px] text-gray-400">生命骰：{status.hit_die}</p>}
+                <p className="text-[10px] text-ink-500">{status.race||'?'} {status.char_class||'?'} · {status.game_system||'dnd5e'}</p>
+                {status.hit_die && <p className="text-[10px] text-ink-400">生命骰：{status.hit_die}</p>}
               </div>
             </div>
 
             {/* 核心数值 */}
             <div className="grid grid-cols-4 gap-2 mb-4">
-              <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">HP</p><p className="text-sm font-bold">{status.hp}/{status.maxHp}</p></div>
-              <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">AC</p><p className="text-sm font-bold">{status.ac}</p></div>
-              <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">等级</p><p className="text-sm font-bold">{status.level}</p></div>
-              <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">经验</p><p className="text-sm font-bold">{getXpDisplay(status.game_system as string, status.xp, status.level)}</p></div>
+              <div className="stat-tile"><p className="text-[9px] text-ink-400">HP</p><p className="text-sm font-bold">{status.hp}/{status.maxHp}</p></div>
+              <div className="stat-tile"><p className="text-[9px] text-ink-400">AC</p><p className="text-sm font-bold">{status.ac}</p></div>
+              <div className="stat-tile"><p className="text-[9px] text-ink-400">等级</p><p className="text-sm font-bold">{status.level}</p></div>
+              <div className="stat-tile"><p className="text-[9px] text-ink-400">经验</p><p className="text-sm font-bold">{getXpDisplay(status.game_system as string, status.xp, status.level)}</p></div>
               {status.game_system==='coc' && (
                 <>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">MP</p><p className="text-sm font-bold">{status.mp}/{status.maxMp}</p></div>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">SAN</p><p className="text-sm font-bold">{status.san}/{status.maxSan}</p></div>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">幸运</p><p className="text-sm font-bold">{status.luck}</p></div>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">伤害加值</p><p className="text-sm font-bold">{status.damage_bonus||'0'}</p></div>
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">MP</p><p className="text-sm font-bold">{status.mp}/{status.maxMp}</p></div>
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">SAN</p><p className="text-sm font-bold">{status.san}/{status.maxSan}</p></div>
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">幸运</p><p className="text-sm font-bold">{status.luck}</p></div>
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">伤害加值</p><p className="text-sm font-bold">{status.damage_bonus||'0'}</p></div>
                 </>
               )}
               {status.game_system==='dnd4e' && (
                 <>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">回复力</p><p className="text-sm font-bold">{status.healing_surges}/{status.max_healing_surges}</p></div>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">回复量</p><p className="text-sm font-bold">{status.surge_value}</p></div>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">强韧/反射/意志</p><p className="text-sm font-bold">{status.fortitude}/{status.reflex}/{status.will}</p></div>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">熟练加值</p><p className="text-sm font-bold">{status.proficiency_bonus||2}</p></div>
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">回复力</p><p className="text-sm font-bold">{status.healing_surges}/{status.max_healing_surges}</p></div>
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">回复量</p><p className="text-sm font-bold">{status.surge_value}</p></div>
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">强韧/反射/意志</p><p className="text-sm font-bold">{status.fortitude}/{status.reflex}/{status.will}</p></div>
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">熟练加值</p><p className="text-sm font-bold">{status.proficiency_bonus||2}</p></div>
                 </>
               )}
               {status.game_system==='dnd5e' && (
                 <>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">熟练加值</p><p className="text-sm font-bold">{status.proficiency_bonus||2}</p></div>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">金币</p><p className="text-sm font-bold">{status.gold}</p></div>
-                  <div className="bg-gray-50 rounded-lg p-2 text-center"><p className="text-[9px] text-gray-400">法术位</p><p className="text-sm font-bold">{(() => {
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">熟练加值</p><p className="text-sm font-bold">{status.proficiency_bonus||2}</p></div>
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">金币</p><p className="text-sm font-bold">{status.gold}</p></div>
+                  <div className="stat-tile"><p className="text-[9px] text-ink-400">法术位</p><p className="text-sm font-bold">{(() => {
                     const ss = status.spell_slots;
                     if (Array.isArray(ss)) return ss.join('/');
                     if (ss && typeof ss === 'object') {
@@ -637,7 +794,7 @@ export default function GameScreen() {
 
             {/* 属性 */}
             <div className="mb-4">
-              <p className="text-[10px] text-gray-400 font-medium mb-1">属性</p>
+              <p className="section-label mb-1.5">属性</p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                 {Object.entries(status.attributes||{})
                   .filter(([k]) => status.game_system === 'coc'
@@ -647,8 +804,8 @@ export default function GameScreen() {
                     const m=Math.floor((Number(v)-10)/2);
                     return (
                       <div key={k} className="bg-white rounded-lg border border-gray-200 px-2 py-1 flex justify-between">
-                        <span className="text-[10px] text-gray-400">{ATTR_CN[k]||k.toUpperCase()}</span>
-                        <span className="text-xs font-bold">{textValue(v)}{status.game_system!=='coc' && <span className={`ml-1 text-[9px] ${m>=0?'text-emerald-500':'text-red-400'}`}>({m>=0?'+':''}{m})</span>}</span>
+                        <span className="text-[10px] text-ink-400">{ATTR_CN[k]||k.toUpperCase()}</span>
+                        <span className="text-xs font-bold">{textValue(v)}{status.game_system!=='coc' && <span className={`ml-1 text-[9px] ${m>=0?'text-emerald-700':'text-red-400'}`}>({m>=0?'+':''}{m})</span>}</span>
                       </div>
                     );
                   })}
@@ -659,19 +816,19 @@ export default function GameScreen() {
             {((status.skill_proficiencies?.length ?? 0)>0 || (status.feats?.length ?? 0)>0 || (status.race_traits?.length ?? 0)>0 || (status.class_proficiencies?.length ?? 0)>0) && (
               <div className="space-y-2 mb-4">
                 {status.skills && Object.keys(status.skills).length>0 && (
-                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">技能数值</p><div className="flex flex-wrap gap-1">{Object.entries(status.skills).map(([k,v])=><span key={k} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5">{k}: {textValue(v)}</span>)}</div></div>
+                  <div><p className="section-label mb-1.5">技能数值</p><div className="flex flex-wrap gap-1">{Object.entries(status.skills).map(([k,v])=><span key={k} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5">{k}: {textValue(v)}</span>)}</div></div>
                 )}
                 {status.skill_proficiencies && status.skill_proficiencies.length>0 && (
-                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">技能熟练</p><div className="flex flex-wrap gap-1">{status.skill_proficiencies.map((s,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
+                  <div><p className="section-label mb-1.5">技能熟练</p><div className="flex flex-wrap gap-1">{status.skill_proficiencies.map((s,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
                 )}
                 {status.feats && status.feats.length>0 && (
-                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">特长</p><div className="space-y-1">{status.feats.map((f,i)=><div key={i} className="text-[10px] bg-amber-50 text-amber-800 border border-amber-200 rounded px-2 py-1">{f.name}{f.description?`：${f.description}`:''}</div>)}</div></div>
+                  <div><p className="section-label mb-1.5">特长</p><div className="space-y-1">{status.feats.map((f,i)=><div key={i} className="text-[10px] bg-amber-50 text-amber-800 border border-amber-200 rounded px-2 py-1">{f.name}{f.description?`：${f.description}`:''}</div>)}</div></div>
                 )}
                 {status.race_traits && status.race_traits.length>0 && (
-                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">种族特性</p><div className="flex flex-wrap gap-1">{status.race_traits.map((s,i)=><span key={i} className="text-[10px] bg-gray-100 text-gray-700 border border-gray-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
+                  <div><p className="section-label mb-1.5">种族特性</p><div className="flex flex-wrap gap-1">{status.race_traits.map((s,i)=><span key={i} className="text-[10px] bg-gray-100 text-ink-700 border border-gray-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
                 )}
                 {status.class_proficiencies && status.class_proficiencies.length>0 && (
-                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">职业熟练</p><div className="flex flex-wrap gap-1">{status.class_proficiencies.map((s,i)=><span key={i} className="text-[10px] bg-gray-100 text-gray-700 border border-gray-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
+                  <div><p className="section-label mb-1.5">职业熟练</p><div className="flex flex-wrap gap-1">{status.class_proficiencies.map((s,i)=><span key={i} className="text-[10px] bg-gray-100 text-ink-700 border border-gray-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
                 )}
               </div>
             )}
@@ -679,7 +836,7 @@ export default function GameScreen() {
             {/* 已习得法术 */}
             {((status.known_spells?.length ?? 0) > 0) && (
               <div className="space-y-1 mb-4">
-                <p className="text-[10px] text-gray-400 font-medium mb-1">已习得法术</p>
+                <p className="section-label mb-1.5">已习得法术</p>
                 {status.known_spells!.map(s => <SpellCard key={s.name} spell={s} />)}
               </div>
             )}
@@ -688,13 +845,13 @@ export default function GameScreen() {
             {((status.custom_classes?.length ?? 0)>0 || (status.custom_skills?.length ?? 0)>0 || (status.extra_attributes && Object.keys(status.extra_attributes).length>0)) && (
               <div className="space-y-2 mb-4">
                 {status.custom_classes && status.custom_classes.length>0 && (
-                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">剧本专属职业/身份</p><div className="flex flex-wrap gap-1">{status.custom_classes.map((s,i)=><span key={i} className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
+                  <div><p className="section-label mb-1.5">剧本专属职业/身份</p><div className="flex flex-wrap gap-1">{status.custom_classes.map((s,i)=><span key={i} className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
                 )}
                 {status.custom_skills && status.custom_skills.length>0 && (
-                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">剧本专属技能</p><div className="flex flex-wrap gap-1">{status.custom_skills.map((s,i)=><span key={i} className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
+                  <div><p className="section-label mb-1.5">剧本专属技能</p><div className="flex flex-wrap gap-1">{status.custom_skills.map((s,i)=><span key={i} className="text-[10px] bg-purple-50 text-purple-700 border border-purple-200 rounded px-1.5 py-0.5">{s}</span>)}</div></div>
                 )}
                 {status.extra_attributes && Object.keys(status.extra_attributes).length>0 && (
-                  <div><p className="text-[10px] text-gray-400 font-medium mb-1">额外属性</p><div className="flex flex-wrap gap-1">{Object.entries(status.extra_attributes).map(([k,v],i)=><span key={i} className="text-[10px] bg-gray-100 text-gray-700 border border-gray-200 rounded px-1.5 py-0.5">{k}: {textValue(v)}</span>)}</div></div>
+                  <div><p className="section-label mb-1.5">额外属性</p><div className="flex flex-wrap gap-1">{Object.entries(status.extra_attributes).map(([k,v],i)=><span key={i} className="text-[10px] bg-gray-100 text-ink-700 border border-gray-200 rounded px-1.5 py-0.5">{k}: {textValue(v)}</span>)}</div></div>
                 )}
               </div>
             )}
@@ -702,55 +859,59 @@ export default function GameScreen() {
             {/* 背景故事 */}
             {status.backstory && (
               <div className="mb-4">
-                <p className="text-[10px] text-gray-400 font-medium mb-1">背景故事</p>
-                <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{status.backstory}</p>
+                <p className="section-label mb-1.5">背景故事</p>
+                <p className="text-xs text-ink-700 whitespace-pre-wrap leading-relaxed">{status.backstory}</p>
               </div>
             )}
 
             {/* 背包 */}
             {status.inventory?.length>0 && (
               <div className="mb-4">
-                <p className="text-[10px] text-gray-400 font-medium mb-1">背包</p>
+                <p className="section-label mb-1.5">背包</p>
                 <div className="flex flex-wrap gap-1">{status.inventory.map((it,i)=><span key={i} className="text-[10px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{invName(it)}</span>)}</div>
               </div>
             )}
           </div>
           )}
-        </div>
-      )}
+      </Modal>
 
       {showRulebook && <RulebookModal onClose={()=>setShowRulebook(false)} />}
 
-      {showMap && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowMap(false)}>
-          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-gray-900">地点 / 地图图鉴</h3>
-              <div className="flex items-center gap-2">
-                <button onClick={()=>setShowMapBuilder(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
-                  {showMapBuilder ? '收起自建' : '自建地点'}
-                </button>
-                <button onClick={()=>translateMedia('locations')} disabled={!!mediaTranslate} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
-                  {mediaTranslate?.kind==='locations' ? '机翻中...' : '翻译地点描述'}
-                </button>
-                {currentSid && (
-                  <button onClick={()=>setShowGlobalRefMaps(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
-                    {showGlobalRefMaps ? '仅当前剧本' : '显示通用参考'}
-                  </button>
-                )}
-                <button onClick={()=>setShowMap(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
-              </div>
-            </div>
-            {mediaTranslate?.kind==='locations' && (
-              <div className="mb-3">
-                <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1"><span>机翻地点描述</span><span>{mediaTranslate.done}/{mediaTranslate.total}</span></div>
-                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 transition-all" style={{width:`${mediaTranslate.total?Math.round((mediaTranslate.done/mediaTranslate.total)*100):0}%`}} /></div>
-              </div>
+      <Modal
+        open={showMap}
+        onClose={() => setShowMap(false)}
+        size="lg"
+        icon="🗺️"
+        title="地点 / 地图图鉴"
+        subtitle={currentSid ? '默认仅显示当前剧本条目；可切换显示通用参考' : '通用地点库（所有剧本可用）'}
+        headExtra={
+          <>
+            <button onClick={()=>setShowMapBuilder(v=>!v)} className="btn-xs-paper">
+              {showMapBuilder ? '收起自建' : '自建地点'}
+            </button>
+            <button onClick={()=>translateMedia('locations')} disabled={!!mediaTranslate} className="btn-xs-brand">
+              {mediaTranslate?.kind==='locations' ? '机翻中...' : '翻译地点'}
+            </button>
+            {currentSid && (
+              <button onClick={()=>setShowGlobalRefMaps(v=>!v)} className={`btn-xs ${showGlobalRefMaps ? 'border-brand-300 bg-brand-50 text-brand-700' : ''}`}>
+                {showGlobalRefMaps ? '仅当前剧本' : '通用参考'}
+              </button>
             )}
-            <input value={mapQuery} onChange={e=>setMapQuery(e.target.value)} placeholder="搜索地点/区域/类型/人物/危险..." className="input-field text-xs mb-3" />
+          </>
+        }
+      >
+            {mediaTranslate?.kind==='locations' && (
+              <ProgressBar
+                className="mb-3"
+                label="机翻地点描述"
+                value={mediaTranslate.done}
+                max={mediaTranslate.total}
+              />
+            )}
+            <input value={mapQuery} onChange={e=>setMapQuery(e.target.value)} placeholder="搜索地点 / 区域 / 类型 / 人物 / 危险…" className="input-field text-xs mb-3 !py-2" aria-label="搜索地点" />
             {showMapBuilder && (
-              <div className="mb-3 border border-amber-900/20 rounded-lg p-3 bg-amber-50/40 space-y-2">
-                <p className="text-xs font-bold text-gray-700">自建地点 / 地图</p>
+              <div className="rounded-xl border border-parch-400/50 bg-parch-100/60 p-3 space-y-2.5 mb-3">
+                <p className="text-xs font-bold text-ink-700">自建地点 / 地图</p>
                 <div className="grid grid-cols-2 gap-2">
                   <input value={dmMap.name} onChange={e=>setDmMap({...dmMap,name:e.target.value})} placeholder="地点名称 *" className="input-field text-xs" />
                   <input value={dmMap.type} onChange={e=>setDmMap({...dmMap,type:e.target.value})} placeholder="类型（城镇/地城/森林...）" className="input-field text-xs" />
@@ -763,31 +924,37 @@ export default function GameScreen() {
                 </div>
                 <input value={dmMap.locationsText} onChange={e=>setDmMap({...dmMap,locationsText:e.target.value})} placeholder="子地点（逗号分隔）" className="input-field text-xs w-full" />
                 <textarea value={dmMap.description} onChange={e=>setDmMap({...dmMap,description:e.target.value})} placeholder="地点描述" rows={2} className="input-field text-xs resize-none w-full" />
-                <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmMapImage(e.target.files?.[0]||null)} className="block w-full text-[10px] text-gray-500" />
-                <button onClick={()=>{addDmMap(); setShowMapBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本地点库</button>
+                <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmMapImage(e.target.files?.[0]||null)} className="block w-full text-[10px] text-ink-500" />
+                <button onClick={()=>{addDmMap(); setShowMapBuilder(false);}} className="btn-xs-paper mt-1">保存到当前剧本地点库</button>
               </div>
             )}
-            {filteredMaps.length===0&&<div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">🗺️</p><p>没有找到地图。</p><p className="text-[9px] text-gray-300">{currentSid && !showGlobalRefMaps && scenarioMaps.length===0 ? '当前剧本暂无地点图鉴；点击“显示通用参考”查看通用库。' : '可以调整搜索，或先导入剧本 / 上传地图图片'}</p></div>}
+            {filteredMaps.length===0&&(
+              <EmptyState
+                icon="🗺️"
+                title="没有找到地图"
+                hint={currentSid && !showGlobalRefMaps && scenarioMaps.length===0 ? '当前剧本暂无地点图鉴；点击右上角「通用参考」查看通用库。' : '可以调整搜索，或先导入剧本 / 上传地图图片'}
+              />
+            )}
             {filteredMaps.map(m=>{
               const relatedCreatures = bestiary.filter(b => q(`${b.description} ${b.details?.habitat||''} ${b.details?.lore||''}`).includes(q(m.name)));
               return (
-                <details key={m.id} className="group mb-3 border border-gray-200 rounded-lg overflow-hidden">
-                  <summary className="cursor-pointer select-none list-none p-3 flex items-center justify-between gap-2">
+                <details key={m.id} className="group entry-card mb-3">
+                  <summary className="entry-summary">
                     <span className="flex items-center gap-2 min-w-0">
                       <span className="text-sm font-bold truncate">{m.name}</span>
-                      <span className={`text-[8px] px-1.5 py-0.5 rounded-full border shrink-0 ${m.scenario_id ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>{m.scenario_id ? '当前剧本' : '通用参考'}</span>
+                      <span className={`scope-badge ${m.scenario_id ? 'scope-badge-scenario' : 'scope-badge-global'}`}>{m.scenario_id ? '当前剧本' : '通用参考'}</span>
                     </span>
-                    <span className="text-[9px] text-gray-400 shrink-0">
+                    <span className="text-[9px] text-ink-400 shrink-0">
                       {m.details?.type || '地点'} · {m.details?.status || '未知'} · {m.locations.length} 子地点
                       <span className="ml-1 group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span>
                     </span>
                   </summary>
                   <div className="px-3 pb-3 border-t border-gray-100">
                     {m.image_path&&<img src={m.image_path} alt={m.name} className="w-full max-h-80 object-contain bg-gray-100 mb-2" />}
-                    <p className="text-[10px] text-gray-500 mb-2">{m.description_zh || m.description}{m.description_zh && m.description ? <span className="text-gray-400 italic">（原文：{m.description.slice(0,60)}...）</span> : null}</p>
+                    <p className="text-[10px] text-ink-500 mb-2">{m.description_zh || m.description}{m.description_zh && m.description ? <span className="text-ink-400 italic">（原文：{m.description.slice(0,60)}...）</span> : null}</p>
                     {m.locations.length>0&&<div className="flex flex-wrap gap-1 mb-2">{m.locations.map((l,i)=><span key={i} className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-100">{l.name}</span>)}</div>}
                     {m.details && (
-                      <div className="text-[10px] text-gray-600 space-y-1">
+                      <div className="text-[10px] text-ink-600 space-y-1">
                         {m.details.type&&<p>类型：{m.details.type}</p>}
                         {m.details.status&&<p>状态：{m.details.status}</p>}
                         {m.details.culture&&<p>文化/势力：{m.details.culture}</p>}
@@ -798,7 +965,7 @@ export default function GameScreen() {
                     )}
                     {relatedCreatures.length>0 && (
                       <div className="mt-2 pt-2 border-t border-gray-100">
-                        <p className="text-[9px] text-gray-400 mb-1">可能出现的生物</p>
+                        <p className="text-[9px] text-ink-400 mb-1">可能出现的生物</p>
                         <div className="flex flex-wrap gap-1">{relatedCreatures.map(b=><span key={b.id} className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 rounded px-1.5 py-0.5">{b.name}</span>)}</div>
                       </div>
                     )}
@@ -806,43 +973,39 @@ export default function GameScreen() {
                 </details>
               );
             })}
-          </div>
-        </div>
-      )}
+      </Modal>
 
-      {showBeast && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowBeast(false)}>
-          <div className="paper-card rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="text-sm font-bold text-gray-900">生物图鉴</h3>
-                <p className="text-[9px] text-gray-400">默认仅显示当前剧本；通用参考需手动切换，且不会被剧本操作覆盖。</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={()=>setShowBeastBuilder(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
-                  {showBeastBuilder ? '收起自建' : '自建生物'}
-                </button>
-                <button onClick={()=>translateMedia('bestiary')} disabled={!!mediaTranslate} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
-                  {mediaTranslate?.kind==='bestiary' ? '机翻中...' : '翻译生物描述'}
-                </button>
-                {currentSid && (
-                  <button onClick={()=>setShowGlobalRefBestiary(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
-                    {showGlobalRefBestiary ? '仅当前剧本' : '显示通用参考'}
-                  </button>
-                )}
-                <button onClick={()=>setShowBeast(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
-              </div>
-            </div>
-            {mediaTranslate?.kind==='bestiary' && (
-              <div className="mb-3">
-                <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1"><span>机翻生物描述</span><span>{mediaTranslate.done}/{mediaTranslate.total}</span></div>
-                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 transition-all" style={{width:`${mediaTranslate.total?Math.round((mediaTranslate.done/mediaTranslate.total)*100):0}%`}} /></div>
-              </div>
+      <Modal
+        open={showBeast}
+        onClose={() => setShowBeast(false)}
+        paper
+        size="lg"
+        icon="🐾"
+        title="生物图鉴"
+        subtitle="默认仅显示当前剧本条目；通用参考需手动切换，且不会被剧本操作覆盖"
+        headExtra={
+          <>
+            <button onClick={()=>setShowBeastBuilder(v=>!v)} className="btn-xs-paper">
+              {showBeastBuilder ? '收起自建' : '自建生物'}
+            </button>
+            <button onClick={()=>translateMedia('bestiary')} disabled={!!mediaTranslate} className="btn-xs-brand">
+              {mediaTranslate?.kind==='bestiary' ? '机翻中...' : '翻译生物'}
+            </button>
+            {currentSid && (
+              <button onClick={()=>setShowGlobalRefBestiary(v=>!v)} className={`btn-xs ${showGlobalRefBestiary ? 'border-brand-300 bg-brand-50 text-brand-700' : ''}`}>
+                {showGlobalRefBestiary ? '仅当前剧本' : '通用参考'}
+              </button>
             )}
-            <input value={beastQuery} onChange={e=>setBeastQuery(e.target.value)} placeholder="搜索生物/属性/栖息地/传说/弱点..." className="input-field text-xs mb-3" />
+          </>
+        }
+      >
+            {mediaTranslate?.kind==='bestiary' && (
+              <ProgressBar className="mb-3" label="机翻生物描述" value={mediaTranslate.done} max={mediaTranslate.total} />
+            )}
+            <input value={beastQuery} onChange={e=>setBeastQuery(e.target.value)} placeholder="搜索生物 / 属性 / 栖息地 / 传说 / 弱点…" className="input-field text-xs mb-3 !py-2" aria-label="搜索生物" />
             {showBeastBuilder && (
-              <div className="mb-3 border border-amber-900/20 rounded-lg p-3 bg-amber-50/40 space-y-2">
-                <p className="text-xs font-bold text-gray-700">自建生物</p>
+              <div className="rounded-xl border border-parch-400/50 bg-parch-100/60 p-3 space-y-2.5 mb-3">
+                <p className="text-xs font-bold text-ink-700">自建生物</p>
                 <div className="grid grid-cols-2 gap-2">
                   <input value={dmBeast.name} onChange={e=>setDmBeast({...dmBeast,name:e.target.value})} placeholder="生物名称 *" className="input-field text-xs" />
                   <input value={dmBeast.tags} onChange={e=>setDmBeast({...dmBeast,tags:e.target.value})} placeholder="标签（人形生物/神话...）" className="input-field text-xs" />
@@ -866,11 +1029,17 @@ export default function GameScreen() {
                   <input value={dmBeast.lore} onChange={e=>setDmBeast({...dmBeast,lore:e.target.value})} placeholder="传说/背景" className="input-field text-xs" />
                   <input value={dmBeast.weakness} onChange={e=>setDmBeast({...dmBeast,weakness:e.target.value})} placeholder="弱点" className="input-field text-xs" />
                 </div>
-                <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmBeastImage(e.target.files?.[0]||null)} className="block w-full text-[10px] text-gray-500" />
-                <button onClick={()=>{addDmBeast(); setShowBeastBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本生物库</button>
+                <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmBeastImage(e.target.files?.[0]||null)} className="block w-full text-[10px] text-ink-500" />
+                <button onClick={()=>{addDmBeast(); setShowBeastBuilder(false);}} className="btn-xs-paper mt-1">保存到当前剧本生物库</button>
               </div>
             )}
-            {filteredBestiary.length===0&&<div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">🐾</p><p>没有找到生物。</p><p className="text-[9px] text-gray-300">{currentSid && !showGlobalRefBestiary && scenarioBestiary.length===0 ? '当前剧本暂无生物图鉴；点击“显示通用参考”查看通用库。' : '可以调整搜索，或先导入怪物库 / 上传生物图片'}</p></div>}
+            {filteredBestiary.length===0&&(
+              <EmptyState
+                icon="🐾"
+                title="没有找到生物"
+                hint={currentSid && !showGlobalRefBestiary && scenarioBestiary.length===0 ? '当前剧本暂无生物图鉴；点击右上角「通用参考」查看通用库。' : '可以调整搜索，或先导入怪物库 / 上传生物图片'}
+              />
+            )}
             {filteredBestiary.map(b=>{
               const relatedMaps = scopedMaps.filter(m => q(`${b.details?.habitat||''} ${b.description} ${b.details?.lore||''}`).includes(q(m.name)) || q(m.description).includes(q(b.name)));
               const s = b.stats || {};
@@ -898,15 +1067,15 @@ export default function GameScreen() {
               const traits = get('特性','Traits','traits');
               const actions = get('动作','Actions','actions');
               return (
-                <details key={b.id} className="group mb-3 border-2 border-amber-900/30 rounded-lg p-3 bg-[#fffdf5] shadow-sm">
+                <details key={b.id} className="group entry-card p-3 mb-3">
                   <summary className="cursor-pointer select-none list-none">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         {b.image_path && <img src={b.image_path} alt="" loading="lazy" decoding="async" onError={e=>{e.currentTarget.style.display='none';}} className="w-9 h-9 object-cover rounded border border-amber-900/20 shrink-0" />}
-                        <span className="paper-title text-base font-bold text-gray-900 truncate">{b.name}</span>
-                        <span className={`text-[8px] px-1.5 py-0.5 rounded-full border shrink-0 ${b.scenario_id ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>{b.scenario_id ? '当前剧本' : '通用参考'}</span>
+                        <span className="paper-title text-base font-bold text-ink-900 truncate">{b.name}</span>
+                        <span className={`scope-badge ${b.scenario_id ? 'scope-badge-scenario' : 'scope-badge-global'}`}>{b.scenario_id ? '当前剧本' : '通用参考'}</span>
                       </div>
-                      <span className="text-[9px] text-gray-400 shrink-0">{challenge!=='—'?`CR ${challenge}${xp!=='—'?`（XP ${xp}）`:''} · `:''}HP {get('HP','hp','生命')} · AC {get('AC','ac','护甲')}<span className="ml-1 group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span></span>
+                      <span className="text-[9px] text-ink-400 shrink-0">{challenge!=='—'?`CR ${challenge}${xp!=='—'?`（XP ${xp}）`:''} · `:''}HP {get('HP','hp','生命')} · AC {get('AC','ac','护甲')}<span className="ml-1 group-open:hidden">▸</span><span className="hidden group-open:inline">▾</span></span>
                     </div>
                   </summary>
                   <div className="mt-2">
@@ -917,14 +1086,14 @@ export default function GameScreen() {
                   )}
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
-                      <p className="text-[10px] text-gray-500 italic">
-                        {b.scenario_id ? <span className="text-emerald-700 font-medium">当前剧本</span> : <span className="text-gray-400 font-medium">通用参考</span>}
+                      <p className="text-[10px] text-ink-500 italic">
+                        {b.scenario_id ? <span className="text-emerald-700 font-medium">当前剧本</span> : <span className="text-ink-400 font-medium">通用参考</span>}
                         {' · '}{b.system}{b.tags&&b.tags.length>0?` · ${b.tags.join('、')}`:''}
                       </p>
                       <div className="grid grid-cols-3 gap-1 mt-1.5 text-[10px]">
-                        <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-gray-500">AC</span> <b>{get('AC','ac','护甲')}</b></div>
-                        <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-gray-500">HP</span> <b>{get('HP','hp','生命')}</b></div>
-                        <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-gray-500">速度</span> <b>{get('速度','Speed','speed')}</b></div>
+                        <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-ink-500">AC</span> <b>{get('AC','ac','护甲')}</b></div>
+                        <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-ink-500">HP</span> <b>{get('HP','hp','生命')}</b></div>
+                        <div className="bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"><span className="text-ink-500">速度</span> <b>{get('速度','Speed','speed')}</b></div>
                       </div>
                     </div>
                   </div>
@@ -932,31 +1101,31 @@ export default function GameScreen() {
                   {/* D&D4e 关键数值 */}
                   {b.system === 'dnd4e' && (
                     <div className="grid grid-cols-3 gap-1 mt-2 border-t border-amber-900/10 pt-2 text-[10px]">
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">强韧</span> <b>{get('强韧','Fortitude','fort')}</b></div>
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">反射</span> <b>{get('反射','Reflex','ref')}</b></div>
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">意志</span> <b>{get('意志','Will','will')}</b></div>
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">等级</span> <b>{get('等级','Level','level')}</b></div>
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">XP</span> <b>{get('XP','xp')}</b></div>
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-gray-400">角色</span> <b>{get('角色类型','role')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-ink-400">强韧</span> <b>{get('强韧','Fortitude','fort')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-ink-400">反射</span> <b>{get('反射','Reflex','ref')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-ink-400">意志</span> <b>{get('意志','Will','will')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-ink-400">等级</span> <b>{get('等级','Level','level')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-ink-400">XP</span> <b>{get('XP','xp')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-ink-400">角色</span> <b>{get('角色类型','role')}</b></div>
                     </div>
                   )}
 
                   {/* 六维 / COC 关键数值 */}
                   {b.system === 'coc' ? (
                     <div className="grid grid-cols-2 gap-1 mt-2 border-t border-amber-900/10 pt-2">
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-gray-400">HP</span> <b className="text-xs">{get('HP','hp','生命')}</b></div>
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-gray-400">MP</span> <b className="text-xs">{get('MP','mp','魔法')}</b></div>
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-gray-400">伤害加值</span> <b className="text-xs">{get('伤害加值','DB','damage_bonus')}</b></div>
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-gray-400">护甲</span> <b className="text-xs">{get('护甲','装甲','armor')}</b></div>
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 col-span-2"><span className="text-[8px] text-gray-400">技能</span> <b className="text-xs">{get('技能','Skills','skills')}</b></div>
-                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 col-span-2"><span className="text-[8px] text-gray-400">理智损失</span> <b className="text-xs">{get('理智损失','SAN Loss','sanity')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-ink-400">HP</span> <b className="text-xs">{get('HP','hp','生命')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-ink-400">MP</span> <b className="text-xs">{get('MP','mp','魔法')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-ink-400">伤害加值</span> <b className="text-xs">{get('伤害加值','DB','damage_bonus')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5"><span className="text-[8px] text-ink-400">护甲</span> <b className="text-xs">{get('护甲','装甲','armor')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 col-span-2"><span className="text-[8px] text-ink-400">技能</span> <b className="text-xs">{get('技能','Skills','skills')}</b></div>
+                      <div className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 col-span-2"><span className="text-[8px] text-ink-400">理智损失</span> <b className="text-xs">{get('理智损失','SAN Loss','sanity')}</b></div>
                     </div>
                   ) : (
                     <>
                       <div className="grid grid-cols-3 gap-1 mt-2 border-t border-amber-900/10 pt-2">
                         {abilities.map(([k,v])=>(
                           <div key={k} className="bg-white border border-amber-900/10 rounded px-1.5 py-0.5 text-center">
-                            <span className="text-[8px] text-gray-400 font-semibold">{k}</span>
+                            <span className="text-[8px] text-ink-400 font-semibold">{k}</span>
                             <div className="text-xs font-bold">{v}</div>
                           </div>
                         ))}
@@ -964,7 +1133,7 @@ export default function GameScreen() {
                       <div className="grid grid-cols-6 gap-1 mt-1.5">
                         {baseSaves.map(([k,v])=>(
                           <div key={k} className="bg-white border border-amber-900/10 rounded px-1 py-0.5 text-center">
-                            <span className="text-[7px] text-gray-400">{k}</span>
+                            <span className="text-[7px] text-ink-400">{k}</span>
                             <div className="text-[10px] font-bold">{v}</div>
                           </div>
                         ))}
@@ -974,26 +1143,26 @@ export default function GameScreen() {
 
                   {/* 标准字段 */}
                   {(skills!=='—'||senses!=='—'||languages!=='—'||challenge!=='—'||xp!=='—'||initiative!=='—'||saves!=='—') && (
-                    <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-0.5 text-[10px] text-gray-700">
-                      {initiative!=='—'&&<p><span className="text-gray-500 font-medium">先攻：</span>{initiative}</p>}
-                      {saves!=='—'&&<p><span className="text-gray-500 font-medium">豁免：</span>{saves}</p>}
-                      {skills!=='—'&&<p><span className="text-gray-500 font-medium">技能：</span>{skills}</p>}
-                      {senses!=='—'&&<p><span className="text-gray-500 font-medium">感官：</span>{senses}</p>}
-                      {languages!=='—'&&<p><span className="text-gray-500 font-medium">语言：</span>{languages}</p>}
-                      {challenge!=='—'&&<p><span className="text-gray-500 font-medium">挑战等级：</span>{challenge} {xp!=='—'?`（XP ${xp}）`:''}</p>}
+                    <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-0.5 text-[10px] text-ink-700">
+                      {initiative!=='—'&&<p><span className="text-ink-500 font-medium">先攻：</span>{initiative}</p>}
+                      {saves!=='—'&&<p><span className="text-ink-500 font-medium">豁免：</span>{saves}</p>}
+                      {skills!=='—'&&<p><span className="text-ink-500 font-medium">技能：</span>{skills}</p>}
+                      {senses!=='—'&&<p><span className="text-ink-500 font-medium">感官：</span>{senses}</p>}
+                      {languages!=='—'&&<p><span className="text-ink-500 font-medium">语言：</span>{languages}</p>}
+                      {challenge!=='—'&&<p><span className="text-ink-500 font-medium">挑战等级：</span>{challenge} {xp!=='—'?`（XP ${xp}）`:''}</p>}
                     </div>
                   )}
 
                   {/* 描述 / 特性 / 动作 */}
-                  {(b.description_zh || b.description)&&<p className="mt-2 text-[10px] text-gray-600 italic leading-relaxed">{(b.description_zh || b.description)}{b.description_zh && b.description ? <span className="text-gray-400">（原文：{translateMonsterDesc(b.description).slice(0,60)}...）</span> : null}</p>}
+                  {(b.description_zh || b.description)&&<p className="mt-2 text-[10px] text-ink-600 italic leading-relaxed">{(b.description_zh || b.description)}{b.description_zh && b.description ? <span className="text-ink-400">（原文：{translateMonsterDesc(b.description).slice(0,60)}...）</span> : null}</p>}
                   {(traits!=='—'||actions!=='—') && (
-                    <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-1 text-[10px] text-gray-700">
-                      {traits!=='—'&&<p><span className="text-gray-500 font-medium">特性：</span>{traits}</p>}
-                      {actions!=='—'&&<p><span className="text-gray-500 font-medium">动作：</span>{actions}</p>}
+                    <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-1 text-[10px] text-ink-700">
+                      {traits!=='—'&&<p><span className="text-ink-500 font-medium">特性：</span>{traits}</p>}
+                      {actions!=='—'&&<p><span className="text-ink-500 font-medium">动作：</span>{actions}</p>}
                     </div>
                   )}
                   {b.details && (
-                    <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-0.5 text-[10px] text-gray-600">
+                    <div className="mt-2 border-t border-amber-900/10 pt-1.5 space-y-0.5 text-[10px] text-ink-600">
                       {b.details.habits&&<p>习性：{b.details.habits}</p>}
                       {b.details.habitat&&<p>栖息地：{b.details.habitat}</p>}
                       {b.details.lore&&<p>传说：{b.details.lore}</p>}
@@ -1001,7 +1170,7 @@ export default function GameScreen() {
                   )}
                   {relatedMaps.length>0 && (
                     <div className="mt-2 pt-1.5 border-t border-amber-900/10">
-                      <p className="text-[9px] text-gray-400 mb-0.5">关联地点</p>
+                      <p className="text-[9px] text-ink-400 mb-0.5">关联地点</p>
                       <div className="flex flex-wrap gap-1">{relatedMaps.map(m=><span key={m.id} className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 rounded px-1.5 py-0.5">{m.name}</span>)}</div>
                     </div>
                   )}
@@ -1009,46 +1178,40 @@ export default function GameScreen() {
                 </details>
               );
             })}
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* 法术图鉴 */}
-      {showSpells && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowSpells(false)}>
-          <div className="paper-card rounded-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-4" onClick={e=>e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-gray-900">法术 / 仪式</h3>
-              <div className="flex items-center gap-2">
-                <button onClick={()=>setShowSpellBuilder(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100">
-                  {showSpellBuilder ? '收起自建' : '自建法术'}
-                </button>
-                <button onClick={translateSrd} disabled={srdTranslating} className="text-[10px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50">
-                  {srdTranslating ? '机翻中...' : '翻译 SRD 法术'}
-                </button>
-                {currentSid && (
-                  <button onClick={()=>setShowGlobalRefSpells(v=>!v)} className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">
-                    {showGlobalRefSpells ? '仅当前剧本' : '显示通用参考'}
-                  </button>
-                )}
-                <button onClick={()=>setShowSpells(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
-              </div>
-            </div>
-            {srdProgress && (
-              <div className="mb-3">
-                <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1">
-                  <span>批量机翻 SRD 法术</span>
-                  <span>{srdProgress.done}/{srdProgress.total}</span>
-                </div>
-                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-500 transition-all" style={{ width: `${srdProgress.total ? Math.round((srdProgress.done / srdProgress.total) * 100) : 0}%` }} />
-                </div>
-              </div>
+      <Modal
+        open={showSpells}
+        onClose={() => setShowSpells(false)}
+        paper
+        size="lg"
+        icon="✨"
+        title="法术 / 仪式"
+        subtitle={currentSid ? '默认仅显示当前剧本条目；可切换显示通用参考' : '通用法术库（所有剧本可用）'}
+        headExtra={
+          <>
+            <button onClick={()=>setShowSpellBuilder(v=>!v)} className="btn-xs-paper">
+              {showSpellBuilder ? '收起自建' : '自建法术'}
+            </button>
+            <button onClick={translateSrd} disabled={srdTranslating} className="btn-xs-brand">
+              {srdTranslating ? '机翻中...' : '翻译 SRD'}
+            </button>
+            {currentSid && (
+              <button onClick={()=>setShowGlobalRefSpells(v=>!v)} className={`btn-xs ${showGlobalRefSpells ? 'border-brand-300 bg-brand-50 text-brand-700' : ''}`}>
+                {showGlobalRefSpells ? '仅当前剧本' : '通用参考'}
+              </button>
             )}
-            <input value={spellQuery} onChange={e=>setSpellQuery(e.target.value)} placeholder="搜索法术/仪式..." className="input-field text-xs mb-3" />
+          </>
+        }
+      >
+            {srdProgress && (
+              <ProgressBar className="mb-3" label="批量机翻 SRD 法术" value={srdProgress.done} max={srdProgress.total} />
+            )}
+            <input value={spellQuery} onChange={e=>setSpellQuery(e.target.value)} placeholder="搜索法术 / 仪式…" className="input-field text-xs mb-3 !py-2" aria-label="搜索法术" />
             {showSpellBuilder && (
-              <div className="mb-3 border border-amber-900/20 rounded-lg p-3 bg-amber-50/40 space-y-2">
-                <p className="text-xs font-bold text-gray-700">自建法术 / 仪式</p>
+              <div className="rounded-xl border border-parch-400/50 bg-parch-100/60 p-3 space-y-2.5 mb-3">
+                <p className="text-xs font-bold text-ink-700">自建法术 / 仪式</p>
                 <div className="grid grid-cols-2 gap-2">
                   <input value={dmSpell.name} onChange={e=>setDmSpell({...dmSpell,name:e.target.value})} placeholder="法术名称 *" className="input-field text-xs" />
                   <input value={dmSpell.level} onChange={e=>setDmSpell({...dmSpell,level:e.target.value})} placeholder="环位（0=戏法）" className="input-field text-xs" />
@@ -1059,50 +1222,56 @@ export default function GameScreen() {
                   <input value={dmSpell.duration} onChange={e=>setDmSpell({...dmSpell,duration:e.target.value})} placeholder="持续时间（立即/专注）" className="input-field text-xs" />
                   <input value={dmSpell.classes} onChange={e=>setDmSpell({...dmSpell,classes:e.target.value})} placeholder="职业（术士、法师）" className="input-field text-xs" />
                 </div>
-                <label className="flex items-center gap-2 text-[10px] text-gray-500">
+                <label className="flex items-center gap-2 text-[10px] text-ink-500">
                   <input type="checkbox" checked={dmSpell.ritual} onChange={e=>setDmSpell({...dmSpell,ritual:e.target.checked})} /> 仪式法术
                 </label>
                 <textarea value={dmSpell.description} onChange={e=>setDmSpell({...dmSpell,description:e.target.value})} placeholder="效果描述（含伤害、豁免、升环效应）" rows={3} className="input-field text-xs resize-none w-full" />
-                <button onClick={()=>{addDmSpell(); setShowSpellBuilder(false);}} className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">保存到当前剧本法术库</button>
+                <button onClick={()=>{addDmSpell(); setShowSpellBuilder(false);}} className="btn-xs-paper mt-1">保存到当前剧本法术库</button>
               </div>
             )}
-            {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && <div className="text-center py-6 text-gray-400 text-xs space-y-1"><p className="text-base">✨</p><p>没有找到法术。</p><p className="text-[9px] text-gray-300">{currentSid && !showGlobalRefSpells && scenarioSpells.length===0 ? '当前剧本暂无法术图鉴；点击“显示通用参考”查看通用库。' : '可以调整搜索，或先导入法术图鉴 / 自建法术'}</p></div>}
+            {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).length===0 && (
+              <EmptyState
+                icon="✨"
+                title="没有找到法术"
+                hint={currentSid && !showGlobalRefSpells && scenarioSpells.length===0 ? '当前剧本暂无法术图鉴；点击右上角「通用参考」查看通用库。' : '可以调整搜索，或先导入法术图鉴 / 自建法术'}
+              />
+            )}
             {scopedSpells.filter(s=>!spellQuery || `${s.name_zh||s.name} ${s.school} ${s.level} ${s.description_zh||s.description} ${s.description}`.toLowerCase().includes(spellQuery.toLowerCase())).map(s=>(
-              <details key={s.id} className="group mb-2 border-2 border-amber-900/30 rounded-lg p-2.5 bg-[#fffdf5]">
+              <details key={s.id} className="group entry-card p-2.5 mb-2">
                 <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2 min-w-0">
-                    <span className="paper-title text-sm font-bold truncate">{s.name_zh||s.name}：{Number(s.level)===0?'戏法':`${s.level}环`} {s.school}{s.name_zh&&s.name_zh!==s.name?<span className="text-gray-400 font-normal">（{s.name}）</span>:null}</span>
-                    <span className={`text-[8px] px-1.5 py-0.5 rounded-full border shrink-0 ${s.scenario_id ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>{s.scenario_id ? '当前剧本' : '通用参考'}</span>
+                    <span className="paper-title text-sm font-bold truncate">{s.name_zh||s.name}：{Number(s.level)===0?'戏法':`${s.level}环`} {s.school}{s.name_zh&&s.name_zh!==s.name?<span className="text-ink-400 font-normal">（{s.name}）</span>:null}</span>
+                    <span className={`scope-badge ${s.scenario_id ? 'scope-badge-scenario' : 'scope-badge-global'}`}>{s.scenario_id ? '当前剧本' : '通用参考'}</span>
                   </span>
-                  <span className="text-[9px] text-gray-400 shrink-0">{s.ritual?'仪式 · ':''}{s.classes.length>0?`${s.classes.join('、')} · `:''}<span className="group-open:hidden">▸ 详情</span><span className="hidden group-open:inline">▾</span></span>
+                  <span className="text-[9px] text-ink-400 shrink-0">{s.ritual?'仪式 · ':''}{s.classes.length>0?`${s.classes.join('、')} · `:''}<span className="group-open:hidden">▸ 详情</span><span className="hidden group-open:inline">▾</span></span>
                 </summary>
-                <div className="mt-2 pt-2 border-t border-amber-900/10 text-[10px] text-gray-600 space-y-1">
-                  {s.casting_time&&<p><span className="text-gray-400">施法时间：</span>{s.casting_time}</p>}
-                  {s.range&&<p><span className="text-gray-400">施法距离：</span>{s.range}</p>}
-                  {s.components&&<p><span className="text-gray-400">法术成分：</span>{s.components}</p>}
-                  {s.duration&&<p><span className="text-gray-400">持续时间：</span>{s.duration}</p>}
-                  {(s.description_zh||s.description)&&<p className="text-gray-700 whitespace-pre-line">{s.description_zh||s.description}</p>}
-                  {s.description_zh&&s.description&&<p className="text-gray-400 italic whitespace-pre-line">原文：{s.description}</p>}
+                <div className="mt-2 pt-2 border-t border-amber-900/10 text-[10px] text-ink-600 space-y-1">
+                  {s.casting_time&&<p><span className="text-ink-400">施法时间：</span>{s.casting_time}</p>}
+                  {s.range&&<p><span className="text-ink-400">施法距离：</span>{s.range}</p>}
+                  {s.components&&<p><span className="text-ink-400">法术成分：</span>{s.components}</p>}
+                  {s.duration&&<p><span className="text-ink-400">持续时间：</span>{s.duration}</p>}
+                  {(s.description_zh||s.description)&&<p className="text-ink-700 whitespace-pre-line">{s.description_zh||s.description}</p>}
+                  {s.description_zh&&s.description&&<p className="text-ink-400 italic whitespace-pre-line">原文：{s.description}</p>}
                 </div>
               </details>
             ))}
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* DM 工具：新增角色/地点/生物 */}
-      {showDmTools && (
-        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowDmTools(false)}>
-          <div className="paper-card rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="paper-title text-lg font-bold">DM 工具</h3>
-              <button onClick={()=>setShowDmTools(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
-            </div>
+      <Modal
+        open={showDmTools}
+        onClose={() => setShowDmTools(false)}
+        paper
+        size="md"
+        icon="🛠️"
+        title="DM 工具"
+        subtitle="手动补充角色 / 地点 / 生物 / 法术，立即写入当前剧本图鉴"
+      >
 
             {/* 低 token 快捷工具说明 */}
             <div className="mb-4 border-b border-amber-900/10 pb-3">
-              <p className="text-xs font-bold text-gray-700 mb-1">DM 低 token 快捷工具（Function Calling）</p>
-              <p className="text-[10px] text-gray-500 leading-relaxed">
+              <p className="text-xs font-bold text-ink-700 mb-1">DM 低 token 快捷工具（Function Calling）</p>
+              <p className="text-[10px] text-ink-500 leading-relaxed">
                 get_character_state（查状态）· adjust_resource（资源增减）· cast_spell（扣法术位）·
                 learn_spell / forget_spell（习得/遗忘法术）· search_npcs（查NPC）· adjust_npc（NPC数值增减）·
                 search_bestiary / adjust_bestiary（查/改生物）· search_spells（查法术）
@@ -1111,7 +1280,7 @@ export default function GameScreen() {
 
             {/* 新增角色/NPC */}
             <div className="mb-4 border-b border-amber-900/10 pb-3">
-              <p className="text-xs font-bold text-gray-700 mb-2">新增角色 / NPC</p>
+              <p className="text-xs font-bold text-ink-700 mb-2">新增角色 / NPC</p>
               <div className="grid grid-cols-2 gap-2">
                 <input value={dmNpc.name} onChange={e=>setDmNpc({...dmNpc,name:e.target.value})} placeholder="名称 *" className="input-field text-xs" />
                 <input value={dmNpc.role} onChange={e=>setDmNpc({...dmNpc,role:e.target.value})} placeholder="身份" className="input-field text-xs" />
@@ -1121,24 +1290,24 @@ export default function GameScreen() {
                   <input type="number" value={dmNpc.ac} onChange={e=>setDmNpc({...dmNpc,ac:Number(e.target.value)||10})} placeholder="AC" className="input-field text-xs" />
                 </div>
               </div>
-              <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmNpcImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-gray-500" />
+              <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmNpcImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-ink-500" />
               <button onClick={addDmNpc} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增角色</button>
             </div>
 
             {/* 新增地点 */}
             <div className="mb-4 border-b border-amber-900/10 pb-3">
-              <p className="text-xs font-bold text-gray-700 mb-2">新增地点</p>
+              <p className="text-xs font-bold text-ink-700 mb-2">新增地点</p>
               <div className="grid grid-cols-1 gap-2">
                 <input value={dmMap.name} onChange={e=>setDmMap({...dmMap,name:e.target.value})} placeholder="地点名称 *" className="input-field text-xs" />
                 <textarea value={dmMap.description} onChange={e=>setDmMap({...dmMap,description:e.target.value})} placeholder="描述" rows={2} className="input-field text-xs resize-none" />
               </div>
-              <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmMapImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-gray-500" />
+              <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmMapImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-ink-500" />
               <button onClick={addDmMap} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增地点</button>
             </div>
 
             {/* 新增生物 */}
             <div>
-              <p className="text-xs font-bold text-gray-700 mb-2">新增生物（完整字段请在生物图鉴弹窗内填写）</p>
+              <p className="text-xs font-bold text-ink-700 mb-2">新增生物（完整字段请在生物图鉴弹窗内填写）</p>
               <div className="grid grid-cols-2 gap-2">
                 <input value={dmBeast.name} onChange={e=>setDmBeast({...dmBeast,name:e.target.value})} placeholder="生物名称 *" className="input-field text-xs" />
                 <input value={dmBeast.tags} onChange={e=>setDmBeast({...dmBeast,tags:e.target.value})} placeholder="标签" className="input-field text-xs" />
@@ -1146,13 +1315,13 @@ export default function GameScreen() {
                 <input value={dmBeast.hp} onChange={e=>setDmBeast({...dmBeast,hp:e.target.value})} placeholder="HP" className="input-field text-xs" />
               </div>
               <textarea value={dmBeast.description} onChange={e=>setDmBeast({...dmBeast,description:e.target.value})} placeholder="描述" rows={2} className="input-field text-xs resize-none mt-2 w-full" />
-              <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmBeastImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-gray-500" />
+              <input type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e=>setDmBeastImage(e.target.files?.[0]||null)} className="block w-full text-[10px] mt-2 text-ink-500" />
               <button onClick={addDmBeast} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增生物</button>
             </div>
 
             {/* 新增法术/仪式（玩家/DM 自建） */}
             <div className="mt-4 pt-3 border-t border-amber-900/10">
-              <p className="text-xs font-bold text-gray-700 mb-2">新增法术 / 仪式（玩家或 DM 自建）</p>
+              <p className="text-xs font-bold text-ink-700 mb-2">新增法术 / 仪式（玩家或 DM 自建）</p>
               <div className="grid grid-cols-2 gap-2">
                 <input value={dmSpell.name} onChange={e=>setDmSpell({...dmSpell,name:e.target.value})} placeholder="法术名称 *" className="input-field text-xs" />
                 <input value={dmSpell.level} onChange={e=>setDmSpell({...dmSpell,level:e.target.value})} placeholder="环位（0=戏法）" className="input-field text-xs" />
@@ -1162,33 +1331,30 @@ export default function GameScreen() {
                 <input value={dmSpell.components} onChange={e=>setDmSpell({...dmSpell,components:e.target.value})} placeholder="成分（V、S、M）" className="input-field text-xs" />
                 <input value={dmSpell.duration} onChange={e=>setDmSpell({...dmSpell,duration:e.target.value})} placeholder="持续时间（立即/专注）" className="input-field text-xs" />
                 <input value={dmSpell.classes} onChange={e=>setDmSpell({...dmSpell,classes:e.target.value})} placeholder="职业（术士、法师）" className="input-field text-xs" />
-                <label className="col-span-2 flex items-center gap-2 text-[10px] text-gray-500">
+                <label className="col-span-2 flex items-center gap-2 text-[10px] text-ink-500">
                   <input type="checkbox" checked={dmSpell.ritual} onChange={e=>setDmSpell({...dmSpell,ritual:e.target.checked})} /> 仪式法术
                 </label>
                 <textarea value={dmSpell.description} onChange={e=>setDmSpell({...dmSpell,description:e.target.value})} placeholder="效果描述（含伤害、豁免、升环效应）" rows={3} className="input-field text-xs resize-none col-span-2" />
               </div>
               <button onClick={addDmSpell} className="mt-2 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg border border-amber-200 hover:bg-amber-100">新增法术</button>
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* 知识图谱（玩家视角，未暴露信息显示 ???） */}
-      {showGraph && (
-        <div className="fixed inset-0 z-[75] bg-black/40 flex items-center justify-center p-4" onClick={()=>setShowGraph(false)}>
-          <div className="paper-card rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-5" onClick={e=>e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="paper-title text-lg font-bold">关系图谱（玩家视角）</h3>
-                <p className="text-[10px] text-gray-400">点击节点查看局部关系；鼠标悬停高亮关联。</p>
-              </div>
-              <div className="flex items-center gap-2">
-                {graphFocusId && (
-                  <button onClick={()=>openGraph(undefined, '')} className="text-xs px-2.5 py-1 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">返回全图</button>
-                )}
-                <button onClick={()=>setShowGraph(false)} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
-              </div>
-            </div>
+      <Modal
+        open={showGraph}
+        onClose={() => setShowGraph(false)}
+        paper
+        size="3xl"
+        icon="🕸️"
+        title="关系图谱（玩家视角）"
+        subtitle="拖动平移 · 滚轮缩放 · 双击复位；点击节点查看局部关系"
+        headExtra={
+          graphFocusId ? (
+            <button onClick={()=>openGraph(undefined, '')} className="btn-xs-success">返回全图</button>
+          ) : undefined
+        }
+      >
 
             <div className="flex gap-2 mb-2">
               <input
@@ -1200,35 +1366,68 @@ export default function GameScreen() {
               />
               <button onClick={()=>openGraph(undefined, graphQuery)} className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200 hover:bg-emerald-100">搜索</button>
               {(graphSearchIds.length > 0 || graphQuery) && (
-                <button onClick={()=>{ setGraphSearchIds([]); setGraphSearchEmpty(false); setGraphQuery(''); }} className="text-xs px-2.5 py-1.5 text-gray-400 hover:text-gray-600">清除</button>
+                <button onClick={()=>{ setGraphSearchIds([]); setGraphSearchEmpty(false); setGraphQuery(''); }} className="text-xs px-2.5 py-1.5 text-ink-400 hover:text-ink-600">清除</button>
               )}
             </div>
 
             {graphSearchEmpty && (
-              <p className="text-[10px] text-gray-400 mb-2">未找到匹配节点，已显示全部节点。</p>
+              <p className="text-[10px] text-ink-400 mb-2">未找到匹配节点，已显示全部节点。</p>
             )}
 
             <div className="flex flex-wrap items-center gap-1.5 mb-2">
               {([['all','全部'],['npc','角色'],['location','地点'],['plot','剧情'],['creature','生物'],['other','其他']] as const).map(([k,label])=>(
-                <button key={k} onClick={()=>setGraphTypeFilter(k)} className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${graphTypeFilter===k?'border-indigo-300 bg-indigo-50 text-indigo-700':'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>{label}</button>
+                <button key={k} onClick={()=>setGraphTypeFilter(k)} aria-pressed={graphTypeFilter===k} className={`chip ${graphTypeFilter===k?'chip-active':''}`}>{label}</button>
               ))}
               <span className="ml-auto flex items-center gap-1">
-                <button onClick={()=>setGraphZoom(z=>Math.max(0.6, +(z-0.2).toFixed(2)))} className="w-6 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-50">－</button>
-                <button onClick={()=>setGraphZoom(1)} className="text-[10px] px-2 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-50">重置</button>
-                <button onClick={()=>setGraphZoom(z=>Math.min(2, +(z+0.2).toFixed(2)))} className="w-6 h-6 rounded border border-gray-200 text-gray-500 hover:bg-gray-50">＋</button>
+                <button onClick={()=>zoomGraphAt(graphZoom-0.2, { x: GRAPH_W/2, y: GRAPH_H/2 })} className="icon-btn" aria-label="缩小" title="缩小">－</button>
+                <button onClick={()=>{ setGraphZoom(1); setGraphPan({ x: 0, y: 0 }); }} className="text-2xs px-2 h-7 rounded-lg border border-ink-200 text-ink-500 hover:bg-ink-50 transition-colors">重置</button>
+                <button onClick={()=>zoomGraphAt(graphZoom+0.2, { x: GRAPH_W/2, y: GRAPH_H/2 })} className="icon-btn" aria-label="放大" title="放大">＋</button>
               </span>
             </div>
 
             {graphView.truncated && (
-              <p className="text-[10px] text-amber-600 mb-2">节点较多，已显示关联最多的 {graphView.visibleNodes.length}/{graphView.total} 个；点击节点可查看局部关系。</p>
+              <p className="text-[10px] text-amber-700 mb-2">节点较多，已显示关联最多的 {graphView.visibleNodes.length}/{graphView.total} 个；点击节点可查看局部关系。</p>
             )}
 
             <div className="border border-gray-200 rounded-xl bg-white overflow-hidden">
               {graphView.visibleNodes.length === 0 ? (
-                <div className="h-64 flex items-center justify-center text-xs text-gray-400">没有符合条件的节点。可以搜索节点，或切换类型筛选。</div>
+                <div className="h-64 flex items-center justify-center">
+                  <EmptyState icon="🕸️" title="没有符合条件的节点" hint="可以搜索节点名，或切换上方类型筛选。" />
+                </div>
               ) : (
-                <svg viewBox="0 0 800 560" className="w-full h-auto" style={{maxHeight:'58vh'}}>
-                  <g transform={`translate(${400*(1-graphZoom)} ${280*(1-graphZoom)}) scale(${graphZoom})`}>
+                <svg
+                  ref={graphSvgRef}
+                  viewBox={`0 0 ${GRAPH_W} ${GRAPH_H}`}
+                  className="w-full h-auto touch-none select-none cursor-grab active:cursor-grabbing"
+                  style={{ maxHeight: '76vh' }}
+                  onPointerDown={(e)=>{
+                    if(e.button!==0) return;
+                    const svg=graphSvgRef.current;
+                    if(!svg) return;
+                    graphSuppressClickRef.current=false;
+                    graphDragRef.current={dragging:true,startX:e.clientX,startY:e.clientY,startPanX:graphPan.x,startPanY:graphPan.y,moved:false};
+                    try{svg.setPointerCapture(e.pointerId);}catch{}
+                  }}
+                  onPointerMove={(e)=>{
+                    const st=graphDragRef.current;
+                    if(!st?.dragging) return;
+                    const dx=e.clientX-st.startX, dy=e.clientY-st.startY;
+                    if(Math.abs(dx)+Math.abs(dy)>4){ st.moved=true; graphSuppressClickRef.current=true; }
+                    const svg=graphSvgRef.current;
+                    if(!svg) return;
+                    const rect=svg.getBoundingClientRect();
+                    const sx=GRAPH_W/Math.max(1,rect.width), sy=GRAPH_H/Math.max(1,rect.height);
+                    setGraphPan({ x: st.startPanX+dx*sx, y: st.startPanY+dy*sy });
+                  }}
+                  onPointerUp={(e)=>{
+                    const st=graphDragRef.current;
+                    if(st) st.dragging=false;
+                    try{graphSvgRef.current?.releasePointerCapture(e.pointerId);}catch{}
+                  }}
+                  onPointerCancel={()=>{ if(graphDragRef.current) graphDragRef.current.dragging=false; }}
+                  onDoubleClick={()=>{ setGraphZoom(1); setGraphPan({ x:0, y:0 }); }}
+                >
+                  <g transform={`translate(${graphPan.x} ${graphPan.y}) scale(${graphZoom})`}>
                     {graphView.visibleEdges.map((e, i) => {
                       const p1 = graphView.layout.get(e.source);
                       const p2 = graphView.layout.get(e.target);
@@ -1247,7 +1446,7 @@ export default function GameScreen() {
                             strokeDasharray={hidden ? '4 3' : undefined}
                             opacity={hasActive ? (related ? 1 : 0.12) : 0.45} />
                           {!hidden && related && showRelation && (
-                            <text x={mx} y={my - 4} textAnchor="middle" fill="#9ca3af" fontSize="9"
+                            <text x={mx} y={my - 5} textAnchor="middle" fill="#9ca3af" fontSize="10.5"
                               stroke="#ffffff" strokeWidth="2.5" paintOrder="stroke" strokeLinejoin="round">{e.relation}</text>
                           )}
                           <title>{e.relation}{e.strength ? ` · 亲密度${e.strength}` : ''}{e.confidence ? ` · 置信度${e.confidence}` : ''}</title>
@@ -1263,10 +1462,13 @@ export default function GameScreen() {
                       const focused = n.id === graphFocusId;
                       const matched = graphSearchIds.includes(n.id);
                       const showLabel = graphView.visibleNodes.length <= 16 || active || focused || matched;
-                      const r = focused ? 22 : hidden ? 9 : matched ? 17 : 14;
+                      const r = focused ? 26 : hidden ? 10 : matched ? 20 : 17;
                       return (
                         <g key={n.id}
-                          onClick={()=>{ if (!hidden) openGraph(n.id, ''); }}
+                          onClick={()=>{
+                            if (graphSuppressClickRef.current) { graphSuppressClickRef.current=false; return; }
+                            if (!hidden) openGraph(n.id, '');
+                          }}
                           onMouseEnter={()=>setGraphHoverId(n.id)}
                           onMouseLeave={()=>setGraphHoverId(null)}
                           className={hidden ? 'cursor-default' : 'cursor-pointer'}
@@ -1276,14 +1478,14 @@ export default function GameScreen() {
                           <circle cx={p.x} cy={p.y} r={r}
                             fill={fill}
                             stroke={hidden ? '#9ca3af' : focused ? '#4f46e5' : matched ? '#f59e0b' : '#6366f1'}
-                            strokeWidth={focused ? 3 : hidden ? 1 : matched ? 2.4 : 1.8} />
+                            strokeWidth={focused ? 3.5 : hidden ? 1 : matched ? 2.8 : 2} />
                           {showLabel && (
-                            <text x={p.x} y={p.y + r + 12} textAnchor="middle" fontSize={focused ? 11 : 9}
+                            <text x={p.x} y={p.y + r + 14} textAnchor="middle" fontSize={focused ? 13 : 11}
                               fill={hidden ? '#9ca3af' : '#1f2937'} fontWeight="bold"
                               stroke="#ffffff" strokeWidth="3" paintOrder="stroke" strokeLinejoin="round">{n.label}</text>
                           )}
                           {focused && n.extra && (
-                            <text x={p.x} y={p.y + r + 25} textAnchor="middle" fontSize="8" fill="#6b7280">{n.extra.slice(0, 18)}</text>
+                            <text x={p.x} y={p.y + r + 28} textAnchor="middle" fontSize="9.5" fill="#6b7280">{n.extra.slice(0, 18)}</text>
                           )}
                         </g>
                       );
@@ -1293,16 +1495,14 @@ export default function GameScreen() {
               )}
             </div>
 
-            <div className="flex items-center gap-3 mt-2 text-[10px] text-gray-400">
+            <div className="flex items-center gap-3 mt-2 text-[10px] text-ink-400">
               <span><span className="inline-block w-2.5 h-2.5 rounded-full align-middle mr-1" style={{background:GRAPH_COLORS.npc}} />角色</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-full align-middle mr-1" style={{background:GRAPH_COLORS.location}} />地点</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-full align-middle mr-1" style={{background:GRAPH_COLORS.plot}} />剧情</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-full align-middle mr-1" style={{background:GRAPH_COLORS.creature}} />生物</span>
               <span className="ml-auto">灰色虚线 = 关联未暴露</span>
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }

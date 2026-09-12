@@ -27,6 +27,18 @@ class User(Base):
     characters: Mapped[list["Character"]] = relationship(back_populates="user")
 
 
+class UserAccount(Base):
+    """本地登录账号表——与游戏用户表隔离，只保存密码派生值。"""
+    __tablename__ = "user_accounts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_gen_id)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    password_salt: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Character(Base):
     """角色表——TRPG 角色数据（属性、背包、状态等）。"""
     __tablename__ = "characters"

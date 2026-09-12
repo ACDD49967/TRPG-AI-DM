@@ -161,7 +161,7 @@ class TestSaveManager(unittest.TestCase):
                 state = GameSessionState(
                     session_id="s1", character_id="c1", character_name="测试",
                     character_info={"game_system": "dnd5e"},
-                    api_key="sk-secret-should-not-be-saved",
+                    api_key="test-only-fake-api-key",
                     model_name="m",
                 )
                 state._death_saves = DeathSaves(successes=1, failures=2)

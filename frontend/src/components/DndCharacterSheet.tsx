@@ -46,7 +46,7 @@ function weaponDice(name: string): string {
   return '1d8';
 }
 
-export default function DndCharacterSheet({ onClose }: { onClose?: () => void }) {
+export default function DndCharacterSheet({ onClose, embedded = false }: { onClose?: () => void; embedded?: boolean }) {
   const { status } = useGameStore();
   const attrs = status.attributes || {};
   const keys = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
@@ -62,40 +62,40 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
   const spellSlots = status.spell_slots;
 
   return (
-    <div className="paper-card rounded-xl max-w-3xl w-full max-h-[88vh] overflow-y-auto p-5 text-gray-900">
+    <div className={embedded ? 'text-ink-900' : 'paper-card rounded-xl max-w-3xl w-full max-h-[88vh] overflow-y-auto p-5 text-ink-900'}>
       {/* 顶部信息 */}
       <div className="flex items-start justify-between border-b-2 border-amber-900/30 pb-3">
         <div>
           <h3 className="paper-title text-2xl font-black tracking-wide">{status.character_name || '冒险者'}</h3>
-          <p className="text-xs text-gray-600 mt-1">
+          <p className="text-xs text-ink-600 mt-1">
             {status.race || '?'} · {status.char_class || '?'} · Lv.{status.level} · {status.game_system === 'dnd4e' ? 'D&D 4e' : 'D&D 5e'}
           </p>
         </div>
         <div className="flex items-start gap-3">
           <div className="text-right">
             <div className="paper-title text-4xl font-black text-amber-900/80">{status.ac ?? 10}</div>
-            <p className="text-[10px] uppercase tracking-widest text-gray-500">护甲等级</p>
+            <p className="text-[10px] uppercase tracking-widest text-ink-500">护甲等级</p>
           </div>
-          {onClose && <button onClick={onClose} className="text-xs text-gray-400 hover:text-gray-600">关闭</button>}
+          {onClose && !embedded && <button onClick={onClose} className="text-xs text-ink-400 hover:text-ink-600">关闭</button>}
         </div>
       </div>
 
       {/* 核心数值 */}
       <div className="grid grid-cols-4 gap-2 mt-3">
         <div className="bg-amber-50/70 border border-amber-900/20 rounded-lg p-2 text-center">
-          <p className="text-[10px] uppercase tracking-widest text-gray-500">生命值</p>
+          <p className="text-[10px] uppercase tracking-widest text-ink-500">生命值</p>
           <p className="paper-title text-xl font-bold">{status.hp}/{status.maxHp}</p>
         </div>
         <div className="bg-amber-50/70 border border-amber-900/20 rounded-lg p-2 text-center">
-          <p className="text-[10px] uppercase tracking-widest text-gray-500">先攻</p>
+          <p className="text-[10px] uppercase tracking-widest text-ink-500">先攻</p>
           <p className="paper-title text-xl font-bold">{mod(Number(attrs.dex ?? 10))}</p>
         </div>
         <div className="bg-amber-50/70 border border-amber-900/20 rounded-lg p-2 text-center">
-          <p className="text-[10px] uppercase tracking-widest text-gray-500">速度</p>
+          <p className="text-[10px] uppercase tracking-widest text-ink-500">速度</p>
           <p className="paper-title text-xl font-bold">{speed}</p>
         </div>
         <div className="bg-amber-50/70 border border-amber-900/20 rounded-lg p-2 text-center">
-          <p className="text-[10px] uppercase tracking-widest text-gray-500">熟练加值</p>
+          <p className="text-[10px] uppercase tracking-widest text-ink-500">熟练加值</p>
           <p className="paper-title text-xl font-bold">+{prof}</p>
         </div>
       </div>
@@ -103,11 +103,11 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
       {/* 被动感知 */}
       <div className="mt-2 grid grid-cols-2 gap-2">
         <div className="bg-white/70 border border-amber-900/20 rounded-lg p-2 text-center">
-          <p className="text-[10px] uppercase tracking-widest text-gray-500">被动感知</p>
+          <p className="text-[10px] uppercase tracking-widest text-ink-500">被动感知</p>
           <p className="paper-title text-lg font-bold">{status.passive_perception ?? (10 + mod(Number(attrs.wis ?? 10)).replace('+',''))}</p>
         </div>
         <div className="bg-white/70 border border-amber-900/20 rounded-lg p-2 text-center">
-          <p className="text-[10px] uppercase tracking-widest text-gray-500">生命骰</p>
+          <p className="text-[10px] uppercase tracking-widest text-ink-500">生命骰</p>
           <p className="paper-title text-lg font-bold">{status.hit_die || '1d8'}</p>
         </div>
       </div>
@@ -118,27 +118,27 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
           {(status.class_resources || []).map((r, i) => (
             <details key={r.key || i} className="group bg-white/70 border border-amber-900/20 rounded-lg p-2">
               <summary className="cursor-pointer flex items-baseline justify-between">
-                <p className="text-[10px] uppercase tracking-widest text-gray-500">{r.name}<span className="ml-1 group-open:hidden">▸</span></p>
+                <p className="text-[10px] uppercase tracking-widest text-ink-500">{r.name}<span className="ml-1 group-open:hidden">▸</span></p>
                 <p className="paper-title text-lg font-bold">{r.current}/{r.max}</p>
               </summary>
-              {r.desc ? <p className="text-[9px] text-gray-500 mt-1 pt-1 border-t border-amber-900/10">{r.desc}</p> : null}
+              {r.desc ? <p className="text-[9px] text-ink-500 mt-1 pt-1 border-t border-amber-900/10">{r.desc}</p> : null}
             </details>
           ))}
           {status.game_system === 'dnd4e' && (
             <>
               <div className="bg-white/70 border border-amber-900/20 rounded-lg p-2">
                 <div className="flex items-baseline justify-between">
-                  <p className="text-[10px] uppercase tracking-widest text-gray-500">行动点</p>
+                  <p className="text-[10px] uppercase tracking-widest text-ink-500">行动点</p>
                   <p className="paper-title text-lg font-bold">{status.action_points ?? 1}</p>
                 </div>
-                <p className="text-[9px] text-gray-500 mt-0.5">长休重置为 1，里程碑 +1</p>
+                <p className="text-[9px] text-ink-500 mt-0.5">长休重置为 1，里程碑 +1</p>
               </div>
               <div className="bg-white/70 border border-amber-900/20 rounded-lg p-2">
                 <div className="flex items-baseline justify-between">
-                  <p className="text-[10px] uppercase tracking-widest text-gray-500">回复力</p>
+                  <p className="text-[10px] uppercase tracking-widest text-ink-500">回复力</p>
                   <p className="paper-title text-lg font-bold">{status.healing_surges ?? 0}/{status.max_healing_surges ?? 0}</p>
                 </div>
-                <p className="text-[9px] text-gray-500 mt-0.5">每次回复 {status.surge_value ?? 0} HP</p>
+                <p className="text-[9px] text-ink-500 mt-0.5">每次回复 {status.surge_value ?? 0} HP</p>
               </div>
             </>
           )}
@@ -153,9 +153,9 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
             const v = Number(attrs[k] ?? 10);
             return (
               <div key={k} className="bg-white border-2 border-amber-900/30 rounded-lg py-2 text-center shadow-sm">
-                <p className="text-[9px] uppercase tracking-widest text-gray-400">{ATTR_CN[k]}</p>
+                <p className="text-[9px] uppercase tracking-widest text-ink-400">{ATTR_CN[k]}</p>
                 <p className="paper-title text-2xl font-black">{mod(v)}</p>
-                <p className="text-sm text-gray-600 mt-0.5">{v}</p>
+                <p className="text-sm text-ink-600 mt-0.5">{v}</p>
               </div>
             );
           })}
@@ -172,7 +172,7 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
               if (!s) return null;
               return (
                 <div key={k} className="bg-white/70 border border-amber-900/20 rounded-lg p-1.5 text-center">
-                  <p className="text-[9px] uppercase tracking-widest text-gray-400">{ATTR_CN[k]}</p>
+                  <p className="text-[9px] uppercase tracking-widest text-ink-400">{ATTR_CN[k]}</p>
                   <p className="paper-title text-lg font-bold">
                     {s.value >= 0 ? `+${s.value}` : s.value}
                     {s.proficient && <span className="ml-1 text-[9px] text-amber-700">●</span>}
@@ -194,7 +194,7 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
               const am = Math.floor((Number(attrs[a] ?? 10) - 10) / 2);
               return (
                 <div key={i} className="bg-white/70 border border-amber-900/20 rounded px-2 py-1 flex items-center justify-between">
-                  <span className="text-[10px] text-gray-600">{s} <span className="text-gray-400">({ATTR_CN[a]})</span></span>
+                  <span className="text-[10px] text-ink-600">{s} <span className="text-ink-400">({ATTR_CN[a]})</span></span>
                   <span className="paper-title text-sm font-bold">{am + prof >= 0 ? `+${am + prof}` : am + prof}</span>
                 </div>
               );
@@ -208,8 +208,8 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
         <div className="mt-4 bg-white/70 border border-amber-900/20 rounded-lg p-3">
           <p className="section-label mb-1">特性 / 特长 / 背景特征</p>
           <div className="space-y-1">
-            {(status.race_traits || []).map((t, i) => <p key={i} className="text-[10px] text-gray-600">· {t}</p>)}
-            {(status.class_proficiencies || []).map((t, i) => <p key={i} className="text-[10px] text-gray-600">· {t}</p>)}
+            {(status.race_traits || []).map((t, i) => <p key={i} className="text-[10px] text-ink-600">· {t}</p>)}
+            {(status.class_proficiencies || []).map((t, i) => <p key={i} className="text-[10px] text-ink-600">· {t}</p>)}
             {(status.feats || []).map((f, i) => <p key={i} className="text-[10px] text-amber-800">· {f.name}</p>)}
           </div>
         </div>
@@ -227,8 +227,8 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
               const atkMod = Math.floor((Number(attrs[attrKey] ?? 10) - 10) / 2) + prof;
               return (
                 <div key={i} className="flex items-center justify-between border-b border-gray-100 py-0.5 last:border-0">
-                  <span className="text-[10px] text-gray-700">{name}</span>
-                  <span className="text-[10px] text-gray-500 font-mono">
+                  <span className="text-[10px] text-ink-700">{name}</span>
+                  <span className="text-[10px] text-ink-500 font-mono">
                     d20{atkMod >= 0 ? `+${atkMod}` : atkMod} · {weaponDice(name)}+{Math.floor((Number(attrs[attrKey] ?? 10) - 10) / 2)} 伤害
                   </span>
                 </div>
@@ -243,7 +243,7 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
         <div className="mt-4 bg-white/70 border border-amber-900/20 rounded-lg p-3">
           <p className="section-label mb-2">施法</p>
           {spellSlots && (
-          <div className="text-[10px] text-gray-700 space-y-0.5">
+          <div className="text-[10px] text-ink-700 space-y-0.5">
             <p>施法属性：{ATTR_CN[castAttr] || castAttr}</p>
             <p>法术攻击加值：d20{castMod + prof >= 0 ? `+${castMod + prof}` : castMod + prof}</p>
             <p>法术豁免 DC：{8 + castMod + prof}（8 + 熟练{prof >= 0 ? `+${prof}` : prof} + {ATTR_CN[castAttr] || castAttr}调整{castMod >= 0 ? `+${castMod}` : castMod}）</p>
@@ -263,7 +263,7 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
           <div className="mt-2 space-y-1">
             <p className="section-label">已习得法术（{(status.known_spells || []).length}）</p>
             {(status.known_spells || []).length === 0 && (
-              <p className="text-[10px] text-gray-400">暂无。习得新法术后会自动出现在这里，点开可查看完整效果。</p>
+              <p className="text-[10px] text-ink-400">暂无。习得新法术后会自动出现在这里，点开可查看完整效果。</p>
             )}
             {(status.known_spells || []).map(s => <SpellCard key={s.name} spell={s} paper />)}
           </div>
@@ -274,11 +274,11 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
       <div className="mt-4 grid grid-cols-2 gap-2">
         <div className="bg-white/70 border border-amber-900/20 rounded-lg p-3">
           <p className="section-label mb-1">防具</p>
-          {armor.length === 0 ? <p className="text-[10px] text-gray-300">—</p> : armor.map((a, i) => <p key={i} className="text-[10px] text-gray-700">{invName(a)}</p>)}
+          {armor.length === 0 ? <p className="text-[10px] text-gray-300">—</p> : armor.map((a, i) => <p key={i} className="text-[10px] text-ink-700">{invName(a)}</p>)}
         </div>
         <div className="bg-white/70 border border-amber-900/20 rounded-lg p-3">
           <p className="section-label mb-1">物品</p>
-          {misc.length === 0 ? <p className="text-[10px] text-gray-300">—</p> : misc.slice(0, 8).map((m, i) => <p key={i} className="text-[10px] text-gray-700">{invName(m)}</p>)}
+          {misc.length === 0 ? <p className="text-[10px] text-gray-300">—</p> : misc.slice(0, 8).map((m, i) => <p key={i} className="text-[10px] text-ink-700">{invName(m)}</p>)}
         </div>
       </div>
 
@@ -286,7 +286,7 @@ export default function DndCharacterSheet({ onClose }: { onClose?: () => void })
       {status.backstory ? (
         <div className="mt-4 bg-white/70 border border-amber-900/20 rounded-lg p-3">
           <p className="section-label mb-1">背景故事</p>
-          <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{status.backstory}</p>
+          <p className="text-xs text-ink-700 leading-relaxed whitespace-pre-wrap">{status.backstory}</p>
         </div>
       ) : null}
     </div>

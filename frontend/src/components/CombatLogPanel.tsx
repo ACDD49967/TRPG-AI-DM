@@ -1,47 +1,85 @@
 /** 战斗记录独立面板 —— 统一展示骰子判定、玩家攻击、敌人回合 */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
+
+const KIND_META = {
+  enemy: { icon: '敌', cls: 'bg-red-50 text-red-700 border-red-200', label: '敌人回合' },
+  dice: { icon: '骰', cls: 'bg-brand-50 text-brand-600 border-brand-200', label: '骰子判定' },
+  combat: { icon: '战', cls: 'bg-amber-50 text-amber-700 border-amber-200', label: '玩家行动' },
+} as const;
 
 export default function CombatLogPanel() {
   const combatLog = useGameStore((s) => s.combatLog);
   const clearCombatLog = useGameStore((s) => s.clearCombatLog);
-  const [collapsed, setCollapsed] = useState(false);
+  // 窄屏默认折叠：手机上固定区每多占 40px，叙事就少一行
+  const [collapsed, setCollapsed] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // 新记录到达时自动滚到底部，战斗中不必手动下拉
+  useEffect(() => {
+    if (!collapsed && listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
+    }
+  }, [combatLog.length, collapsed]);
 
   if (combatLog.length === 0 && collapsed) return null;
 
   return (
-    <div className="border-t border-gray-200 bg-white/70 backdrop-blur-sm">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-100">
-        <button onClick={() => setCollapsed((v) => !v)} className="text-xs font-bold text-gray-600 hover:text-gray-900 flex items-center gap-1">
-          <span className="text-red-500">⚔️</span> 战斗记录
-          <span className="text-[9px] text-gray-400">{combatLog.length}</span>
-          <span className="text-[9px] text-gray-300">{collapsed ? '展开' : '收起'}</span>
+    <div className="border-t border-ink-200 bg-white/70 backdrop-blur-sm flex-shrink-0">
+      <div className="flex items-center justify-between gap-2 px-4 py-1.5 mx-auto w-full max-w-3xl">
+        <button
+          onClick={() => setCollapsed((v) => !v)}
+          className="flex items-center gap-2 min-h-[28px] text-xs font-bold text-ink-600 hover:text-ink-900 transition-colors"
+          aria-expanded={!collapsed}
+        >
+          <span aria-hidden>⚔️</span>
+          战斗记录
+          {combatLog.length > 0 && (
+            <span className="text-2xs font-mono px-1.5 py-0.5 rounded-full bg-ink-100 text-ink-500">{combatLog.length}</span>
+          )}
+          <svg
+            viewBox="0 0 20 20"
+            fill="none"
+            className={`w-3.5 h-3.5 text-ink-400 transition-transform duration-200 ${collapsed ? '-rotate-90' : ''}`}
+            aria-hidden
+          >
+            <path d="M5 8l5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </button>
         {combatLog.length > 0 && (
-          <button onClick={clearCombatLog} className="text-[9px] text-gray-400 hover:text-red-500">清空</button>
+          <button onClick={clearCombatLog} className="text-2xs text-ink-400 hover:text-red-700 transition-colors min-h-[28px] px-2 -my-1 rounded-lg hover:bg-ink-50">
+            清空
+          </button>
         )}
       </div>
+
       {!collapsed && (
-        <div className="max-h-36 overflow-y-auto px-3 py-2 space-y-1.5">
+        <div
+          ref={listRef}
+          className="max-h-24 sm:max-h-40 overflow-y-auto px-4 pb-3 space-y-2 border-t border-ink-100 pt-2.5 mx-auto w-full max-w-3xl"
+        >
           {combatLog.length === 0 ? (
-            <p className="text-[10px] text-gray-300 py-2 text-center">暂无战斗记录</p>
+            <p className="text-2xs text-ink-400 py-3 text-center">暂无战斗记录</p>
           ) : (
-            combatLog.map((entry) => (
-              <div key={entry.id} className="flex items-start gap-2 text-[11px] leading-snug">
-                <span className={`shrink-0 mt-0.5 w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold ${
-                  entry.kind === 'enemy' ? 'bg-red-50 text-red-600 border border-red-100' :
-                  entry.kind === 'dice' ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' :
-                  'bg-amber-50 text-amber-700 border border-amber-100'
-                }`}>
-                  {entry.kind === 'enemy' ? '敌' : entry.kind === 'dice' ? '骰' : '战'}
-                </span>
-                <div className="min-w-0">
-                  <p className="text-gray-600 whitespace-pre-line">{entry.text}</p>
-                  <p className="text-[9px] text-gray-300">{entry.time}</p>
+            combatLog.map((entry) => {
+              const meta = KIND_META[entry.kind] || KIND_META.combat;
+              return (
+                <div key={entry.id} className="flex items-start gap-2.5">
+                  <span
+                    className={`shrink-0 mt-0.5 w-6 h-6 rounded-lg flex items-center justify-center text-2xs font-bold border ${meta.cls}`}
+                    title={meta.label}
+                    aria-label={meta.label}
+                  >
+                    {meta.icon}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-ink-700 whitespace-pre-line leading-relaxed">{entry.text}</p>
+                    <p className="text-3xs text-ink-500 font-mono mt-0.5">{entry.time}</p>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
