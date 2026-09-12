@@ -12,8 +12,6 @@ pypdf>=4.0.0
 python-docx>=1.1.0
 pymupdf>=1.24.0
 pdfplumber>=0.11.0
-paddleocr>=3.0.0
-paddlepaddle>=3.0.0
 json-repair>=0.30.0
 jieba>=0.42.1
 rank-bm25>=0.2.2
@@ -22,23 +20,26 @@ langgraph>=1.2.0
 pyyaml>=6.0
 
 # ── 可选依赖（默认不强制安装）────────────────────────────
+# OCR（PaddleOCR / PaddlePaddle）：体积大，且对 Python 版本 / 平台有要求，
+# 部分环境没有对应 wheel。默认不装；基础 PDF 文本提取由 PyMuPDF / pdfplumber 完成。
+# 需要扫描件 OCR 时运行：
+#     python scripts/install_runtime_deps.py --ocr
+# paddleocr>=3.0.0
+# paddlepaddle>=3.0.0
+#
+# PaddleLayout / PP-StructureV3 版面解析（在 OCR 基础上额外安装）：
+#     python scripts/install_runtime_deps.py --layout
+# paddlex[ocr]>=3.7.2
+#
 # PostgreSQL + pgvector：仅当使用 PostgreSQL 时安装
+#     python scripts/install_runtime_deps.py --pgvector
 # asyncpg>=0.29.0
 # pgvector>=0.3.0
 #
 # BGE-M3 GGUF / BGE-reranker-base：用户自选下载本地模型后安装
+#     python scripts/install_runtime_deps.py --bge
 # llama-cpp-python
 # FlagEmbedding
 #
-# PDF 扫描件 OCR（体积较大，按需安装）
-# paddleocr>=2.7.0
-# paddlepaddle>=2.6.0
-#
 # 旧版 .doc（二进制 Word 97-2003）在 Windows 上如需 Word COM 提取：
 # pywin32>=306
-#
-# v0.3.0 可选：PaddleLayout / PP-StructureV3 版面解析
-# paddlex[ocr]>=3.7.2
-#
-# v0.3.0 可选：pgvector 向量存储
-# pgvector>=0.3.0

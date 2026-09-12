@@ -3,6 +3,7 @@
 
 用法：
     python scripts/install_runtime_deps.py --core
+    python scripts/install_runtime_deps.py --ocr          # 安装 PaddleOCR / PaddlePaddle（扫描件 OCR）
     python scripts/install_runtime_deps.py --bge          # 安装 FlagEmbedding 并下载 BGE-M3/reranker
     python scripts/install_runtime_deps.py --layout       # 安装 paddlex[ocr] 以启用 PaddleLayout
     python scripts/install_runtime_deps.py --pgvector     # 安装 pgvector/asyncpg
@@ -11,6 +12,7 @@
 说明：
 - 90% 依赖应在首次 setup 时下载，不进入 git；
 - 大模型默认不自动下载，--bge/--layout 需要显式开启；
+- OCR 与版面解析依赖体积较大，且对 Python 版本 / 平台有要求，默认不装；
 - 所有下载均使用国内镜像优先，失败时回退默认源。
 """
 from __future__ import annotations
@@ -52,6 +54,16 @@ def install_core() -> bool:
     ], mirror=True)
 
 
+def install_ocr() -> bool:
+    """安装 PaddleOCR / PaddlePaddle。
+
+    这是可选重依赖：部分 Python 版本 / 平台没有对应 wheel，失败时不建议
+    让整个 setup 失败，因此只在用户显式执行 --ocr 时安装。
+    """
+    py = sys.executable
+    return run([py, "-m", "pip", "install", "-q", "paddleocr>=3.0.0", "paddlepaddle>=3.0.0"])
+
+
 def install_bge() -> bool:
     py = sys.executable
     # P1-25: download_bge_models.py 使用 ModelScope，必须一并安装 modelscope。
@@ -80,6 +92,7 @@ def install_pgvector() -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--core", action="store_true")
+    parser.add_argument("--ocr", action="store_true")
     parser.add_argument("--bge", action="store_true")
     parser.add_argument("--layout", action="store_true")
     parser.add_argument("--pgvector", action="store_true")
@@ -89,6 +102,8 @@ def main() -> int:
     plan = []
     if args.all or args.core:
         plan.append(install_core)
+    if args.all or args.ocr:
+        plan.append(install_ocr)
     if args.all or args.bge:
         plan.append(install_bge)
     if args.all or args.layout:

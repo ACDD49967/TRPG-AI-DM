@@ -79,13 +79,14 @@ echo "[4/5] Installing Python packages..."
 if ! "$PYTHON" -c "import fastapi,uvicorn,openai,sqlalchemy,aiosqlite,pydantic,dotenv" 2>/dev/null; then
     echo "[..] Downloading and installing..."
     "$PYTHON" -m pip install -r "$SCRIPT_DIR/backend/requirements.txt" -q --disable-pip-version-check || \
-    "$PYTHON" -m pip install fastapi httpx json-repair jieba rank-bm25 numpy langgraph "uvicorn[standard]" anthropic "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette \
+    "$PYTHON" -m pip install fastapi httpx json-repair jieba rank-bm25 numpy langgraph "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette pypdf python-docx pymupdf pdfplumber \
         -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
     echo "[OK] Python dependencies installed"
 else
     echo "[OK] Python dependencies ready"
 fi
 echo "[..] Optional dependencies/models (not installed by default):"
+echo "       python scripts/install_runtime_deps.py --ocr"
 echo "       python scripts/install_runtime_deps.py --bge"
 echo "       python scripts/install_runtime_deps.py --layout"
 echo "       python scripts/install_runtime_deps.py --pgvector"

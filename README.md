@@ -17,7 +17,7 @@
 ### 剧本
 
 - 内置免费经典剧本，支持 PDF、TXT、DOCX、DOC、MD 与扫描图片导入
-- 统一文档管线：页级解析、OCR（PaddleOCR）、跨页表格合并、页眉页脚清洗、注释合并、图片提取与自动图鉴载入
+- 统一文档管线：页级解析、OCR（PaddleOCR，可选安装）、跨页表格合并、页眉页脚清洗、注释合并、图片提取与自动图鉴载入
 - 文本自动切分：快速切分、递归父子块切分（15% overlap）、语义切分、LLM 智能切分
 - 识别/切分/载入异步执行：知识库上传走任务中心 + SSE 进度，前端可随时取消；剧本导入与知识库使用同一套递归父子块切分
 - 剧本原件绑定到该剧本知识库（父子块/图片/表格同源存储），修订剧本仍作为使用剧本
@@ -106,6 +106,24 @@ bash run.sh
 ```
 
 浏览器打开 `http://localhost:5173`。
+
+可选增强依赖（默认不安装，基础文本 PDF 可直接使用）：
+
+```bash
+# 扫描件 OCR（PaddleOCR / PaddlePaddle，体积较大且对平台有要求）
+python scripts/install_runtime_deps.py --ocr
+
+# 版面解析（PP-StructureV3）
+python scripts/install_runtime_deps.py --layout
+
+# BGE-M3 / reranker 本地模型
+python scripts/install_runtime_deps.py --bge
+
+# PostgreSQL + pgvector
+python scripts/install_runtime_deps.py --pgvector
+```
+
+> 未安装 OCR 时，PDF 扫描页会被跳过或仅保留可提取文本；基础 PDF / DOCX / TXT / MD 导入不受影响。
 
 ## 项目结构
 
