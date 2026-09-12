@@ -1,0 +1,6 @@
+# 统一跨平台换行符，避免 Git for Windows 把 shell 脚本 checkout 成 CRLF 导致 bash 语法错误
+* text=auto
+*.sh text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.py text=auto

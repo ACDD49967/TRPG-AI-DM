@@ -76,11 +76,16 @@ fi
 # ── 4. Install Python deps ──
 echo ""
 echo "[4/5] Installing Python packages..."
-if ! "$PYTHON" -c "import fastapi,uvicorn,openai,sqlalchemy,aiosqlite,pydantic,dotenv" 2>/dev/null; then
+if ! "$PYTHON" "$SCRIPT_DIR/scripts/check_base_deps.py"; then
     echo "[..] Downloading and installing..."
     "$PYTHON" -m pip install -r "$SCRIPT_DIR/backend/requirements.txt" -q --disable-pip-version-check || \
-    "$PYTHON" -m pip install fastapi httpx json-repair jieba rank-bm25 numpy langgraph "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette pypdf python-docx pymupdf pdfplumber \
+    "$PYTHON" -m pip install fastapi httpx json-repair jieba rank-bm25 numpy langgraph "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette pypdf python-docx pymupdf pdfplumber python-multipart pyyaml \
         -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+    if ! "$PYTHON" "$SCRIPT_DIR/scripts/check_base_deps.py" >/dev/null 2>&1; then
+        echo "[FAIL] Python dependencies are still incomplete."
+        echo "       Run manually: $PYTHON -m pip install -r \"$SCRIPT_DIR/backend/requirements.txt\""
+        exit 1
+    fi
     echo "[OK] Python dependencies installed"
 else
     echo "[OK] Python dependencies ready"

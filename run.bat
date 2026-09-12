@@ -48,12 +48,20 @@ if not defined PYTHON (
 echo [OK] Python: !PYTHON!
 
 :: ---- Install Python deps if needed ----
-"%PYTHON%" -c "import fastapi,uvicorn,openai,sqlalchemy,aiosqlite,pydantic,dotenv" >nul 2>&1
+"%PYTHON%" "%~dp0scripts\check_base_deps.py" >nul 2>&1
 if errorlevel 1 (
     echo [..] Installing Python deps...
     "%PYTHON%" -m pip install -r "%~dp0backend\requirements.txt" -q --disable-pip-version-check
     if errorlevel 1 (
-        "%PYTHON%" -m pip install openai fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette -q -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+        "%PYTHON%" -m pip install openai httpx json-repair jieba rank-bm25 numpy langgraph fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette pypdf python-docx pymupdf pdfplumber python-multipart pyyaml -q -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+    )
+    "%PYTHON%" "%~dp0scripts\check_base_deps.py" >nul 2>&1
+    if errorlevel 1 (
+        echo [FAIL] Python dependencies are still incomplete.
+        echo        Please run setup.bat, or manually:
+        echo        "%PYTHON%" -m pip install -r "%~dp0backend\requirements.txt"
+        pause
+        exit /b 1
     )
     echo [OK] Python deps installed
 ) else (

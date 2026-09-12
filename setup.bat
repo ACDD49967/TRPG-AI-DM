@@ -211,7 +211,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-"%PYTHON%" -c "import fastapi,uvicorn,openai,sqlalchemy,aiosqlite,pydantic,dotenv" >nul 2>&1
+"%PYTHON%" "%~dp0scripts\check_base_deps.py"
 if not errorlevel 1 (
     echo [OK] Already installed
     goto :frontend
@@ -221,7 +221,14 @@ echo [..] Installing...
 "%PYTHON%" -m pip install -r "%~dp0backend\requirements.txt" -q --disable-pip-version-check
 if errorlevel 1 (
     echo [..] Primary failed — trying mirror...
-    "%PYTHON%" -m pip install openai httpx json-repair jieba rank-bm25 numpy langgraph fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette pypdf python-docx pymupdf pdfplumber -q -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+    "%PYTHON%" -m pip install openai httpx json-repair jieba rank-bm25 numpy langgraph fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite pydantic python-dotenv sse-starlette pypdf python-docx pymupdf pdfplumber python-multipart pyyaml -q -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+)
+"%PYTHON%" "%~dp0scripts\check_base_deps.py" >nul 2>&1
+if errorlevel 1 (
+    echo [FAIL] Python dependencies are still incomplete.
+    echo        Run manually: "%PYTHON%" -m pip install -r "%~dp0backend\requirements.txt"
+    pause
+    exit /b 1
 )
 echo [OK] Installed
 echo [..] Optional dependencies/models (not installed by default):

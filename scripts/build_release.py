@@ -100,6 +100,16 @@ def _stage() -> Path:
         src = ROOT / f
         if src.exists():
             shutil.copy2(src, tmp / f)
+    # 跨平台换行符：Git for Windows 可能把 .sh checkout 成 CRLF，导致 bash 语法错误
+    for name in ("setup.sh", "run.sh"):
+        p = tmp / name
+        if p.exists():
+            p.write_bytes(p.read_bytes().replace(b"\r\n", b"\n"))
+    for name in ("setup.bat", "run.bat"):
+        p = tmp / name
+        if p.exists():
+            data = p.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+            p.write_bytes(data)
     return tmp
 
 
