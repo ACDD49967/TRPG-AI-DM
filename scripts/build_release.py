@@ -83,6 +83,8 @@ def _ignore(dirpath: str, names: list[str]) -> set[str]:
             ignored.add(name)
         elif name.startswith("."):
             ignored.add(name)
+        elif name.endswith((".pyc", ".pyo", ".log", ".tsbuildinfo")):
+            ignored.add(name)
         elif p.name == "__pycache__":
             ignored.add(name)
     return ignored
