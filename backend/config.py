@@ -28,6 +28,14 @@ class Settings:
     MAX_OUTPUT_TOKENS: int = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.9"))
 
+    # ── 长文本生成（剧本创建/导入）的输出预算 ──
+    # 剧本创建各步骤（世界观/三幕/NPC/遭遇/合并/结构化提取/总结）都是长文本任务，
+    # 且推理模型的 reasoning 与正文共享 max_tokens，预算过小会让正文被挤空或截断。
+    # 实测 DeepSeek 端点接受 65536；不同 OpenAI 兼容网关上限不同，
+    # 被网关拒绝时 engine.world_builder 会自动降到 FALLBACK 值并记住，不需要改代码。
+    LLM_MAX_OUTPUT_TOKENS: int = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "32768"))
+    LLM_MAX_OUTPUT_TOKENS_FALLBACK: int = int(os.getenv("LLM_MAX_OUTPUT_TOKENS_FALLBACK", "8192"))
+
     # 兼容旧配置
     @property
     def ANTHROPIC_API_KEY(self) -> str:

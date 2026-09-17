@@ -217,6 +217,7 @@ export default function StartScreen({ authUsername, onLogout }: { authUsername?:
   const [sourceChunks,setSourceChunks]=useState<string[]>([]);
   const [importBusy,setImportBusy]=useState(false);
   const [importProgress,setImportProgress]=useState(0);
+  const [importStage,setImportStage]=useState('');
   const [importLive,setImportLive]=useState('');
   const [importErr,setImportErr]=useState('');
   const [importFileName,setImportFileName]=useState('');
@@ -671,7 +672,7 @@ export default function StartScreen({ authUsername, onLogout }: { authUsername?:
   const importScenario=async(file:File)=>{
     const ac=new AbortController();
     importAbortRef.current=ac;
-    setImportBusy(true);setImportErr('');setImportFileName(file.name);setImportLive('');
+    setImportBusy(true);setImportErr('');setImportFileName(file.name);setImportLive('');setImportStage('');
     setImportProgress(2);
     try{
       const fd=new FormData();
@@ -708,6 +709,7 @@ export default function StartScreen({ authUsername, onLogout }: { authUsername?:
             if(data.type==='gen_token'){ setImportLive(prev=>prev+data.token); }
             else if(data.type==='progress'){
               setImportProgress(Math.min(99, data.percent||0));
+              setImportStage(String(data.detail||data.label||''));
               if(data.detail && /出错|错误|失败|警告/.test(String(data.detail))){
                 setImportErr(prev => prev ? `${prev}\n${data.detail}` : String(data.detail));
               }
@@ -745,7 +747,7 @@ export default function StartScreen({ authUsername, onLogout }: { authUsername?:
     }
     finally{
       if(importAbortRef.current===ac) importAbortRef.current=null;
-      window.setTimeout(()=>setImportProgress(0), 800);
+      window.setTimeout(()=>{setImportProgress(0);setImportStage('');}, 800);
       setImportBusy(false);
     }
   };
@@ -1912,7 +1914,14 @@ export default function StartScreen({ authUsername, onLogout }: { authUsername?:
                     <div className="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                       <div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{width:`${importProgress}%`}} />
                     </div>
-                    <p className="text-[9px] text-ink-400 mt-0.5">{importProgress}%</p>
+                    <p className="text-[9px] text-ink-400 mt-0.5">
+                      {importProgress}%{importStage?` · ${importStage}`:''}
+                    </p>
+                    {importProgress<=8&&splitter==='llm'&&(
+                      <p className="text-[9px] text-ink-400 mt-0.5">
+                        选择「LLM 切分」时会逐段调用模型划分语义片段，长剧本可能需要几分钟，可随时取消。
+                      </p>
+                    )}
                     <button onClick={cancelImport} className="mt-1 text-[10px] px-2 py-1 rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100">取消导入</button>
                     {importLive && <pre className="text-[9px] text-ink-500 bg-white rounded p-2 mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap">{importLive}</pre>}
                   </div>

@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="TRPG AI 跑团主持",
     description="由大语言模型驱动的单人 TRPG 跑团主持",
-    version="0.3.0",
+    version="0.3.1",
     lifespan=lifespan,
 )
 
@@ -2470,34 +2470,46 @@ async def generate_character(request: GenerateAttributesRequest):
         import asyncio as _asyncio
         last_err = None
         text = ""
-        for attempt in range(1, 3):
-            base_max_tokens = 2000 if request.thinking_strength == "low" else (3000 if request.thinking_strength == "medium" else 5000)
-            current_max_tokens = base_max_tokens if attempt == 1 else base_max_tokens * 2
+        # 推理模型下 reasoning_content 与正文共享 max_tokens：推理吃满预算时正文为空。
+        # 因此第 2 次重试显式禁用思考并放大预算；网关不支持 thinking 参数时去掉该参数保底。
+        plans = [
+            {"disabled": False, "grow": False},
+            {"disabled": True, "grow": True},
+            {"disabled": False, "grow": True},
+        ]
+        for plan in plans:
+            base_max_tokens = 4000 if request.thinking_strength == "low" else (6000 if request.thinking_strength == "medium" else 10000)
+            current_max_tokens = int(base_max_tokens * (2 if plan["grow"] else 1))
+            kwargs: dict = dict(
+                model=model,
+                messages=[
+                    {"role": "system", "content": (
+                        f"你是一位沉浸式角色背景设计师。只返回合法JSON，不要Markdown代码块，不要其他文本。"
+                        f"角色性别是{gender_normalized}，使用'{gender_pronoun}'作为人称代词。"
+                        f"背景故事要有具体伤疤、坏习惯和灰色地带，避免模板化叙事。\n\n{style_block}"
+                    )},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=current_max_tokens,
+                temperature=0.9,
+            )
+            if plan["disabled"]:
+                kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
             try:
-                resp = await client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": (
-                            f"你是一位沉浸式角色背景设计师。只返回合法JSON，不要Markdown代码块，不要其他文本。"
-                            f"角色性别是{gender_normalized}，使用'{gender_pronoun}'作为人称代词。"
-                            f"背景故事要有具体伤疤、坏习惯和灰色地带，避免模板化叙事。\n\n{style_block}"
-                        )},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    max_tokens=current_max_tokens,
-                    temperature=0.9,
-                )
+                resp = await client.chat.completions.create(**kwargs)
                 text = (resp.choices[0].message.content or "").strip()
                 if text:
                     break
+                finish = resp.choices[0].finish_reason
                 reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
-                print(f"[CharacterGen] 第{attempt}次空响应 (reasoning_len={len(reasoning or '')}, max_tokens={current_max_tokens})")
-                raise RuntimeError("空响应")
+                print(f"[CharacterGen] 空响应 (finish={finish}, reasoning_len={len(reasoning or '')}, "
+                      f"max_tokens={current_max_tokens}, thinking_disabled={plan['disabled']})")
+                last_err = RuntimeError("空响应")
             except Exception as e:
                 last_err = e
-                print(f"[CharacterGen] 第{attempt}次调用失败: {e}")
-                await _asyncio.sleep(1)
-        else:
+                print(f"[CharacterGen] 调用失败: {e}")
+            await _asyncio.sleep(1)
+        if not text:
             raise last_err or RuntimeError("背景生成失败")
 
         if text.startswith("```"):
