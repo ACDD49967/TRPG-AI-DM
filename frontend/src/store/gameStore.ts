@@ -1,243 +1,25 @@
-/** Zustand游戏状态管理 —— 全局状态与操作 */
-
+/**
+ * Zustand 游戏状态管理 —— 全局状态与操作。
+ *
+ * 类型在 gameTypes、契约与默认值在 gameStateShape；本文件只留 store 装配、
+ * 操作实现与持久化配置。persist 的 key/version/migrate/partialize 契约保持不变，
+ * localStorage 里已有的 dnd-game-state 可直接继续读取。
+ */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { CharacterStatus, SceneInfo } from './gameTypes';
+import {
+  freshSessionFields, initialScene, initialStatus, sanitizeStatusUpdate,
+  type GameState,
+} from './gameStateShape';
+import { createNarrativeActions } from './actions/narrativeActions';
 
-/** 角色状态 */
-export interface CharacterStatus {
-  hp: number;
-  maxHp: number;
-  mp: number;
-  maxMp: number;
-  xp: number;
-  gold: number;
-  level: number;
-  ac: number;
-  inventory: Array<string | { name: string; description?: string; quantity?: number; type?: string; properties?: Record<string, unknown>; equipped?: boolean }>;
-  attributes: Record<string, number>;
-  character_name?: string;
-  race?: string;
-  char_class?: string;
-  gender?: string;
-  game_system?: 'dnd5e' | 'dnd4e' | 'coc' | 'custom';
-  username?: string;
-  character_image?: string;
-  scenario_id?: string;
-  backstory?: string;
-  skill_proficiencies?: string[];
-  skills?: Record<string, number>;
-  saves?: Record<string, { value: number; proficient?: boolean }>;
-  passive_perception?: number;
-  feats?: Array<{ name: string; description?: string }>;
-  custom_classes?: string[];
-  custom_skills?: string[];
-  extra_attributes?: Record<string, string>;
-  race_traits?: string[];
-  class_proficiencies?: string[];
-  hit_die?: string;
-  san?: number;
-  maxSan?: number;
-  luck?: number;
-  healing_surges?: number;
-  max_healing_surges?: number;
-  surge_value?: number;
-  speed?: string;
-  proficiency_bonus?: number;
-  spell_slots?: number[] | { spell_slots?: number[]; pact_slots?: number; pact_slot_level?: number };
-  class_resources?: Array<{ key: string; name: string; current: number; max: number; desc?: string }>;
-  known_spells?: Array<{
-    name: string; level: string; school?: string; description?: string;
-    casting_time?: string; range?: string; components?: string; duration?: string;
-    classes?: string[]; ritual?: boolean; prepared?: boolean;
-  }>;
-  action_points?: number;
-  fortitude?: number;
-  reflex?: number;
-  will?: number;
-  damage_bonus?: string;
-  build?: number;
-}
-
-/** 场景信息（在顶栏显示） */
-export interface SceneInfo {
-  location: string;
-  time: string;
-  weather: string;
-  npcs_here: string[];
-}
-
-/** 战斗日志条目 */
-export interface CombatLogEntry {
-  id: number;
-  kind: 'combat' | 'enemy' | 'dice';
-  text: string;
-  extra?: Record<string, unknown>;
-  time: string;
-}
-
-/** 一条叙事行（文本 + 可选的骰子/事件标签） */
-export interface NarrativeLine {
-  id: number;
-  text: string;
-  role?: 'player' | 'dm';
-  isDiceRoll?: boolean;
-  diceData?: {
-    skill: string;
-    dc: number;
-    roll: number;
-    modifier: number;
-    result: string;
-  };
-  isGameEvent?: boolean;
-  gameEventData?: {
-    type: string;
-    description: string;
-    extra?: Record<string, unknown>;
-  };
-}
-
-interface GameState {
-  /** 当前会话ID */
-  sessionId: string | null;
-  /** 画面状态：start(入口) | playing(游戏中) */
-  screen: 'start' | 'playing';
-
-  /** 叙事行列表 */
-  narrative: NarrativeLine[];
-  /** 打字机当前累积的token */
-  currentTokenBuffer: string;
-  /** 叙事ID计数器 */
-  narrativeId: number;
-
-  /** 角色状态 */
-  status: CharacterStatus;
-  /** DM建议选项 */
-  choices: string[];
-  /** 是否正在等待AI回复（控制输入禁用） */
-  isProcessing: boolean;
-  /** 最新一次骰子结果（用于动画展示） */
-  latestDiceRoll: {
-    skill: string;
-    dc: number;
-    roll: number;
-    modifier: number;
-    result: string;
-  } | null;
-  /** 战斗中的敌人信息（enemies 支持多敌） */
-  combat: {
-    active: boolean;
-    enemyName: string;
-    enemyHp: number;
-    enemies?: Array<{ name: string; hp: number }>;
-  } | null;
-  /** 战斗记录面板 */
-  combatLog: CombatLogEntry[];
-  /** 冒险笔记同步状态 */
-  journalStatus: 'idle' | 'syncing' | 'synced';
-
-  /** 世界大纲 */
-  worldOutline: string | null;
-  /** DM决策建议（从AI回复中提取） */
-  decisionSuggestions: string[];
-  /** P2-12修复：Journal数据SSE推送——替代被动轮询 */
-  journalData: Record<string, unknown> | null;
-  /** 媒体内容版本号：AI 新增地图/生物后递增，触发前端重新拉取 */
-  mediaVersion: number;
-  /** 场景信息——在顶栏显示 */
-  sceneInfo: SceneInfo;
-
-  // ── 操作方法 ──
-
-  /** 进入游戏 */
-  setSession: (sessionId: string) => void;
-  /** 追加一个打字机token */
-  appendToken: (token: string) => void;
-  /** 刷新当前缓冲区为一条叙事行 */
-  flushBuffer: () => void;
-  /** 强制设置叙事文本（用于narrative_flush和intro） */
-  appendNarrativeText: (text: string) => void;
-  /** 添加玩家输入消息（用于对话轮次区分） */
-  addPlayerMessage: (text: string) => void;
-  /** 添加骰子结果行 */
-  appendDiceRoll: (data: {
-    skill: string;
-    dc: number;
-    roll: number;
-    modifier: number;
-    result: string;
-  }) => void;
-  /** 添加游戏事件行 */
-  appendGameEvent: (data: {
-    type: string;
-    description: string;
-    extra?: Record<string, unknown>;
-  }) => void;
-  /** 更新角色状态 */
-  updateStatus: (update: Partial<CharacterStatus>) => void;
-  /** 设置建议选项 */
-  setChoices: (options: string[]) => void;
-  /** 设置处理中状态 */
-  setProcessing: (v: boolean) => void;
-  /** 设置最新骰子结果 */
-  setLatestDiceRoll: (data: GameState['latestDiceRoll']) => void;
-  /** 更新战斗状态 */
-  setCombat: (combat: GameState['combat']) => void;
-  /** 追加战斗日志 */
-  appendCombatLog: (entry: Omit<CombatLogEntry, 'id' | 'time'>) => void;
-  /** 设置冒险笔记同步状态 */
-  setJournalStatus: (status: GameState['journalStatus']) => void;
-  /** 清空战斗日志 */
-  clearCombatLog: () => void;
-  /** 设置世界大纲 */
-  setWorldOutline: (outline: string) => void;
-  /** 设置决策建议 */
-  setDecisionSuggestions: (suggestions: string[]) => void;
-  /** 从文本提取决策建议 */
-  extractDecisions: (text: string) => void;
-  /** P2-12修复：设置Journal数据（来自SSE推送） */
-  setJournalData: (data: Record<string, unknown>) => void;
-  /** 通知前端媒体（地图/图鉴）已更新 */
-  bumpMediaVersion: () => void;
-  /** 设置场景信息（来自SSE推送） */
-  setSceneInfo: (data: Partial<SceneInfo>) => void;
-  /** 重置游戏状态 */
-  reset: () => void;
-  /** 回到开始画面 */
-  goToStart: () => void;
-}
-
-const initialStatus: CharacterStatus = {
-  hp: 30,
-  maxHp: 30,
-  mp: 10,
-  maxMp: 10,
-  xp: 0,
-  gold: 10,
-  level: 1,
-  ac: 10,
-  inventory: [],
-  attributes: { str: 12, dex: 12, con: 12, int: 12, wis: 12, cha: 12 },
-  scenario_id: '',
-};
-
-/** P2-14: SSE state_update 允许写入的字段白名单，避免任意字段污染并持久化。 */
-const ALLOWED_STATUS_KEYS = new Set<string>([
-  'hp', 'maxHp', 'mp', 'maxMp', 'xp', 'gold', 'level', 'ac', 'inventory', 'attributes',
-  'character_name', 'race', 'char_class', 'gender', 'game_system', 'username',
-  'character_image', 'scenario_id', 'backstory', 'skill_proficiencies', 'skills', 'saves',
-  'passive_perception', 'feats', 'custom_classes', 'custom_skills', 'extra_attributes',
-  'race_traits', 'class_proficiencies', 'hit_die', 'san', 'maxSan', 'luck',
-  'healing_surges', 'max_healing_surges', 'surge_value', 'speed', 'proficiency_bonus',
-  'spell_slots', 'class_resources', 'known_spells', 'action_points', 'fortitude',
-  'reflex', 'will', 'damage_bonus', 'build',
-]);
-
-const initialScene: SceneInfo = {
-  location: '冒险的起点',
-  time: '第1天',
-  weather: '',
-  npcs_here: [],
-};
+// 兼容既有导入路径：useSSE / DndCharacterSheet / MetricsCard 等仍可从本模块取类型
+export type {
+  BattlefieldPlacement, CharacterStatus, CombatLogEntry, InitiativeEntry, InitiativeState,
+  MetricsSnapshot, ModelCallMetric, NarrativeLine, SceneInfo, TurnMetrics,
+} from './gameTypes';
+export type { GameState } from './gameStateShape';
 
 export const useGameStore = create<GameState>()(persist((set, get) => ({
   sessionId: null,
@@ -250,6 +32,8 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
   isProcessing: false,
   latestDiceRoll: null,
   combat: null,
+  initiative: null,
+  placements: [],
   combatLog: [],
   journalStatus: 'idle',
   worldOutline: null,
@@ -257,6 +41,10 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
   journalData: null,
   mediaVersion: 0,
   sceneInfo: { ...initialScene },
+  metrics: null,
+  pendingLevelUp: null,
+
+  ...createNarrativeActions(set, get),
 
   setSession: (sessionId) =>
     set((s) => ({
@@ -286,124 +74,8 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
   setSceneInfo: (data: Partial<SceneInfo>) =>
     set((s) => ({ sceneInfo: { ...s.sceneInfo, ...data } })),
 
-  /** 从AI回复文本中提取决策建议 */
-  extractDecisions: (text: string) => {
-    const lines = text.split('\n');
-    const decisionIdx = lines.findIndex(l =>
-      l.includes('决策建议') || l.includes('**决策建议**')
-    );
-    if (decisionIdx >= 0) {
-      const suggestions = lines.slice(decisionIdx + 1)
-        .filter(l => l.trim().startsWith('-') || l.trim().startsWith('*'))
-        .map(l => l.replace(/^[-*]\s*/, '').replace(/\[|\]/g, '').trim())
-        .filter(l => l.length > 0)
-        .slice(0, 4);
-      if (suggestions.length > 0) {
-        get().setDecisionSuggestions(suggestions);
-      }
-    }
-  },
-
-  appendToken: (token) =>
-    set((s) => ({ currentTokenBuffer: s.currentTokenBuffer + token })),
-
-  flushBuffer: () => {
-    const buf = get().currentTokenBuffer;
-    if (!buf.trim()) return;
-    const id = get().narrativeId;
-    set((s) => ({
-      narrative: [...s.narrative, { id, text: buf, role: 'dm' }],
-      currentTokenBuffer: '',
-      narrativeId: id + 1,
-    }));
-  },
-
-  appendNarrativeText: (text) => {
-    // 先刷新当前缓冲区
-    const buf = get().currentTokenBuffer;
-    if (buf.trim()) {
-      get().flushBuffer();
-    }
-    // 追加新文本
-    const id = get().narrativeId;
-    set((s) => ({
-      narrative: [...s.narrative, { id, text, role: 'dm' }],
-      narrativeId: id + 1,
-    }));
-  },
-
-  addPlayerMessage: (text) => {
-    const id = get().narrativeId;
-    set((s) => ({
-      narrative: [...s.narrative, { id, text, role: 'player' }],
-      narrativeId: id + 1,
-    }));
-  },
-
-  appendDiceRoll: (data) => {
-    // 先刷新当前缓冲区
-    const buf = get().currentTokenBuffer;
-    if (buf.trim()) {
-      get().flushBuffer();
-    }
-    const id = get().narrativeId;
-    set((s) => ({
-      narrative: [
-        ...s.narrative,
-        {
-          id,
-          text: `检定：${data.skill} d20=${data.roll}${data.modifier ? `+${data.modifier}` : ''} vs DC${data.dc} → ${data.result}`,
-          role: 'dm',
-          isDiceRoll: true,
-          diceData: data,
-        },
-      ],
-      latestDiceRoll: data,
-      narrativeId: id + 1,
-      // 自动清理骰子弹窗（5秒后）
-    }));
-  },
-
-  appendGameEvent: (data) => {
-    const buf = get().currentTokenBuffer;
-    if (buf.trim()) {
-      get().flushBuffer();
-    }
-    const id = get().narrativeId;
-    set((s) => ({
-      narrative: [
-        ...s.narrative,
-        {
-          id,
-          text: `事件：${data.description}`,
-          role: 'dm',
-          isGameEvent: true,
-          gameEventData: data,
-        },
-      ],
-      narrativeId: id + 1,
-    }));
-  },
-
   updateStatus: (update) =>
-    set((s) => {
-      // P2-14: 只接受白名单字段，避免 SSE 任意载荷 spread 进 status 并持久化。
-      const u: Partial<CharacterStatus> = {};
-      for (const [k, v] of Object.entries(update)) {
-        if (ALLOWED_STATUS_KEYS.has(k)) {
-          (u as Record<string, unknown>)[k] = v;
-        }
-      }
-      // 兼容后端历史格式：inventory 可能是 {items:[...]}，统一转为数组
-      const inv = u.inventory as unknown;
-      if (inv && typeof inv === 'object' && !Array.isArray(inv)) {
-        const rec = inv as Record<string, unknown>;
-        if (Array.isArray(rec.items)) {
-          u.inventory = rec.items as CharacterStatus['inventory'];
-        }
-      }
-      return { status: { ...s.status, ...u } };
-    }),
+    set((s) => ({ status: { ...s.status, ...sanitizeStatusUpdate(update) } })),
 
   setChoices: (options) => set({ choices: options }),
 
@@ -412,6 +84,17 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
   setLatestDiceRoll: (data) => set({ latestDiceRoll: data }),
 
   setCombat: (combat) => set({ combat }),
+
+  setInitiative: (initiative) => set({ initiative }),
+
+  mergePlacements: (entries) =>
+    set((s) => {
+      const map = new Map(s.placements.map((p) => [p.name, p]));
+      for (const entry of entries) {
+        if (entry && entry.name) map.set(entry.name, { ...map.get(entry.name), ...entry });
+      }
+      return { placements: [...map.values()] };
+    }),
 
   appendCombatLog: (entry) =>
     set((s) => ({
@@ -429,44 +112,15 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
 
   clearCombatLog: () => set({ combatLog: [] }),
 
+  setMetrics: (metrics) => set({ metrics }),
+
+  setPendingLevelUp: (level) => set({ pendingLevelUp: level }),
+
   reset: () =>
-    set({
-      narrative: [],
-      currentTokenBuffer: '',
-      narrativeId: 0,
-      status: { ...initialStatus },
-      choices: [],
-      isProcessing: false,
-      latestDiceRoll: null,
-      combat: null,
-      combatLog: [],
-      journalStatus: 'idle',
-      worldOutline: null,
-      decisionSuggestions: [],
-      journalData: null,
-      mediaVersion: 0,
-      sceneInfo: { ...initialScene },
-    }),
+    set(freshSessionFields()),
 
   goToStart: () =>
-    set({
-      screen: 'start',
-      sessionId: null,
-      narrative: [],
-      currentTokenBuffer: '',
-      narrativeId: 0,
-      status: { ...initialStatus },
-      choices: [],
-      isProcessing: false,
-      latestDiceRoll: null,
-      combat: null,
-      combatLog: [],
-      worldOutline: null,
-      decisionSuggestions: [],
-      journalData: null,
-      mediaVersion: 0,
-      sceneInfo: { ...initialScene },
-    }),
+    set({ ...freshSessionFields(), screen: 'start', sessionId: null }),
 }), {
   name: 'dnd-game-state',
   version: 1,

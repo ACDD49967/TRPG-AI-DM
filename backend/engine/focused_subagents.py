@@ -7,6 +7,9 @@
   交给多个专业子 Agent **并发**完成；
 - 子 Agent 返回“结论/事实/工具建议”，主 DM 把它们当作参谋简报采纳，
   不再把完整规则表、完整世界状态全部塞进主提示词。
+
+本文件只保留"运行层"（调用模型、工具循环、并发与任务分配）；
+简报装配在 `dm_brief.py`，公共类型在 `subagent_types.py`，都从这里再导出。
 """
 from __future__ import annotations
 
@@ -19,94 +22,28 @@ from backend.engine.tools import DM_TOOLS
 from backend.skills import get_agent_skill
 
 
+# 公共类型与简报层各有归属模块；再导出保证既有 import 与 patch 目标不变
+from backend.engine.subagent_types import (  # noqa: E402,F401
+    ToolAgentResult,
+    _WRITE_TOOL_NAMES,
+    is_agent_result_complete,
+)
+from backend.engine.dm_brief import (  # noqa: E402,F401
+    _SECTION_TITLES,
+    _apply_skill_packs,
+    _recent_text,
+    _retrieved_text,
+    _SKILL_FOR_TASK_KEY,
+    build_dm_brief_tasks,
+    delegation_execution_context,
+    delegation_is_complete,
+    format_dm_brief,
+    get_skill_instruction,
+)
+
+
 # ── 基础调用 ────────────────────────────────────────────────
 
-def _compact_prompt(role: str, task: str, context: str, output_hint: str = "只输出结论，不要解释过程。") -> str:
-    return (
-        f"你是子Agent，角色：{role}。\n"
-        f"任务：{task}\n"
-        f"可用上下文：\n{context}\n\n"
-        f"输出要求：{output_hint}\n"
-        "不要输出 Markdown 代码块，不要输出与任务无关的内容，不要输出隐藏信息给玩家——仅供主DM决策。"
-    )
-
-
-async def run_focused_agent(
-    client: Any,
-    model: str,
-    role: str,
-    task: str,
-    context: str,
-    max_tokens: int = 600,
-    temperature: float = 0.2,
-    timeout: float = 40,
-) -> str:
-    """调用一个专注 LLM 子 Agent，返回精简结论。"""
-    content = _compact_prompt(role, task, sanitize_user_text(context)[:10000])
-    try:
-        resp = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "你是高效、克制、只输出事实与结论的专业子Agent。不要即兴创作，不要写叙事正文，不要输出隐藏信息给玩家。"},
-                    {"role": "user", "content": content},
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                extra_body={"thinking": {"type": "disabled"}},
-            ),
-            timeout=timeout,
-        )
-        msg = resp.choices[0].message
-        return (msg.content or getattr(msg, "reasoning_content", "") or "").strip()
-    except Exception as e:
-        return f"[子Agent失败] {type(e).__name__}: {e}"
-
-
-async def run_parallel_subagents(
-    client: Any,
-    model: str,
-    tasks: list[dict],
-    timeout: float = 30,
-) -> dict[str, str]:
-    """并发运行多个专业子 Agent。
-
-    - 单个 Agent 失败/超时只丢弃该 Agent 的结果，不阻塞主流程；
-    - 所有 Agent 共享同一超时窗口，总耗时约等于最慢的一个 Agent；
-    - 结果按 task["key"] 返回，供 format_dm_brief() 聚合。
-    """
-    async def _one(task: dict) -> tuple[str, str]:
-        key = str(task.get("key", ""))
-        try:
-            result = await run_focused_agent(
-                client,
-                model,
-                role=str(task.get("role", "专业子Agent")),
-                task=str(task.get("task", "")),
-                context=str(task.get("context", "")),
-                max_tokens=int(task.get("max_tokens", 500)),
-                temperature=float(task.get("temperature", 0.2)),
-                timeout=float(task.get("timeout", timeout)),
-            )
-        except Exception as e:  # pragma: no cover - 保险
-            return key, f"[子Agent失败] {type(e).__name__}: {e}"
-        return key, result
-
-    try:
-        raw = await asyncio.gather(*(_one(t) for t in tasks), return_exceptions=True)
-    except asyncio.CancelledError:
-        return {}
-    out: dict[str, str] = {}
-    for item in raw:
-        if isinstance(item, tuple) and len(item) == 2:
-            key, value = item
-            out[str(key)] = str(value or "")
-        elif isinstance(item, Exception):
-            continue
-    return out
-
-
-# ── 可调用工具的子 Agent（DeepSeek harness 风格）────────────────
 
 def _allowed_tool_schemas(pack: Any) -> list[dict]:
     """按 SKILL.md 的 allowed-tools 元数据过滤该子 Agent 可用的工具。"""
@@ -126,134 +63,139 @@ def _allowed_tool_schemas(pack: Any) -> list[dict]:
     ]
 
 
-# P1-15: 会修改世界/角色/图鉴状态、需要整段串行化的工具
-_WRITE_TOOL_NAMES = {
-    "update_state", "combat_round", "enemy_attack", "death_saving_throw", "take_rest",
-    "equip_item", "update_world_state", "update_scene", "reveal_info",
-    "update_bestiary_entry", "update_city_entry", "add_scenario_bestiary",
-    "add_scenario_map", "add_scenario_spell", "adjust_npc", "adjust_bestiary",
-    "promote_npc", "learn_spell", "forget_spell", "cast_spell",
-    "update_knowledge_graph", "add_memory", "record_plot_memory", "add_character_note",
-}
-
-
 async def run_tool_subagent(
     client: Any,
     model: str,
     task: dict,
     state: Any,
-    max_iterations: int = 4,
+    # 实测子 Agent 多数在 1 次工具调用 + 1 次总结内完成；上限收到 3 以限制最坏情况
+    max_iterations: int = 3,
     timeout: float = 60,
-) -> str:
-    """运行一个带工具权限的专业子 Agent，返回给主 DM 的简报。
-
-    - 技能包 `allowed-tools` 决定该子 Agent 能调用哪些工具；
-    - 工具调用结果由子 Agent 自行总结成简报，玩家只看到工具本身推送的事件；
-    - 子 Agent 的推理、工具选择和简报都不直接展示给玩家。
-    """
+) -> ToolAgentResult:
+    """运行专业任务；超时、空正文及预算耗尽均保留已执行记录供主 DM 接手。"""
+    outcome = ToolAgentResult()
     skill_name = str(task.get("skill") or "")
     pack = get_agent_skill(skill_name) if skill_name else None
     if pack is None:
-        return await run_focused_agent(
-            client, model,
-            role=str(task.get("role") or "专业子Agent"),
-            task=str(task.get("task") or ""),
-            context=str(task.get("context") or ""),
-            max_tokens=600,
-            temperature=0.1,
-            timeout=timeout,
-        )
+        outcome.error = "专业技能包不存在，交由主 DM 完成"
+        return outcome
 
     tools = _allowed_tool_schemas(pack)
-    _tool_names = {str(t.get("function", {}).get("name", "")) for t in tools}
-    _needs_write_lock = bool(_tool_names & _WRITE_TOOL_NAMES)
-    system_prompt = (
-        f"你是专业子Agent：{pack.name}。\n"
-        f"技能说明：{pack.description}\n\n"
-        f"{pack.content}\n\n"
-        "你可以调用提供的工具来完成任务；工具执行结果会以内部观察返回给你。"
-        "你的最终输出是给主 DM 的结论简报：只写事实、已执行的工具、关键数值与结果，"
-        "不要写玩家可见的叙事正文，不要提及子Agent/后台/简报，不要泄露隐藏信息给玩家。"
-    )
-    user_prompt = (
-        "请按系统说明完成本轮专业任务，并输出给主 DM 的结论简报。\n\n"
-        f"本轮上下文：\n{sanitize_user_text(str(task.get('context') or ''))[:9000]}"
-    )
+    tool_names = {str(t.get("function", {}).get("name", "")) for t in tools}
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
+        {"role": "system", "content": (
+            f"你是专业子Agent：{pack.name}。\n技能说明：{pack.description}\n\n{pack.content}\n\n"
+            "按工具权限完成任务。最终只返回给主 DM 的事实、已执行工具、数值和结果；"
+            "不要输出玩家叙事。尚未完成的动作必须明确标注，不得声称已结算。"
+        )},
+        {"role": "user", "content": (
+            f"任务：{task.get('task') or ''}\n本轮上下文：\n"
+            f"{sanitize_user_text(str(task.get('context') or ''))[:9000]}"
+        )},
     ]
-    observations: list[str] = []
+    tool_failed = False
+    # 工具跑完后的"总结轮"不再重放技能包全文（第一轮 prompt_tokens 3041-4879，
+    # 总结轮重放到 3370-5247 且输出 363-466 token，单次 2.4-2.9 秒，是第一次的约 2 倍）。
+    # 总结轮只保留任务与工具真实结果，并限长，实测可显著压低这一跳的输入/输出量。
+    followup_system = (
+        f"你是专业子Agent：{pack.name}。工具已执行完毕，下面是真实结果。\n"
+        "只给主 DM 输出结论：关键数值、已执行动作、未完成事项；不复述工具原文、不写玩家叙事。\n"
+        "最多 120 字，直接给结论。"
+    )
 
-    async def _run() -> str:
+    async def run() -> ToolAgentResult:
+        nonlocal tool_failed
         from backend.engine.dm_agent import execute_tool
 
-        for _ in range(max_iterations):
+        for iteration in range(max_iterations):
+            if getattr(state, "aborted", False):
+                outcome.error = "玩家已中断"
+                return outcome
+            call_messages = messages
+            max_tokens = 900
+            if iteration > 0:
+                call_messages = [{"role": "system", "content": followup_system}, *messages[1:]]
+                max_tokens = 400
             kwargs: dict[str, Any] = dict(
-                model=model,
-                messages=messages,
-                max_tokens=900,
-                temperature=0.1,
+                model=model, messages=call_messages, max_tokens=max_tokens, temperature=0.1,
                 extra_body={"thinking": {"type": "disabled"}},
             )
             if tools:
-                kwargs["tools"] = tools
-                kwargs["tool_choice"] = "auto"
+                kwargs.update(tools=tools, tool_choice="auto")
             resp = await client.chat.completions.create(**kwargs)
-            msg = resp.choices[0].message
-            tool_calls = getattr(msg, "tool_calls", None) or []
+            choice = resp.choices[0]
+            msg = choice.message
+            tool_calls = list(getattr(msg, "tool_calls", None) or [])
             if not tool_calls:
-                content = str(msg.content or "").strip()
-                if content:
-                    return content
-                break
+                outcome.content = str(msg.content or "").strip()
+                if (is_agent_result_complete(outcome.content) and not tool_failed
+                        and getattr(choice, "finish_reason", "stop") == "stop"):
+                    outcome.status = "completed"
+                else:
+                    outcome.error = "未得到完整结论或工具存在失败，需主 DM 核对"
+                return outcome
 
-            # 只处理前 4 个调用，并保持 assistant 消息与 tool 响应一一配对
-            selected_calls = list(tool_calls)[:4]
+            # 所有 tool call 均应有对应响应，超限调用只回报错误，不执行。
             messages.append({
-                "role": "assistant",
-                "content": msg.content or None,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments or "{}",
-                        },
-                    }
-                    for tc in selected_calls
-                ],
+                "role": "assistant", "content": msg.content or None,
+                "tool_calls": [{"id": tc.id, "type": "function", "function": {
+                    "name": tc.function.name, "arguments": tc.function.arguments or "{}",
+                }} for tc in tool_calls],
             })
-            for tc in selected_calls:
+            executed_round: list[str] = []
+            for index, tc in enumerate(tool_calls):
                 name = tc.function.name
+                args = {}
                 try:
+                    if index >= 4:
+                        raise ValueError("本次工具调用数量超过上限")
+                    if name not in tool_names:
+                        raise ValueError("工具不在本 Agent 的权限范围内")
                     args = json.loads(tc.function.arguments or "{}")
-                except Exception:
-                    args = {}
-                try:
-                    result = await execute_tool(name, args, state)
-                except Exception as e:  # 工具失败回传给子 Agent，让它自行调整
-                    result = f"[工具执行失败] {type(e).__name__}: {e}"
-                observations.append(f"{name}: {result}")
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                })
-        return "\n".join(observations) or "[子Agent未返回结论]"
+                    if not isinstance(args, dict):
+                        raise ValueError("工具参数必须是 JSON 对象")
+                    # 在执行前记录：取消可能发生在工具已修改状态但尚未返回的时候。
+                    entry = len(outcome.observations)
+                    outcome.observations.append(f"{name} {json.dumps(args, ensure_ascii=False)}: 执行中，结果待核对")
+                    result = str(await execute_tool(name, args, state))
+                    outcome.observations[entry] = f"{name} {json.dumps(args, ensure_ascii=False)}: {result}"
+                    if result.startswith(("❌", "⚠", "[工具")):
+                        tool_failed = True
+                    else:
+                        outcome.successful_tools.append(name)
+                        executed_round.append(name)
+                except Exception as exc:
+                    tool_failed = True
+                    result = f"[工具执行失败] {type(exc).__name__}: {exc}"
+                    outcome.observations.append(f"{name}: {result}")
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+            # fast-settle：结算型工具已经改完状态，再让子 Agent 用一次 LLM 往返复述这些数值
+            # 属于纯开销——主 DM 拿到的 execution_context 本来就是同一批真实结果。
+            # 只在任务显式声明 fast_settle、且本轮调用全是写型工具、且无一失败时生效：
+            # 只查询（search_*/get_*）或只掷骰（dice_roll 不在写型集合）仍走原来的多轮。
+            if (task.get("fast_settle") and not tool_failed and executed_round
+                    and all(tool in _WRITE_TOOL_NAMES for tool in executed_round)):
+                outcome.content = ("已结算，以下为工具权威结果：\n"
+                                   + "\n".join(outcome.observations[-4:]))[:900]
+                outcome.status = "completed"
+                return outcome
+        outcome.error = "已达到工具迭代上限，尚未返回最终结论"
+        return outcome
 
     try:
-        lock = getattr(state, "agent_write_lock", None)
-        if _needs_write_lock and lock is not None:
-            # 多个写入型子 Agent 串行执行，避免各自基于旧快照交错写入
-            async with lock:
-                return await asyncio.wait_for(_run(), timeout=timeout)
-        return await asyncio.wait_for(_run(), timeout=timeout)
+        # 不再串行整段 Agent：各任务的上下文都是派发前的同一份快照，
+        # 外层写锁无法阻止基于旧快照的决策，却会让 LLM 往返时间逐个叠加
+        # （实测 3 个任务墙钟 = 各自耗时之和 21s）。状态写入由 execute_tool
+        # 内部的 tool_lock 逐次串行，保证单次工具调用原子。
+        return await asyncio.wait_for(run(), timeout=timeout)
     except asyncio.TimeoutError:
-        return "[子Agent超时]"
-    except Exception as e:
-        return f"[子Agent失败] {type(e).__name__}: {e}"
+        outcome.status = "timeout"
+        outcome.error = "任务超时，已执行记录需要核对"
+    except Exception as exc:
+        outcome.status = "failed"
+        outcome.error = f"{type(exc).__name__}: {exc}"
+    return outcome
 
 
 async def run_tool_subagents(
@@ -263,413 +205,43 @@ async def run_tool_subagents(
     state: Any,
     max_concurrency: int = 4,
     timeout: float = 60,
-) -> dict[str, str]:
-    """并发运行一组可调用工具的专业子 Agent，按 task key 返回简报。"""
-    tasks = list(tasks or [])[:MAX_DELEGATED_TASKS]
+) -> dict[str, ToolAgentResult]:
+    """运行委派任务；超出预算的任务显式保留为未完成，不能静默丢失。"""
+    tasks = list(tasks or [])
     sem = asyncio.Semaphore(max(1, int(max_concurrency)))
 
-    async def _one(task: dict) -> tuple[str, str]:
+    async def one(task: dict) -> tuple[str, ToolAgentResult]:
         key = str(task.get("key", ""))
+        # 技能包允许为单个任务设置更紧的预算；缺少时才使用调用方的兜底值。
+        task_timeout = float(task.get("timeout") or timeout)
         async with sem:
             try:
-                value = await run_tool_subagent(client, model, task, state, timeout=timeout)
-            except Exception as e:  # pragma: no cover - 保险
-                value = f"[子Agent失败] {type(e).__name__}: {e}"
-        return key, value
+                result = await run_tool_subagent(client, model, task, state, timeout=task_timeout)
+            except Exception as exc:
+                result = ToolAgentResult(status="failed", error=f"{type(exc).__name__}: {exc}")
+        return key, result
 
-    raw = await asyncio.gather(*(_one(t) for t in tasks), return_exceptions=True)
-    out: dict[str, str] = {}
-    for item in raw:
-        if isinstance(item, tuple) and len(item) == 2:
-            out[str(item[0])] = str(item[1] or "")
+    out = {str(t.get("key", "")): ToolAgentResult(error="超出委派数量预算，交由主 DM 完成")
+           for t in tasks[MAX_DELEGATED_TASKS:]}
+    out.update(await asyncio.gather(*(one(t) for t in tasks[:MAX_DELEGATED_TASKS])))
     return out
 
-
-MAX_DELEGATED_TASKS = 3
-
-
-async def plan_task_keys(
-    client: Any,
-    model: str,
-    player_input: str,
-    module: str,
-    candidate_tasks: list[dict],
-    lite: bool = False,
-    timeout: float = 20,
-) -> list[str]:
-    """让主 DM 担任任务分配器，从候选专业子 Agent 中选择本回合要运行的技能。
-
-    失败/解析异常时回退为全部候选任务，保证主流程不中断。
-    """
-    keys = [str(t.get("key", "")) for t in candidate_tasks if t.get("key")]
-    if lite or len(keys) <= 1:
-        return keys
-
-    catalog: list[str] = []
-    for task in candidate_tasks:
-        key = str(task.get("key", ""))
-        pack = get_agent_skill(str(task.get("skill") or ""))
-        desc = pack.description if pack is not None else str(task.get("role") or "")
-        catalog.append(f"- {key}: {desc[:140]}")
-
-    prompt = (
-        "你是 DM 主 Agent 的任务分配器。根据玩家行动，从候选专业子Agent中选择本回合需要运行的子Agent。\n"
-        "候选：\n" + "\n".join(catalog) + "\n\n"
-        "输出 JSON：{\"tasks\":[\"key1\",\"key2\"]}\n"
-        "规则：\n"
-        "- 只选真正需要的，1-" + str(len(keys)) + " 个；\n"
-        "- 必须包含能完成玩家行动结算的规则/战斗子Agent；\n"
-        "- 不确定时全选；\n"
-        "- 只输出 JSON，不要解释。\n\n"
-        f"玩家行动：{player_input}\n"
-        f"当前模块：{module}"
-    )
-    try:
-        resp = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "你是任务分配器，只输出合法 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=200,
-                temperature=0.1,
-                extra_body={"thinking": {"type": "disabled"}},
-            ),
-            timeout=timeout,
-        )
-        content = str(resp.choices[0].message.content or "")
-        data = extract_json_object(content)
-        selected = data.get("tasks") or data.get("keys") or []
-        if isinstance(selected, str):
-            selected = [selected]
-        valid = {k for k in keys}
-        picked: list[str] = []
-        for item in selected if isinstance(selected, list) else []:
-            k = str(item)
-            if k in valid and k not in picked:
-                picked.append(k)
-        if picked:
-            return picked[:MAX_DELEGATED_TASKS]
-    except Exception as e:
-        print(f"[DMPlanner] 任务分配失败，回退前 {MAX_DELEGATED_TASKS} 个候选: {e}")
-    return keys[:MAX_DELEGATED_TASKS]
+# 并发委派预算。实测（deepseek-chat，同一战斗回合）：
+# - 3 个并发子 Agent：墙钟 ≈ 4.8-5.1 秒，7 次调用 / 27.6k token；
+# - 放宽到 4 个（战斗模块的 rules/combat/world/memory 全跑）：墙钟反而涨到 6.9 秒，
+#   12 次调用 / 43.8k token —— 四路并发流互相拖慢，且被省下的那个 Agent 本来就与
+#   其它 Agent 并发，"挑选"省的是 token 而不是墙钟。
+# 结论：保持 3。候选 ≤ 3 时连分配器都不必调用（见 dm_turn），
+# 只有候选真的超过预算、必须取舍时才花那一次 1.04 秒的分配调用。
 
 
-# ── 专业子 Agent 任务编排 ─────────────────────────────────────
-
-_SKILL_FOR_TASK_KEY = {
-    "rules": "rules-advisor",
-    "combat": "combat-tactics",
-    "world": "world-scene",
-    "memory": "memory-continuity",
-    "graph": "graph-advisor",
-}
-
-
-def get_skill_instruction(name: str, fallback: str = "") -> str:
-    """按需加载一个 SKILL.md 技能包正文；缺失时回退调用方默认说明。"""
-    pack = get_agent_skill(name)
-    if pack is not None and pack.content.strip():
-        return pack.content.strip()
-    return fallback
-
-
-def _apply_skill_packs(tasks: list[dict], module: str) -> list[dict]:
-    """用 SKILL.md 技能包覆盖子 Agent 的 role/task，保留 Python 侧兜底文本。"""
-    for task in tasks:
-        key = str(task.get("key", ""))
-        skill_name = _SKILL_FOR_TASK_KEY.get(key)
-        if key == "rules" and module == "combat":
-            skill_name = "combat-rules-advisor"
-        if not skill_name:
-            continue
-        pack = get_agent_skill(skill_name)
-        if pack is None:
-            continue
-        role = str(pack.metadata.get("role") or "").strip()
-        if role:
-            task["role"] = role
-        task["skill"] = skill_name
-        if pack.content.strip():
-            task["task"] = pack.content.strip()
-    return tasks
-
-
-def _retrieved_text(retrieved: list) -> str:
-    lines = []
-    for r in (retrieved or [])[:5]:
-        if not isinstance(r, dict):
-            continue
-        title = str(r.get("title", "") or "")
-        text = str(r.get("text", "") or "")[:600]
-        source = str(r.get("source", "") or "")
-        if title or text:
-            lines.append(f"- [{title}]({source}) {text}")
-    return "\n".join(lines) or "（无检索结果）"
-
-
-def _recent_text(turns: list) -> str:
-    lines = []
-    for t in (turns or [])[-4:]:
-        pi = str(getattr(t, "player_input", "") or "")
-        dm = str(getattr(t, "dm_response", "") or "")[:240]
-        if pi or dm:
-            lines.append(f"- 玩家: {pi}\n- DM: {dm}")
-    return "\n".join(lines) or "（无近期对话）"
-
-
-def build_dm_brief_tasks(
-    *,
-    player_input: str,
-    module: str,
-    lite: bool,
-    system: str,
-    char_info: str,
-    retrieved: list,
-    memory_text: str,
-    recent_text: str,
-    world_text: str,
-    world_compact: str,
-    graph_text: str,
-) -> list[dict]:
-    """根据当前模块挑选专业子 Agent，并组装各自的紧凑上下文。
-
-    精简模式也保持 2 个并发子 Agent（世界+记忆），深度模式 3-4 个。
-    每个任务都要求“只输出结论”，主 DM 才能低负担地采纳。
-    """
-    tasks: list[dict] = []
-
-    rules_ctx = (
-        f"规则系统：{system}\n"
-        f"玩家本轮行动：{player_input}\n"
-        f"角色关键数值：\n{char_info[:1600]}\n"
-        f"检索到的规则片段：\n{_retrieved_text(retrieved)}"
-    )
-    world_ctx = (
-        f"玩家本轮行动：{player_input}\n"
-        f"当前模块：{module}\n"
-        f"世界状态完整摘要：\n{world_text[:6500]}\n"
-        f"世界状态精简：\n{world_compact[:1800]}"
-    )
-    memory_ctx = (
-        f"玩家本轮行动：{player_input}\n"
-        f"长期记忆/暗线/人物影响：\n{memory_text[:4500]}\n"
-        f"最近对话：\n{recent_text[:2600]}"
-    )
-    graph_ctx = (
-        f"玩家本轮行动：{player_input}\n"
-        f"图谱检索命中：\n{graph_text[:2500] or '（无图谱命中）'}"
-    )
-    combat_ctx = (
-        f"玩家本轮行动：{player_input}\n"
-        f"角色关键数值：\n{char_info[:1400]}\n"
-        f"世界状态（含NPC/敌人，数值字段在###战斗单位数值中）：\n{world_compact[:3000]}\n"
-        f"检索到的规则/图鉴：\n{_retrieved_text(retrieved)}"
-    )
-
-    if lite:
-        tasks.extend([
-            {
-                "key": "world", "role": "世界/场景事实顾问",
-                "task": "提取当前场景与本回合直接相关的地点、在场NPC、旗标和剧本约束。只列事实，标注【仅DM可见】的隐藏信息。",
-                "context": world_ctx, "max_tokens": 400, "temperature": 0.1, "timeout": 20,
-            },
-            {
-                "key": "memory", "role": "剧情连续性顾问",
-                "task": "从记忆和最近对话中提取本回合必须遵守的既有事实、上一轮结局与不可矛盾点。只列条款，不要写叙事。",
-                "context": memory_ctx, "max_tokens": 400, "temperature": 0.1, "timeout": 20,
-            },
-        ])
-        return _apply_skill_packs(tasks, module)
-
-    if module == "rules":
-        tasks.extend([
-            {
-                "key": "rules", "role": "规则裁决顾问",
-                "task": "先判断玩家本轮行动阶段：侦查/观察/确认状态→建议 search_npcs/search_bestiary/dice_roll(Perception或Insight等)；实际攻击→combat_round；施法→cast_spell。然后给出规则结论：技能名/属性/DC/加值依据。没有依据就写“需查询工具”，禁止未经判定直接要求攻击。不要写叙事正文。",
-                "context": rules_ctx, "max_tokens": 700, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "world", "role": "世界/场景事实顾问",
-                "task": "提取当前场景与本回合相关的地点、NPC、旗标、剧本约束；隐藏信息标【仅DM可见】。只列事实。",
-                "context": world_ctx, "max_tokens": 600, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "memory", "role": "剧情连续性顾问",
-                "task": "提取本回合必须遵守的既有事实、上一轮结局、未完成任务/暗线。只列条款。",
-                "context": memory_ctx, "max_tokens": 500, "temperature": 0.1, "timeout": 25,
-            },
-        ])
-    elif module == "combat":
-        tasks.extend([
-            {
-                "key": "rules", "role": "战斗规则顾问",
-                "task": "先判断玩家本轮是侦查/移动/施法还是实际攻击：实际攻击才用 combat_round，侦查/观察用 search_npcs/search_bestiary/dice_roll。再给出目标/技能/加值/DC依据；敌人回合用 enemy_attack。不要替玩家决定动作，不要写叙事正文。",
-                "context": rules_ctx, "max_tokens": 650, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "combat", "role": "战斗战术顾问",
-                "task": "列出当前战斗中所有战斗单位：名称/HP(含max_hp)/AC/位置/态度/能否行动（被绑、昏迷、濒死等不能行动）。数值优先引用“###战斗单位数值”，没有才写“需 search_npcs/search_bestiary 查询”。不要替玩家选择攻击目标，不要写叙事。",
-                "context": combat_ctx, "max_tokens": 650, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "world", "role": "世界/场景事实顾问",
-                "task": "提取当前战斗场景的空间/时间/环境危险/在场NPC/旗标；隐藏信息标【仅DM可见】。只列事实。",
-                "context": world_ctx, "max_tokens": 500, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "memory", "role": "剧情连续性顾问",
-                "task": "提取本场战斗前因后果、已造成伤害/伤亡、盟友目标、不可矛盾点。只列条款。",
-                "context": memory_ctx, "max_tokens": 450, "temperature": 0.1, "timeout": 25,
-            },
-        ])
-    elif module == "scene":
-        tasks.extend([
-            {
-                "key": "world", "role": "世界/场景事实顾问",
-                "task": "提取当前地点、可前往地点、天气/时间、在场NPC、环境线索与旗标；隐藏信息标【仅DM可见】。只列事实。",
-                "context": world_ctx, "max_tokens": 700, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "memory", "role": "剧情连续性顾问",
-                "task": "提取与本次探索/移动相关的既有事实、未完成线索、上一轮结局。只列条款。",
-                "context": memory_ctx, "max_tokens": 500, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "graph", "role": "关系图谱顾问",
-                "task": "从图谱命中中提取与本次行动直接相关的实体关系/线索链，供主DM推进剧情。只列关系。",
-                "context": graph_ctx, "max_tokens": 400, "temperature": 0.1, "timeout": 25,
-            },
-        ])
-    elif module == "social":
-        tasks.extend([
-            {
-                "key": "world", "role": "社交事实顾问",
-                "task": "提取对话对象与相关NPC的可见信息、态度、动机、秘密（隐藏信息标【仅DM可见】），以及当前位置/旗标。只列事实，不要替玩家说话。",
-                "context": world_ctx, "max_tokens": 650, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "memory", "role": "剧情连续性顾问",
-                "task": "提取与该NPC/事件相关的既有承诺、恩怨、线索与上一轮互动结果。只列条款。",
-                "context": memory_ctx, "max_tokens": 500, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "graph", "role": "关系图谱顾问",
-                "task": "提取对话对象及其关联人物的关系强弱/信任度/冲突点，供主DM把握分寸。只列关系。",
-                "context": graph_ctx, "max_tokens": 450, "temperature": 0.1, "timeout": 25,
-            },
-        ])
-    elif module == "memory":
-        tasks.extend([
-            {
-                "key": "memory", "role": "剧情连续性顾问",
-                "task": "回答玩家涉及“之前/记得/线索”等问题：从记忆与暗线中提取最相关事实；不记得就写“记忆中没有，引导玩家检定或探索”。只列条款。",
-                "context": memory_ctx, "max_tokens": 700, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "world", "role": "世界/场景事实顾问",
-                "task": "提取与回忆内容相关的当前世界事实与剧本约束。只列事实。",
-                "context": world_ctx, "max_tokens": 500, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "graph", "role": "关系图谱顾问",
-                "task": "提取与回忆对象相关的实体关系。只列关系。",
-                "context": graph_ctx, "max_tokens": 400, "temperature": 0.1, "timeout": 25,
-            },
-        ])
-    elif module == "graph":
-        tasks.extend([
-            {
-                "key": "graph", "role": "关系图谱顾问",
-                "task": "整理与玩家行动最相关的实体关系、路径、信任/敌对变化依据。只列关系与结论。",
-                "context": graph_ctx, "max_tokens": 650, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "memory", "role": "剧情连续性顾问",
-                "task": "提取支持这些关系的对话/事件依据与不可矛盾点。只列条款。",
-                "context": memory_ctx, "max_tokens": 450, "temperature": 0.1, "timeout": 25,
-            },
-            {
-                "key": "world", "role": "世界/场景事实顾问",
-                "task": "提取相关NPC/地点当前状态。只列事实。",
-                "context": world_ctx, "max_tokens": 450, "temperature": 0.1, "timeout": 25,
-            },
-        ])
-    else:  # narrative：主DM自由度最高，但仍要有世界/记忆/图谱事实兜底
-        tasks.extend([
-            {
-                "key": "world", "role": "世界/场景事实顾问",
-                "task": "提取当前场景、在场NPC、旗标与最近剧情钩子；隐藏信息标【仅DM可见】。只列事实。",
-                "context": world_ctx, "max_tokens": 650, "temperature": 0.15, "timeout": 25,
-            },
-            {
-                "key": "memory", "role": "剧情连续性顾问",
-                "task": "提取最近剧情的关键事实、玩家选择后果与不可矛盾点。只列条款。",
-                "context": memory_ctx, "max_tokens": 550, "temperature": 0.15, "timeout": 25,
-            },
-            {
-                "key": "graph", "role": "关系图谱顾问",
-                "task": "提取与当前剧情最相关的实体关系。只列关系。",
-                "context": graph_ctx, "max_tokens": 350, "temperature": 0.15, "timeout": 25,
-            },
-        ])
-    return _apply_skill_packs(tasks, module)
-
-
-_SECTION_TITLES = {
-    "rules": "规则顾问结论",
-    "combat": "战斗战术顾问结论",
-    "world": "世界/场景顾问结论",
-    "memory": "剧情连续性顾问结论",
-    "graph": "关系图谱顾问结论",
-}
-
-
-def format_dm_brief(results: dict[str, str]) -> str:
-    """把并发子 Agent 结果聚合为主 DM 可快速阅读的专家简报。"""
-    order = ["rules", "combat", "world", "memory", "graph"]
-    parts: list[str] = []
-    for key in order:
-        value = str(results.get(key, "") or "").strip()
-        if not value or value.startswith(("[子Agent失败]", "[子Agent超时]")):
-            continue
-        title = _SECTION_TITLES.get(key, key)
-        parts.append(f"### {title}\n{value[:900]}")
-    return "\n\n".join(parts)
-
-
-# ── 旧接口兼容 ───────────────────────────────────────────────
-
-async def summarize_rules_for_player(
-    client: Any,
-    model: str,
-    query: str,
-    retrieved_text: str,
-) -> str:
-    """规则/战斗模块子 Agent：把检索到的规则片段整理成简洁可执行的规则结论。"""
-    return await run_focused_agent(
-        client, model,
-        role="规则整理者",
-        task="根据检索到的规则片段，整理玩家本次行动需要的规则结论。",
-        context=retrieved_text,
-        max_tokens=800,
-        temperature=0.1,
-    )
-
-
-async def summarize_world_for_player(
-    client: Any,
-    model: str,
-    query: str,
-    world_context: str,
-) -> str:
-    """场景/社交模块子 Agent：把冗长世界背景压缩为当前场景可用的信息。"""
-    return await run_focused_agent(
-        client, model,
-        role="世界背景整理者",
-        task=f"根据当前玩家问题「{query}」，从世界背景中提取当前场景最相关的事实。",
-        context=world_context,
-        max_tokens=700,
-        temperature=0.2,
-    )
+# 拆出的 runner / 规划 / 摘要在这里再导出，既有 import（dm_turn、dm_subagents、测试）不变
+from backend.engine.subagent_runners import (  # noqa: E402,F401
+    _compact_prompt, run_focused_agent, run_parallel_subagents,
+)
+from backend.engine.subagent_planning import (  # noqa: E402,F401
+    MAX_DELEGATED_TASKS, plan_task_keys,
+)
+from backend.engine.subagent_summaries import (  # noqa: E402,F401
+    summarize_rules_for_player, summarize_world_for_player,
+)

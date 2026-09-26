@@ -27,6 +27,8 @@ def _user_scenario_dir(username: str | None) -> str:
 
 def _candidate_paths(sid: str, username: str | None) -> list[str]:
     """按用户名返回剧本文件候选路径（先用户目录，后 legacy 兼容目录）。"""
+    from backend.paths import validate_resource_id
+    sid = validate_resource_id(sid, "剧本 ID")
     paths = []
     if username:
         paths.append(os.path.join(_user_scenario_dir(username), f"{sid}.json"))
@@ -81,6 +83,8 @@ class Scenario:
     @classmethod
     def load(cls, sid: str, username: str | None = None) -> "Scenario | None":
         """加载剧本。指定 username 时仅查找该用户的目录（default 兼容 legacy 根目录）。"""
+        from backend.paths import validate_resource_id
+        validate_resource_id(sid, "剧本 ID")
         if username and _safe_username(username) != "default":
             _migrate_legacy_scenarios(username)
         for path in _candidate_paths(sid, username):
@@ -124,6 +128,8 @@ class Scenario:
         return None
 
     def save(self):
+        from backend.paths import validate_resource_id
+        validate_resource_id(self.id, "剧本 ID")
         if self.meta.username:
             directory = _user_scenario_dir(self.meta.username)
         else:

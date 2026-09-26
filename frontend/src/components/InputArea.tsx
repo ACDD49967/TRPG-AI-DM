@@ -97,7 +97,7 @@ export default function InputArea() {
             disabled={isProcessing}
             aria-label="行动输入框"
             className="flex-1 resize-none bg-transparent text-sm leading-relaxed text-ink-800 placeholder:text-ink-500
-                       disabled:text-ink-500 py-1.5 max-h-[132px] overflow-y-auto"
+                       disabled:text-ink-500 py-2 min-h-[40px] max-h-[132px] overflow-y-auto"
           />
 
           <div className="flex items-center gap-1.5 shrink-0 pb-0.5">
@@ -105,7 +105,7 @@ export default function InputArea() {
               <button
                 onClick={abort}
                 className="inline-flex items-center gap-1.5 text-2xs font-medium px-3 py-2 rounded-xl
-                           border border-ink-200 bg-white text-ink-500 hover:bg-ink-50 hover:text-ink-700 transition-colors"
+                           min-h-[40px] border border-ink-200 bg-white text-ink-500 hover:bg-ink-50 hover:text-ink-700 transition-colors"
                 title="中止本次生成"
               >
                 <svg viewBox="0 0 20 20" fill="none" className="w-3.5 h-3.5" aria-hidden>
@@ -118,7 +118,7 @@ export default function InputArea() {
                 onClick={send}
                 disabled={!canSend}
                 className="inline-flex items-center gap-1.5 text-xs font-medium px-4 py-2.5 rounded-xl
-                           bg-brand-600 text-white shadow-sm hover:bg-brand-700
+                           min-h-[40px] bg-brand-600 text-white shadow-sm hover:bg-brand-700
                            disabled:bg-ink-100 disabled:text-ink-600 disabled:shadow-none disabled:cursor-not-allowed
                            transition-all duration-150"
               >

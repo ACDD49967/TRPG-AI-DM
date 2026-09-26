@@ -164,14 +164,15 @@
   /* ── 按钮 ─────────────────────────────────────────────── */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-1.5 bg-brand-600 text-white font-medium
-           rounded-xl px-5 py-2.5 shadow-sm
+           rounded-xl px-5 py-2.5 min-h-[40px] shadow-sm
            hover:bg-brand-700 hover:shadow-md active:bg-brand-800
            transition-all duration-150 ease-smooth
            disabled:opacity-50 disabled:shadow-none disabled:hover:bg-brand-600;
   }
   .btn-secondary {
+    /* min-h 40：手机上按钮实测只有 38px，达不到可点区域下限（见 _ui_mobile_check.py） */
     @apply inline-flex items-center justify-center gap-1.5 bg-white text-ink-700 font-medium
-           rounded-xl px-5 py-2.5 border border-ink-200 shadow-inset
+           rounded-xl px-5 py-2.5 min-h-[40px] border border-ink-200 shadow-inset
            hover:bg-ink-50 hover:border-ink-300 active:bg-ink-100
            transition-all duration-150 ease-smooth
            disabled:opacity-50;
@@ -209,7 +210,9 @@
   /* 顶栏/面板里的幽灵按钮：工具条内提供静止态底色，可点击性明确；
      min-h 保证移动端命中区（≥36px）而不必放大图标 */
   .nav-btn {
-    @apply inline-flex items-center gap-1 text-xs text-ink-600 px-2 py-1.5 min-h-[36px] rounded-lg shrink-0
+    /* 44×44 是 iOS 的最小可点区域：窄屏下这些是纯图标按钮，太小点不准（实测曾是 32.5×36） */
+    @apply inline-flex items-center justify-center gap-1 text-xs text-ink-600 px-2 py-1.5
+           min-h-[44px] min-w-[44px] rounded-lg shrink-0
            hover:bg-white hover:text-ink-900 hover:shadow-sm transition-all duration-150 whitespace-nowrap;
   }
   .nav-btn-active {
@@ -218,13 +221,13 @@
 
   /* ── 表单 ─────────────────────────────────────────────── */
   .input-field {
-    @apply w-full border border-ink-200 rounded-xl px-3 py-2.5 text-sm bg-white text-ink-800
+    @apply w-full border border-ink-200 rounded-xl px-3 py-2.5 min-h-[40px] text-sm bg-white text-ink-800
            placeholder:text-ink-400
            focus:ring-4 focus:ring-brand-500/10 focus:border-brand-400
            transition-all duration-150;
   }
   .field-sm {
-    @apply input-field px-2.5 py-1.5 text-xs rounded-lg focus:ring-2;
+    @apply input-field px-2.5 py-1.5 min-h-[40px] text-xs rounded-lg focus:ring-2;
   }
 
   /* ── 标签 / 徽章 ──────────────────────────────────────── */
@@ -337,7 +340,8 @@
     @apply px-4 sm:px-5 py-3 border-t border-ink-100 flex items-center justify-end gap-2 flex-shrink-0 bg-ink-50/60;
   }
   .modal-close {
-    @apply inline-flex items-center justify-center w-8 h-8 rounded-lg text-ink-400
+    /* 移动端实测 32×32：低于 40px 的可点区域下限（见 _ui_mobile_check.py） */
+    @apply inline-flex items-center justify-center min-w-[40px] min-h-[40px] rounded-lg text-ink-400
            hover:bg-ink-100 hover:text-ink-700 transition-colors duration-150 flex-shrink-0;
   }
 

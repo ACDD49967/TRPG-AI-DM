@@ -50,7 +50,7 @@ export default function DecisionPanel() {
                   key={i}
                   onClick={() => click(s)}
                   className="text-xs text-left px-3 py-2 rounded-xl border border-amber-200 bg-white/80 text-amber-800
-                             hover:bg-amber-100 hover:border-amber-300 transition-all duration-150"
+                             min-h-[40px] hover:bg-amber-100 hover:border-amber-300 transition-all duration-150"
                 >
                   {s}
                 </button>

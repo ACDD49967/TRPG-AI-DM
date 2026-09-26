@@ -82,7 +82,7 @@ wheels = [
 
 [[package]]
 name = "dndgame"
-version = "0.3.1"
+version = "0.3.5"
 source = { virtual = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -103,6 +103,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "httpx" },
+    { name = "pyflakes" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -115,6 +116,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.0.0" },
     { name = "pandas", specifier = ">=3.0.5" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pyflakes", marker = "extra == 'dev'", specifier = ">=3.2.0" },
     { name = "pypdf", specifier = ">=4.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
@@ -946,6 +948,15 @@ wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/c2/d7/ad493864a7fb21c0c4df98f965e2db430cb25a9d7369b5778d5016c09fd9/pydantic_core-2.46.5-pp311-pypy311_pp73-musllinux_1_1_armv7l.whl", hash = "sha256:2d330aaba8621b1edcec8ae2c4050f63b84ccf6d98723a8f212e9684713abf0e" },
     { url = "https://mirrors.aliyun.com/pypi/packages/02/8e/b41c84c913f29973a268e6c2b5bbf13c95adb9956c126d10da11ba3b2bef/pydantic_core-2.46.5-pp311-pypy311_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:b6acfb46a814762367fb7ba0828b0a17d441b92ce249a0e007474c9072662dda" },
     { url = "https://mirrors.aliyun.com/pypi/packages/db/1d/068464f23075f66a8f1b806935e9cd9363ee446636ea70d2c22ee8659dbf/pydantic_core-2.46.5-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:d0a24b40877af2de4950252be9d21eaf7fb07660f3c2cae1f56c6b599ada5266" },
+]
+
+[[package]]
+name = "pyflakes"
+version = "3.4.0"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/45/dc/fd034dc20b4b264b3d015808458391acbf9df40b1e54750ef175d39180b1/pyflakes-3.4.0.tar.gz", hash = "sha256:b24f96fafb7d2ab0ec5075b7350b3d2d2218eab42003821c06344973d3ea2f58" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/c2/2f/81d580a0fb83baeb066698975cb14a618bdbed7720678566f1b046a95fe8/pyflakes-3.4.0-py2.py3-none-any.whl", hash = "sha256:f742a7dbd0d9cb9ea41e9a24a918996e8170c799fa528688d40dd582c8265f4f" },
 ]
 
 [[package]]

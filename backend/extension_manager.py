@@ -64,7 +64,8 @@ def add_extension(username: str, name: str, description: str, content: str,
 
 
 def get_extension(username: str, ext_id: str) -> dict | None:
-    path = _user_dir(username) / f"{ext_id}.json"
+    from backend.paths import validate_resource_id
+    path = _user_dir(username) / f"{validate_resource_id(ext_id, '扩展包 ID')}.json"
     if not path.exists():
         return None
     try:
@@ -74,11 +75,38 @@ def get_extension(username: str, ext_id: str) -> dict | None:
 
 
 def delete_extension(username: str, ext_id: str) -> bool:
-    path = _user_dir(username) / f"{ext_id}.json"
+    from backend.paths import validate_resource_id
+    path = _user_dir(username) / f"{validate_resource_id(ext_id, '扩展包 ID')}.json"
     if path.exists():
         path.unlink()
         return True
     return False
+
+
+def update_extension(username: str, ext_id: str, name: str | None = None,
+                     description: str | None = None, content: str | None = None,
+                     system: str | None = None,
+                     tags: list[str] | None = None) -> dict | None:
+    """就地更新扩展包（改名/改描述/改正文；正文变了会重新切块）。"""
+    from backend.paths import validate_resource_id
+    path = _user_dir(username) / f"{validate_resource_id(ext_id, '扩展包 ID')}.json"
+    data = get_extension(username, ext_id)
+    if data is None:
+        return None
+    if name is not None:
+        data["name"] = str(name)[:120] or data.get("name", "")
+    if description is not None:
+        data["description"] = str(description)[:500]
+    if system is not None:
+        data["system"] = str(system)
+    if tags is not None:
+        data["tags"] = [str(t) for t in tags]
+    if content is not None and str(content) != str(data.get("content", "")):
+        data["content"] = str(content)
+        data["chunks"] = split_text(str(content), mode="naive", chunk_size=900)
+    data["updated_at"] = datetime.now().isoformat()
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return data
 
 
 def activate_extensions_into_kb(username: str, extension_ids: list[str]):

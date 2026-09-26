@@ -103,3 +103,23 @@ async def account_exists(username: str | None) -> bool:
         return False
     async with async_session() as db:
         return await db.scalar(select(UserAccount.id).where(UserAccount.username == name)) is not None
+
+
+async def delete_account(username: str, password: str) -> str:
+    """校验密码后删除账号行，返回被删的用户名。
+
+    只删"凭据"这一层；用户名下的内容由 backend.account_data 负责，
+    调用方（路由）先删账号行再清内容，避免清到一半留下还能登录的账号。
+    """
+    name = _normalize_username(username)
+    value = password or ""
+    async with async_session() as db:
+        account = await db.scalar(select(UserAccount).where(UserAccount.username == name))
+        if account is None:
+            raise AuthError("用户名或密码错误")
+        expected = _hash_password(value, account.password_salt)
+        if not hmac.compare_digest(expected, account.password_hash):
+            raise AuthError("用户名或密码错误")
+        await db.delete(account)
+        await db.commit()
+    return name

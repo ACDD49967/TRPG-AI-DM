@@ -18,7 +18,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install fastapi "uvicorn[standard]" openai httpx "sqlalchemy[asyncio]" \
             aiosqlite pydantic python-dotenv sse-starlette python-multipart \
-            pypdf python-docx pymupdf pdfplumber json-repair jieba rank-bm25 numpy langgraph pyyaml
+            pypdf python-docx pymupdf pdfplumber json-repair jieba rank-bm25 numpy langgraph pyyaml \
+            pyflakes
       - name: Compile
         run: python -m compileall -q backend scripts
       - name: Unit tests

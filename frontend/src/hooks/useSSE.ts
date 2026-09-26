@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useGameStore } from '../store/gameStore';
-import type { SSECallback } from '../types/events';
+import { createSSEHandlers } from './sseHandlers';
 
 /** 解析SSE数据行，处理多行data */
 function parseSSEData(lines: string[]): Record<string, unknown> | null {
@@ -17,24 +17,6 @@ function parseSSEData(lines: string[]): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-/** 将后端 snake_case 状态字段映射为前端 camelCase，避免 maxHp/maxMp/maxSan 不更新 */
-function normalizeStatusUpdate(data: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...data };
-  if (out.max_hp !== undefined) {
-    out.maxHp = out.max_hp;
-    delete out.max_hp;
-  }
-  if (out.max_mp !== undefined) {
-    out.maxMp = out.max_mp;
-    delete out.max_mp;
-  }
-  if (out.max_san !== undefined) {
-    out.maxSan = out.max_san;
-    delete out.max_san;
-  }
-  return out;
 }
 
 export function useSSE(sessionId: string | null) {
@@ -64,178 +46,27 @@ export function useSSE(sessionId: string | null) {
       console.log(`[SSE] 已连接到会话 ${sessionId}`);
     };
 
-    // 定义事件处理器
-    const handlers: Record<string, (data: Record<string, unknown>) => void> = {
-      intro: (data) => {
-        const scene = data.scene as string;
-        if (scene) {
-          store.getState().appendNarrativeText(scene);
-        }
-        store.getState().setProcessing(false);
-      },
-
-      narrative: (data) => {
-        const token = data.token as string;
-        if (token) {
-          store.getState().appendToken(token);
-        }
-      },
-
-      narrative_flush: (data) => {
-        const fullText = data.full_text as string;
-        if (fullText) {
-          store.getState().appendNarrativeText(fullText);
-        }
-      },
-
-      dice_roll: (data) => {
-        const detail = `${data.skill}检定 d20=${data.roll}${data.modifier ? `+${data.modifier}` : ''} vs DC${data.dc} → ${data.result}`;
-        store.getState().appendDiceRoll({
-          skill: data.skill as string,
-          dc: data.dc as number,
-          roll: data.roll as number,
-          modifier: (data.modifier as number) || 0,
-          result: data.result as string,
-        });
-        store.getState().appendCombatLog({ kind: 'dice', text: detail });
-      },
-
-      state_update: (data) => {
-        const update: Record<string, unknown> = { ...data };
-        // 展平 inventory —— 后端发送 {items:[...]} 格式
-        if (typeof data.inventory === 'object' && data.inventory !== null && !Array.isArray(data.inventory)) {
-          const inv = data.inventory as Record<string, unknown>;
-          if (Array.isArray(inv.items)) {
-            update.inventory = inv.items;
-          }
-        }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        store.getState().updateStatus(normalizeStatusUpdate(update) as any);
-      },
-
-      choices: (data) => {
-        const options = data.options as string[];
-        if (Array.isArray(options)) {
-          store.getState().setChoices(options);
-        }
-      },
-
-      game_event: (data) => {
-        store.getState().appendGameEvent({
-          type: data.type as string,
-          description: data.description as string,
-          extra: data.extra as Record<string, unknown> | undefined,
-        });
-
-        // 战斗记录统一进入面板
-        const evDesc = data.description as string || '';
-        store.getState().appendCombatLog({
-          kind: data.type === 'combat' ? (evDesc.includes('攻击') ? 'enemy' : 'combat') : 'combat',
-          text: evDesc,
-          extra: data.extra as Record<string, unknown> | undefined,
-        });
-
-        // 处理多敌人战斗状态
-        const extra = data.extra as Record<string, unknown> | undefined;
-        if (data.type === 'combat' && extra) {
-          const prev = store.getState().combat;
-          const enemyName = extra.enemy_name as string || '敌人';
-          const prevHp = prev?.enemies?.find(e => e.name === enemyName)?.hp ?? 0;
-          const enemyHp = typeof extra.enemy_hp_remaining === 'number' ? extra.enemy_hp_remaining : prevHp;
-          let enemies = prev?.enemies ? [...prev.enemies] : [];
-          // 后端提供完整敌人快照时优先使用，保证多敌战斗全部显示
-          if (Array.isArray(extra.enemies)) {
-            const snapshot = extra.enemies as Array<{ name: string; hp: number }>;
-            const map = new Map(enemies.map(e => [e.name, e]));
-            for (const e of snapshot) map.set(e.name, { name: e.name, hp: e.hp });
-            enemies = [...map.values()];
-          } else {
-            const idx = enemies.findIndex(e => e.name === enemyName);
-            if (idx >= 0) enemies[idx] = { name: enemyName, hp: enemyHp };
-            else enemies.push({ name: enemyName, hp: enemyHp });
-          }
-          const anyAlive = enemies.length === 0 ? !extra.enemy_dead : enemies.some(e => e.hp > 0);
-          store.getState().setCombat({
-            active: anyAlive,
-            enemyName,
-            enemyHp,
-            enemies,
-          });
-          // HP 以 state_update 事件为准，避免与后端已推送的权威状态重复扣血
-        }
-      },
-
-      error: (data) => {
-        console.error('[SSE] 错误:', data.msg);
-        store.getState().appendNarrativeText(`错误：${data.msg}`);
-      },
-
-      journal_update: (data) => {
-        // P2-12修复：SSE推送Journal数据，无需轮询API
-        store.getState().setJournalStatus('synced');
-        store.getState().setJournalData(data as Record<string, unknown>);
-        // 同时同步场景信息到顶栏
-        const scene = (data as Record<string, unknown>).scene as Record<string, unknown> | undefined;
-        if (scene) {
-          store.getState().setSceneInfo({
-            location: scene.location as string || '',
-            time: scene.time as string || '',
-            weather: scene.weather as string || '',
-            npcs_here: scene.npcs_here as string[] || [],
-          });
-        }
-      },
-
-      history: (data) => {
-        const turns = data.turns as Array<{ player_input: string; dm_response: string }> | undefined;
-        if (!Array.isArray(turns)) return;
-        const st = useGameStore.getState();
-        for (const t of turns) {
-          if (t.player_input) st.addPlayerMessage(t.player_input);
-          if (t.dm_response) st.appendNarrativeText(t.dm_response);
-        }
-      },
-
-      maps_updated: () => {
-        store.getState().bumpMediaVersion();
-      },
-
-      bestiary_updated: () => {
-        store.getState().bumpMediaVersion();
-      },
-
-      spells_updated: () => {
-        store.getState().bumpMediaVersion();
-      },
-
-      scene_update: (data) => {
-        store.getState().setSceneInfo({
-          location: data.location as string || '',
-          time: data.time as string || '',
-          weather: data.weather as string || '',
-          npcs_here: data.npcs_here as string[] || [],
-        });
-      },
-
-      end_of_turn: () => {
-        // 先获取缓冲区文本用于提取决策
-        const buf = store.getState().currentTokenBuffer;
-        // 刷新打字机缓冲区
-        store.getState().flushBuffer();
-        // 从本轮AI回复中提取决策建议
-        if (buf) {
-          store.getState().extractDecisions(buf);
-        }
-        store.getState().setProcessing(false);
-        // 清除骰子高亮
-        setTimeout(() => store.getState().setLatestDiceRoll(null), 5000);
-      },
+    /** 拉取本会话的耗时/token 统计；失败不影响游戏流程。 */
+    const refreshMetrics = () => {
+      const sid = store.getState().sessionId;
+      const name = store.getState().status.username || 'default';
+      if (!sid) return;
+      fetch(`/api/game/${sid}/metrics?username=${encodeURIComponent(name)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((metrics) => {
+          if (metrics) store.getState().setMetrics(metrics);
+        })
+        .catch(() => { /* 统计不可用不影响游戏 */ });
     };
+
+    // 定义事件处理器
+    const handlers = createSSEHandlers({ store, refreshMetrics });
 
     // 监听所有标准事件类型
     const eventTypes = [
       'intro', 'narrative', 'narrative_flush', 'dice_roll',
       'state_update', 'choices', 'game_event', 'error', 'end_of_turn',
+      'metrics_update',
       'journal_update', 'scene_update', 'maps_updated', 'bestiary_updated', 'spells_updated', 'history',
     ];
 
@@ -277,6 +108,21 @@ export function useSSE(sessionId: string | null) {
 
   useEffect(() => {
     connect();
+
+    // 读档或漏掉 feat_available 事件时，也要能弹出升级选择
+    const name = useGameStore.getState().status.username
+      || (typeof localStorage !== 'undefined' ? localStorage.getItem('dnd_auth_user') : '')
+      || 'default';
+    if (sessionId) {
+      fetch(`/api/game/${sessionId}/levelup?username=${encodeURIComponent(name)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data && typeof data.pending_level === 'number') {
+            useGameStore.getState().setPendingLevelUp(data.pending_level);
+          }
+        })
+        .catch(() => { /* 检查失败不影响游戏 */ });
+    }
 
     return () => {
       // 组件卸载时清理

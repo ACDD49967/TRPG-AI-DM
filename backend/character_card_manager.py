@@ -17,7 +17,8 @@ def _user_dir(username: str) -> Path:
 
 
 def _card_path(username: str, card_id: str) -> Path:
-    return _user_dir(username) / f"{card_id}.json"
+    from backend.paths import validate_resource_id
+    return _user_dir(username) / f"{validate_resource_id(card_id, '角色卡 ID')}.json"
 
 
 def save_character_card(username: str, card: dict, card_id: str = "") -> dict:

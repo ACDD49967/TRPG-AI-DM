@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 import backend.engine.world_builder as wb
 import backend.scenario_importer as si
+import backend.scenario_llm_split as si_split
 
 
 # ── 假流式/非流式响应 ──────────────────────────────────────────
@@ -239,7 +240,7 @@ class TestScenarioSplit(unittest.TestCase):
         client = FakeClient([ok, bad, bad, bad])
         text = "甲" * 5000 + "\n\n" + "乙" * 5000
 
-        with patch.object(si, "AsyncOpenAI", return_value=client):
+        with patch.object(si_split, "AsyncOpenAI", return_value=client):
             progress = []
             chunks = asyncio.run(si.llm_split_text(
                 text, api_key="sk-unit-test-key", model_name="fake-model",
@@ -256,7 +257,7 @@ class TestScenarioSplit(unittest.TestCase):
         # 9 万字 → 分段数超过 LLM_SPLIT_MAX_CALLS，必然产生尾部
         text = "\n\n".join("段" * 3000 for _ in range(30))
 
-        with patch.object(si, "AsyncOpenAI", return_value=client):
+        with patch.object(si_split, "AsyncOpenAI", return_value=client):
             chunks = asyncio.run(si.llm_split_text(
                 text, api_key="sk-unit-test-key", model_name="fake-model"))
         self.assertEqual(len(client.calls), si.LLM_SPLIT_MAX_CALLS)

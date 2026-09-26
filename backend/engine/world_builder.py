@@ -1,673 +1,23 @@
-"""TRPG 世界大纲生成——多步生成+迭代评分至90+
-
-采用分层生成策略：
-  Step 1: 世界观与冲突核心（500-800字）
-  Step 2: 主线三幕结构（800-1200字）
-  Step 3: NPC与支线网络（500-800字）
-  Step 4: 遭遇表、关键物品与秘密（400-600字）
-  Step 5: 合并、自评、迭代修订至90+
-每个步骤独立调用LLM，质量更高。
-"""
-
 import json, re
+
 from dataclasses import dataclass, field
+
 from openai import AsyncOpenAI
+
 from backend.config import settings
+
 from backend.engine.world_state import NpcEntry, PlotFlag, LocationEntry, WorldState
+
 from backend.engine.game_systems import build_system_rule_block, get_system
+
 from backend.engine.llm_utils import strip_refusal as _strip_refusal
+
 from backend.engine.prompt_guard import extract_json_object, sanitize_user_text
+
 from backend.engine.agent_graph import run_extraction_agent
+
 from backend.knowledge_base import get_knowledge_base
 
-_CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5,
-           "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
-
-
-def _parse_creature_count(name: str) -> tuple[int, str]:
-    """把“两个地精”“3只狼”拆成 (数量, 基础名)。"""
-    s = str(name or "").strip()
-    m = re.match(r"^(\d+)\s*[个只名位]?\s*(.+)$", s)
-    if m:
-        try:
-            count = max(1, int(m.group(1)))
-            return count, m.group(2).strip()
-        except Exception:
-            pass
-    m = re.match(r"^([一二两三四五六七八九十])\s*[个只名位]?\s*(.+)$", s)
-    if m:
-        count = _CN_NUM.get(m.group(1), 1)
-        return count, m.group(2).strip()
-    return 1, s
-
-
-def _derive_npc_stats(n: dict) -> tuple[int, int, int]:
-    """根据重要性/角色关键词为非完整NpcEntry推导合理数值，避免全是 hp10/ac10。"""
-    importance = str(n.get("importance", "minor") or "minor")
-    role = str(n.get("role", "") or "")
-    text = f"{role} {str(n.get('name', ''))}"
-    level = int(n.get("level", 1) or 1)
-    if level <= 1:
-        level = 3 if importance == "major" else (2 if any(k in text for k in ("卫兵", "士兵", "强盗", "战士", "圣武士", "法师")) else 1)
-    ac = int(n.get("ac", 0) or 0)
-    if ac <= 0:
-        ac = 14 if importance == "major" else 12
-        if any(k in text for k in ("战士", "圣武士", "卫兵", "骑士", "重甲")):
-            ac = max(ac, 15)
-        elif any(k in text for k in ("法师", "学者", "商人", "平民")):
-            ac = max(ac, 11)
-    hp = int(n.get("hp", 0) or 0)
-    if hp <= 0:
-        hp = 30 if importance == "major" else 20
-        hp = max(hp, level * 4 + 8)
-    max_hp = int(n.get("max_hp", 0) or 0)
-    if max_hp <= 0:
-        max_hp = hp
-    return max(1, level), ac, hp, max_hp
-
-
-def _enrich_creature_from_bestiary(creature: dict, bestiary: list[dict]) -> dict:
-    """生成生物前先查图鉴：若已有同名生物，优先采用图鉴中的属性/描述/标签。"""
-    if not bestiary or not isinstance(creature, dict):
-        return creature
-    name = str(creature.get("name", "") or "").strip()
-    if not name:
-        return creature
-    base = _parse_creature_count(name)[1] or name
-    found = None
-    for b in bestiary:
-        bname = str(b.get("name", "") or "").strip()
-        if bname == name or bname == base:
-            found = b
-            break
-    if found is None:
-        for b in bestiary:
-            bname = str(b.get("name", "") or "").strip()
-            if base and (base in bname or bname in base):
-                found = b
-                break
-    if found is None:
-        return creature
-    merged = dict(creature)
-    stats = dict(creature.get("stats") or {})
-    for k, v in (found.get("stats") or {}).items():
-        if not stats.get(k):
-            stats[k] = v
-    merged["stats"] = stats
-    if not merged.get("description") and found.get("description"):
-        merged["description"] = found["description"]
-    if not merged.get("tags") and found.get("tags"):
-        merged["tags"] = found["tags"]
-    if not merged.get("image_path") and found.get("image_path"):
-        merged["image_path"] = found["image_path"]
-    merged["bestiary_source"] = found.get("name", base)
-    return merged
-
-
-def _normalize_creature(creature: dict, index: int) -> list[dict]:
-    """规范化生成生物：拆分“两个地精”等复合名称，并补齐缺失属性。"""
-    name = str(creature.get("name", "") or "").strip()
-    count, base = _parse_creature_count(name)
-    stats = dict(creature.get("stats") or {})
-    level = 2
-    try:
-        level = max(1, int(stats.get("等级") or stats.get("level") or creature.get("level") or 2))
-    except Exception:
-        level = 2
-    if not stats.get("HP") and not stats.get("hp"):
-        stats["HP"] = str(max(12, level * 6))
-    if not stats.get("AC") and not stats.get("ac"):
-        stats["AC"] = str(min(22, 10 + level // 2))
-    if not stats.get("速度") and not stats.get("speed"):
-        stats["速度"] = "6"
-    for k in ("力量", "敏捷", "体质", "智力", "感知", "魅力"):
-        if not stats.get(k):
-            stats[k] = "10"
-    out = []
-    real_count = min(count or 1, 12)
-    for i in range(real_count):
-        out.append({
-            **(creature or {}),
-            "name": base if real_count == 1 else f"{base}{i + 1}",
-            "stats": stats,
-            "quantity": real_count,
-            "group_base": base,
-            "group_index": i + 1,
-        })
-    return out
-
-
-# ═══════════════════════════════════════════════════════════════
-# 分步生成 Prompt
-# ═══════════════════════════════════════════════════════════════
-
-STEP1_CONFLICT = """你是一位风格多变的TRPG模组设计师。请根据基调、备注与参考剧本，为以下设定创作**世界观与核心驱动**。
-
-{style_directive}
-
-{player_input}
-{reference}
-
-要求：
-- 500-800字，风格必须严格贴合基调、备注与参考剧本：可以是史诗奇幻、轻松冒险、日常喜剧、浪漫、恐怖、悬疑、黑色幽默、现代怪谈等，不要默认苦大仇深
-- 写出世界的"核心驱动/张力"（不一定是战争或灾难）：可以是秘密、欲望、误会、传统、诅咒、阴谋、庆典危机、家庭纠葛等
-- 如果基调需要反派，则动机可信；如果基调轻松，冲突可以是喜剧性误会或滑稽对手
-- 至少2个阵营/势力/群体，各有独立目标（轻松向也可以是家庭、社团、小镇派系）
-- 世界观要有贴合风格的独特细节：地名、历史事件、特殊规则、生活气息
-- 参考剧本如果已给出明确风格与人设，必须优先贴合参考剧本，而不是改写成千篇一律的暗黑奇幻
-
-输出格式：直接输出Markdown文本，不要JSON包裹。"""
-
-STEP2_PLOT = """你是一位资深TRPG模组设计师。基于以下世界观与风格基调，创作**结构完整的主线剧情**。
-
-{style_directive}
-
-{world_context}
-
-要求：
-- 800-1200字
-- 风格与节奏必须贴合基调：轻松喜剧、日常、浪漫、恐怖、悬疑、史诗等各有对应的叙事方式，不要默认"苦大仇深"
-- 结构完整：第一幕(开端)如何卷入/初始事件；第二幕(发展)至少3个关键节点与一个转折；第三幕(高潮与结局)至少2种结局路径，写明达成条件
-- 高潮与结局符合基调：不一定是生死决战，可以是真相揭露、关系确立、盛大演出、比赛夺冠、婚礼、救出某人、化解误会等
-- 每一幕结尾设置"剧情钩子"
-- 完整性优先：所有重要铺垫必须在结局前回收，或明确留作续集钩子；避免烂尾和逻辑断裂
-- 难度曲线合理：从简单事件逐步升级，但升级方向符合基调
-
-输出格式：直接输出Markdown文本。"""
-
-STEP3_NPC = """你是一位角色设计大师。基于以下世界观、剧情与风格基调，创作**关键NPC网络与支线**。
-
-{style_directive}
-
-{world_context}
-{plot_context}
-
-要求：
-- 至少5个关键NPC（可根据剧本规模调整），每个NPC要有完整弧光：欲望、缺陷、变化
-- **对手/反派塑造按基调灵活处理**：
-  * 黑暗向：可以有不可原谅的恶人，动机可信，不强行洗白
-  * 轻松/喜剧向：可以是有缺点的可爱对手、误会型反派、嘴硬心软的死对头
-  * 浪漫/日常向：冲突可以来自关系误解、家庭压力、社会规则，而不是杀人放火
-- NPC之间有关联网络：谁爱谁、谁恨谁、谁欠谁的、谁在偷偷帮谁
-- 至少2个支线/副线，每个都与主线有隐性关联
-- 隐藏敌意、秘密、背叛按基调可选，不要强制每局都苦大仇深
-- 所有重要NPC都应能推动故事完整性，避免工具人
-- **世界独立性**：NPC、势力、地点与生物应作为世界的一部分独立存在，拥有自己的目标、生活、历史与计划；玩家是进入这个世界的参与者，而不是所有事件围绕其旋转的绝对中心。
-- 不要为了突出玩家而让所有NPC、敌人、事件都只针对玩家；应留有NPC之间、势力之间自然发生的冲突与推进。
-
-输出格式：直接输出Markdown文本。"""
-
-STEP4_ENCOUNTERS = """你是一位TRPG遭遇/事件设计师。为以下冒险设计**事件表与隐藏内容**。
-
-{style_directive}
-
-{world_context}
-{plot_context}
-{npc_context}
-
-要求：
-- 至少5场事件/遭遇（战斗、社交、探索、解谜、日常、追逐、陷阱等按基调混合）
-- 每场事件含：适合当前等级与基调的风险等级、关键NPC/敌人数据、环境因素、可能奖励
-- 至少3个隐藏内容/秘密/彩蛋，玩家可能发现也可能错过
-- 至少1件独特物品/道具/信物（有名称、背景故事、效果）
-- 高风险时刻按基调设置：黑暗向可以致命，轻松向可以是有惊无险的麻烦，不要默认死亡
-- 完整性优先：事件必须推动主线或支线，不能是填充内容
-
-输出格式：直接输出Markdown文本。"""
-
-
-# ═══════════════════════════════════════════════════════════════
-# 合并+评分 Prompt
-# ═══════════════════════════════════════════════════════════════
-
-MERGE_PROMPT = """你是一位TRPG模组主编。请根据风格基调，将以下四个部分合并为一份完整、自洽的冒险大纲，然后自评。
-
-{style_directive}
-
-## 第一部分 - 世界观
-{step1}
-
-## 第二部分 - 主线剧情
-{step2}
-
-## 第三部分 - NPC与支线
-{step3}
-
-## 第四部分 - 遭遇与隐藏内容
-{step4}
-
-## 合并要求
-- 整合为结构清晰、层次分明的完整Markdown文档（2500-5000字）
-- 去重、补漏、统一文风，并严格保持基调一致
-- 确保数据一致（NPC名字、地点名称等）
-- 完整性优先：开头钩子、过程推进、高潮、结局、支线回收、伏笔闭合、NPC弧光完整
-- 参考剧本/备注有明确风格时，必须优先贴合参考风格，不要擅自改回千篇一律的暗黑奇幻
-- **冒险独立性**：世界应有自身的运转逻辑，NPC/势力/生物有独立目标与行动；玩家参与并影响冒险，而不是冒险完全围绕玩家展开。
-
-## 评分标准（满分100）
-1. 完整性与结构(20分)：是否有完整的开端、发展、高潮、结局，伏笔是否回收
-2. 基调一致性(10分)：是否严格贴合玩家给定的基调、备注与参考剧本
-3. 世界观深度(15分)：设定是否独特、有层次且贴合风格
-4. 剧情张力(15分)：三幕结构是否引人入胜、转折有力
-5. NPC丰富度(15分)：角色是否有深度、动机、关联与弧光
-6. 可玩性与分支(15分)：是否有有意义的选择和多种结局
-7. 规则合规(10分)：DC/CR/风险是否合理
-
-输出JSON（只输出JSON对象，不要Markdown代码块，不要任何解释文字）：
-{{
-  "total_score": 数字,
-  "scores": {{"完整性":n,"基调一致性":n,"世界观深度":n,"剧情张力":n,"NPC丰富度":n,"可玩性":n,"规则合规":n}},
-  "issues": ["问题"],
-  "suggestions": ["改进建议"],
-  "merged_outline": "合并后的完整大纲(Markdown)"
-}}
-
-如果 total_score >= 90，merged_outline 可以保持不变。
-如果 total_score < 90，必须根据suggestions实质修改后再放入merged_outline。"""
-
-
-REVISE_PROMPT = """当前大纲评分 {current_score}/100，未达90分。请根据以下建议修改大纲。
-
-## 当前大纲
-{outline}
-
-## 问题与建议
-{issues_suggestions}
-
-请输出修改后的完整大纲（只输出JSON对象，不要Markdown代码块，不要解释文字）：
-{{"revised_outline": "完整的修改后大纲(Markdown)", "changes_summary": "修改摘要"}}"""
-
-
-# ═══════════════════════════════════════════════════════════════
-# 从大纲提取世界状态（NPC、旗标等）
-# ═══════════════════════════════════════════════════════════════
-
-EXTRACT_STATE_PROMPT = """请从以下TRPG冒险大纲中提取关键的结构化信息。
-
-## 大纲
-{outline}
-
-## 要求
-提取以下JSON结构：
-
-1. npcs: 所有具名NPC，每个包含 name, race, role, location, attitude(初始态度), importance("major"=重要NPC/完整角色卡, "minor"=简单NPC/简要卡), personality, motivation, secret(如有), relation_to_plot, level(1-20整数), ac(护甲等级), hp(生命值), max_hp(最大生命值), attributes(属性对象，如 {{"str":10,"dex":14,"con":12,"int":11,"wis":13,"cha":9}}，COC用 {{"str":50,"con":60,"dex":40,"int":70,"pow":55,"cha":45,"siz":60,"edu":65}}), skills(技能数组，如 ["侦查","潜行"]), traits(特性/动作数组，如 ["多才多艺","借机攻击"]), equipment(随身可见装备数组，如 ["皮甲","长剑","钱袋"]), appearance(外貌描述), related_locations(常去/所属地点名数组), related_npcs(认识/敌对/盟友NPC名数组), related_creatures(随从/宠物/宿敌生物名数组)。重要NPC必须填全 personality/motivation/secret/relation_to_plot/traits/attributes/equipment/appearance/related_*；简单NPC也必须包含 attributes/skills/traits/equipment/appearance/related_*（可简略但不可省略），personality/motivation/secret 可留空或最小化。
-2. plot_flags: 关键剧情节点，每个包含 key(旗标名), status(默认"未触发"), description
-3. locations: 关键地点，每个包含 name, description, status, type(城市/地城/森林等), culture(文化/势力), notable_figures(知名人物), dangers(危险), secrets(如有), related_locations(相邻/关联地点名数组), related_npcs(常驻/关联NPC名数组), related_creatures(出没生物名数组)。重要地点必须填全以上字段；普通地点至少填 description/status/type。
-4. world_rules: 这个世界独特的规则（魔法限制、社会规则等）
-5. creatures: 剧本中出现的关键生物/怪物，每个包含 name, description, stats(对象，必须含 HP/AC/速度/六维(力量/敏捷/体质/智力/感知/魅力)/技能/特性/动作), tags(数组), related_locations(出没地点名数组), related_npcs(相关NPC名数组)
-6. spells: 剧本中涉及的重要法术/仪式，每个包含 name, level, school, ritual, casting_time, range, components, duration, description, classes(数组)
-
-## 严格输出格式（必须遵守）
-- 只输出一个 JSON 对象，不要 Markdown 代码块（不要 ```json），不要任何解释、前后缀或注释。
-- 所有键名严格使用英文小写 snake_case。
-- 数组为空时输出 []，字符串为空时输出 ""。
-
-输出纯JSON：
-{{"npcs":[...],"plot_flags":[...],"locations":[...],"creatures":[...],"spells":[...],"world_rules":"..."}}"""
-
-
-EXTRACT_STATE_FALLBACK_PROMPT = """你是专门从TRPG冒险大纲中抽取“角色、地点、剧情旗标”的专家。第一次宽泛提取失败，请改用更聚焦的方式重新提取。
-
-## 大纲
-{outline}
-
-## 任务
-只提取大纲中明确出现的具名内容，宁缺毋滥，但不要漏掉重要角色与地点。
-
-输出严格 JSON 对象（不要 Markdown 代码块，不要解释）：
-{{
-  "npcs": [
-    {{"name":"角色名","race":"种族或未知","role":"身份/职业","location":"所在地点","attitude":"友善/中立/敌对/忠诚等","importance":"major或minor","personality":"性格","motivation":"动机","secret":"秘密或空","relation_to_plot":"剧情关联","level":1,"ac":10,"hp":10,"max_hp":10,"attributes":{{"str":10,"dex":10,"con":10,"int":10,"wis":10,"cha":10}},"skills":[],"traits":[],"equipment":[],"appearance":"外貌"}}
-  ],
-  "locations": [
-    {{"name":"地点名","description":"描述","status":"可访问","type":"城市/地城/森林等","culture":"","notable_figures":"","dangers":"","secrets":"","related_locations":[],"related_npcs":[],"related_creatures":[]}}
-  ],
-  "plot_flags": [
-    {{"key":"旗标名","status":"未触发","description":"描述"}}
-  ]
-}}
-如果某类确实没有，返回空数组 []。
-"""
-
-
-# ═══════════════════════════════════════════════════════════════
-# 核心函数
-# ═══════════════════════════════════════════════════════════════
-
-PLOT_FLAGS_ONLY_PROMPT = """请从以下 TRPG 冒险大纲中**只提取剧情旗标**（关键剧情节点、待触发事件、伏笔与条件）。
-
-## 大纲
-{outline}
-
-## 输出格式（严格遵守）
-只输出一个 JSON 对象，不要 Markdown 代码块、不要任何解释：
-{{"plot_flags": [{{"key": "旗标名", "status": "未触发", "description": "触发条件与后果"}}]}}
-status 只能是「未触发 / 进行中 / 已完成 / 已失败」之一；若大纲确实没有剧情节点，输出 {{"plot_flags": []}}。"""
-
-def _needs_plot_flag_backfill(data: dict) -> bool:
-    """提取结果是否疑似被输出上限截断。
-
-    JSON 被截断时排在末尾的 plot_flags 会整段丢失，但“空数组”能通过字段校验，
-    不会触发修正循环，因此用「有 NPC/地点却一条旗标都没有」作为疑似截断信号。
-    """
-    if not isinstance(data, dict):
-        return False
-    return bool(not data.get("plot_flags") and (data.get("npcs") or data.get("locations")))
-
-
-async def _extract_plot_flags(client: AsyncOpenAI, model: str, outline: str,
-                              thinking_strength: str = "medium",
-                              token_callback=None, error_callback=None) -> list[dict]:
-    """只提取剧情旗标的精简回退调用。
-
-    结构化提取要求输出一个巨大的 JSON（NPC 含属性/技能/装备等完整字段），
-    输出被上限截断时排在末尾的 plot_flags 会整段丢失；这里用短 prompt + 小输出补一次。
-    """
-    result = await _llm(client, model,
-        "你是TRPG剧情结构抽取员。只返回JSON。",
-        PLOT_FLAGS_ONLY_PROMPT.format(outline=outline[:20000]),
-        max_tokens=6000, temp=0.2, timeout=180, thinking_strength=thinking_strength,
-        token_callback=token_callback, error_callback=error_callback,
-        disable_thinking=True)
-    if not result:
-        return []
-    try:
-        data = _extract_json(result)
-    except Exception:
-        return []
-    flags = data.get("plot_flags") if isinstance(data, dict) else None
-    return flags if isinstance(flags, list) else []
-
-
-def _validate_extracted_state(data: dict) -> list[str]:
-    """严格校验专业AGENT提取出的结构化字段，返回错误列表。"""
-    errors: list[str] = []
-    if not isinstance(data, dict):
-        return ["提取结果不是JSON对象"]
-    for key in ("npcs", "locations", "plot_flags"):
-        val = data.get(key)
-        if val is None:
-            continue
-        if not isinstance(val, list):
-            errors.append(f"{key} 必须是数组")
-            continue
-        for i, item in enumerate(val):
-            if not isinstance(item, dict):
-                errors.append(f"{key}[{i}] 必须是对象")
-                continue
-            if key == "npcs":
-                if not str(item.get("name", "")).strip():
-                    errors.append(f"npcs[{i}] 缺少 name")
-                if item.get("level") is not None and not isinstance(item.get("level"), int):
-                    errors.append(f"npcs[{i}].level 必须是整数")
-                if item.get("ac") is not None and not isinstance(item.get("ac"), int):
-                    errors.append(f"npcs[{i}].ac 必须是整数")
-                if item.get("hp") is not None and not isinstance(item.get("hp"), int):
-                    errors.append(f"npcs[{i}].hp 必须是整数")
-                attrs = item.get("attributes")
-                if attrs is not None and not isinstance(attrs, dict):
-                    errors.append(f"npcs[{i}].attributes 必须是对象")
-            elif key == "locations":
-                if not str(item.get("name", "")).strip():
-                    errors.append(f"locations[{i}] 缺少 name")
-            elif key == "plot_flags":
-                if not str(item.get("key", "")).strip():
-                    errors.append(f"plot_flags[{i}] 缺少 key")
-                status = item.get("status")
-                if status not in (None, "未触发", "进行中", "已完成", "已失败"):
-                    errors.append(f"plot_flags[{i}].status 非法: {status}")
-    return errors
-
-
-def _thinking_extra_body(disabled: bool) -> dict:
-    """构造 thinking 控制参数。
-
-    推理模型下 content 与 reasoning_content **共享同一个 max_tokens 预算**：
-    推理先吃满预算时正文会被挤空（finish_reason=length、content 为空），
-    对外表现就是“LLM 空响应”。结构化/评审类任务禁用思考即可稳定拿到正文。
-    """
-    return {"thinking": {"type": "disabled"}} if disabled else {}
-
-
-# 输出预算上限：默认取 settings.LLM_MAX_OUTPUT_TOKENS（实测 DeepSeek 端点接受 65536）。
-# 不同 OpenAI 兼容网关上限不同，被拒绝时自动降级到 FALLBACK 并记住，避免每次都撞 400。
-_DEFAULT_OUTPUT_CAP = int(getattr(settings, "LLM_MAX_OUTPUT_TOKENS", 32768) or 32768)
-_OUTPUT_CAP_FALLBACK = int(getattr(settings, "LLM_MAX_OUTPUT_TOKENS_FALLBACK", 8192) or 8192)
-_output_cap = _DEFAULT_OUTPUT_CAP
-
-
-def _current_output_cap() -> int:
-    return _output_cap
-
-
-def _is_max_tokens_limit_error(err: Exception) -> bool:
-    """判断异常是否为“max_tokens 超过网关允许上限”。"""
-    msg = str(err).lower()
-    if "max_tokens" not in msg and "max_new_tokens" not in msg and "max output" not in msg:
-        return False
-    return any(k in msg for k in (
-        "too large", "exceed", "greater", "maximum", "at most", "less than",
-        "must be", "invalid", "range", "limit",
-    ))
-
-
-async def _llm(client: AsyncOpenAI, model: str, system: str, user: str,
-               max_tokens: int = 4000, temp: float = 0.85, timeout: float = 180.0,
-               thinking_strength: str = "medium", token_callback=None, error_callback=None,
-               disable_thinking: bool = False) -> str:
-    """单次LLM调用，统一使用流式输出。
-
-    流式模式下超时只作用于“等待首个响应头”，不会在模型长文本生成中途掐断，
-    从而大幅减少长剧本/推理模型场景下的 Request timed out。
-
-    空响应（content 为空）的三层防护：
-    1. 逐 chunk 累计 reasoning_content，日志可直接区分“推理吃满预算”与“模型真的没输出”；
-    2. 长 prompt 自动抬高正文预算下限，避免长上下文推理把正文挤掉（导入剧本时尤其明显）；
-    3. 重试时改用非流式 + 显式禁用思考 + 放大预算——这是最能救回空响应的组合；
-       若网关不支持 thinking 参数，再去掉该参数保底重试一次。
-
-    disable_thinking=True 用于合并/评分/JSON 抽取等确定性任务：这类任务不需要长推理，
-    首次调用即禁用思考可避免“推理吃满预算 → 正文为空 → 白跑一次重试”。
-
-    输出预算由 settings.LLM_MAX_OUTPUT_TOKENS（默认 32768）封顶：剧本创作是长文本任务，
-    充裕预算既能避免正文被推理挤空，也能避免长 JSON（NPC/地点/旗标）被中途截断。
-    """
-    from backend.engine.prompt_guard import with_json_instruction
-    global _output_cap  # 网关输出上限自适应：被拒绝时下调并记住，避免每次都撞 400
-    if "JSON" in system or "JSON" in user:
-        system = with_json_instruction(system)
-    import asyncio
-    mult = 1.8 if thinking_strength == "high" else (0.6 if thinking_strength == "low" else 1.0)
-    # 长上下文会显著拉长推理长度，给正文保留预算下限。
-    # 实测创作步（Step3/4）的 reasoning 会随输入上下文增长到 3000-5300 token，
-    # 预算过小会导致首次尝试正文为空（需靠重试救回，白等一轮）。
-    prompt_chars = len(system) + len(user)
-    min_budget = 8000 + min(8000, prompt_chars // 8)
-    max_tokens = min(_output_cap, max(int(max_tokens * mult), min_budget))
-
-    fast_first = disable_thinking or thinking_strength == "low"
-    # 三次尝试：流式 → 非流式+禁思考(放大预算) → 非流式+无 thinking 参数(兼容老旧网关)
-    plans = [
-        {"stream": True, "disabled": fast_first,
-         "budget": max_tokens, "label": "流式" + ("+禁用思考" if fast_first else "")},
-        {"stream": False, "disabled": True,
-         "budget": min(_output_cap, max(max_tokens * 2, _OUTPUT_CAP_FALLBACK)),
-         "label": "非流式+禁用思考"},
-        {"stream": False, "disabled": False,
-         "budget": min(_output_cap, _OUTPUT_CAP_FALLBACK * 2), "label": "非流式+默认思考"},
-    ]
-    last_err = None
-    attempt = 1
-    while attempt <= len(plans):
-        plan = plans[attempt - 1]
-        current_max_tokens = min(plan["budget"], _current_output_cap())
-        extra_body = _thinking_extra_body(plan["disabled"])
-        try:
-            if plan["stream"]:
-                # 优先流式：避免长文本生成中途被掐断
-                stream = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=model,
-                        messages=[{"role":"system","content":system},{"role":"user","content":user}],
-                        max_tokens=current_max_tokens, temperature=temp, stream=True,
-                        **({"extra_body": extra_body} if extra_body else {})),
-                    timeout=timeout,
-                )
-                content = ""
-                reasoning = ""
-                finish = None
-                last_usage = None
-                while True:
-                    try:
-                        chunk = await asyncio.wait_for(stream.__anext__(), timeout=60)
-                    except StopAsyncIteration:
-                        break
-                    except asyncio.TimeoutError:
-                        print(f"[WorldBuilder] LLM流式调用第{attempt}次空闲超时(60s无新数据)")
-                        raise RuntimeError("流式响应空闲超时")
-                    if getattr(chunk, "usage", None) is not None:
-                        last_usage = chunk.usage
-                    if not chunk.choices:
-                        continue
-                    choice = chunk.choices[0]
-                    if choice.finish_reason:
-                        finish = choice.finish_reason
-                    d = choice.delta
-                    if d is None:
-                        continue
-                    if d.content:
-                        content += d.content
-                        if token_callback is not None:
-                            token_callback(d.content)
-                    # 推理内容逐 chunk 累计：只在最后一个 chunk 取会导致日志恒为 0，无法定位空响应
-                    rc = getattr(d, "reasoning_content", None)
-                    if rc:
-                        reasoning += rc
-            else:
-                # 非流式：部分服务商流式返回空，非流式更稳；带思考时 reasoning 只能整段取回
-                resp = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=model,
-                        messages=[{"role":"system","content":system},{"role":"user","content":user}],
-                        max_tokens=current_max_tokens, temperature=temp,
-                        **({"extra_body": extra_body} if extra_body else {})),
-                    timeout=timeout,
-                )
-                choice = resp.choices[0]
-                content = choice.message.content or ""
-                reasoning = getattr(choice.message, "reasoning_content", None) or ""
-                finish = choice.finish_reason
-                last_usage = getattr(resp, "usage", None)
-            content = _strip_refusal(content)
-            if content:
-                return content
-            # 空响应：用 finish_reason 区分“被 token 上限截断”与“模型确实没给正文”
-            if finish == "length":
-                why = "输出被 max_tokens 截断(finish_reason=length，推理吃满预算)"
-            else:
-                why = f"finish_reason={finish}"
-            reasoning_tokens = None
-            try:
-                reasoning_tokens = last_usage.completion_tokens_details.reasoning_tokens
-            except Exception:
-                pass
-            print(f"[WorldBuilder] LLM第{attempt}次空响应[{plan['label']}] ({why}, "
-                  f"reasoning≈{len(reasoning)}字/{reasoning_tokens}tok, max_tokens={current_max_tokens})"
-                  + ("，将切换禁用思考重试" if attempt < len(plans) else ""))
-            last_err = f"空响应({why})"
-        except asyncio.TimeoutError:
-            last_err = f"超时({timeout}s，等待首个响应)"
-            print(f"[WorldBuilder] LLM调用第{attempt}次超时({timeout}s，等待首个响应)")
-        except Exception as e:
-            # 网关 max_tokens 上限低于本机配置：降到兼容值后立即用同一套策略重试，不消耗尝试次数
-            if _is_max_tokens_limit_error(e) and _output_cap > _OUTPUT_CAP_FALLBACK:
-                _output_cap = _OUTPUT_CAP_FALLBACK
-                print(f"[WorldBuilder] 网关拒绝 max_tokens={current_max_tokens}，"
-                      f"已将输出上限降至 {_OUTPUT_CAP_FALLBACK} 并重试: {e}")
-                continue
-            last_err = str(e)
-            print(f"[WorldBuilder] LLM调用第{attempt}次失败[{plan['label']}]: {e}")
-        if attempt < len(plans):
-            await asyncio.sleep(1)
-        attempt += 1
-    print(f"[WorldBuilder] LLM调用最终失败: {last_err}，降级处理")
-    if error_callback is not None:
-        error_callback(last_err or "未知错误")
-    return ""
-
-
-def _with_knowledge(prompt: str, query: str, system: str, top_k: int = 3,
-                    username: str | None = None) -> str:
-    """从本地知识库检索相关规则/设定片段并附加到 Prompt（按用户名隔离）。"""
-    try:
-        results = get_knowledge_base().retrieve(query, system=system, top_k=top_k, username=username)
-        if results:
-            block = "\n\n## 可用规则/设定参考（来自知识库，按需采用）\n"
-            block += "\n".join(f"- [{r.get('title','')}] {r.get('text','')[:300]}" for r in results)
-            return prompt + block
-    except Exception:
-        pass
-    return prompt
-
-
-async def _with_knowledge_async(prompt: str, query: str, system: str, top_k: int = 3,
-                                username: str | None = None) -> str:
-    """知识库检索的异步包装。
-
-    检索是同步的重操作（首次还会加载嵌入模型），直接在当前协程里调用会阻塞事件循环，
-    导致剧本生成期间 SSE 进度无法推送、前端看起来“卡住”。
-    """
-    import asyncio
-    return await asyncio.to_thread(_with_knowledge, prompt, query, system, top_k, username)
-
-
-def _programmatic_score(outline: str, ws) -> int:
-    """基于剧本结构完整性的程序化评分，避免 LLM 稳定输出同一分数。"""
-    score = 0
-    if len(outline) >= 1000:
-        score += 10
-    if len(outline) >= 3000:
-        score += 10
-    if len(outline) >= 5000:
-        score += 5
-    if re.search(r"第[一二三]幕|第一幕|第二幕|第三幕", outline):
-        score += 20
-    if re.search(r"^#|^##", outline, re.M):
-        score += 5
-    npc_count = len(ws.npcs)
-    loc_count = len(ws.locations)
-    flag_count = len(ws.plot_flags)
-    score += min(npc_count, 5) * 3
-    score += min(loc_count, 5) * 2
-    score += min(flag_count, 5) * 2
-    if ws.world_rules:
-        score += 5
-    if npc_count >= 3:
-        score += 5
-    if loc_count >= 3:
-        score += 5
-    if flag_count >= 5:
-        score += 5
-    return min(100, score)
-
-
-def _dedupe_headings(text: str) -> str:
-    """合并后处理：去除连续/重复出现的相同 Markdown 标题。"""
-    seen: set[str] = set()
-    out: list[str] = []
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("#") and stripped in seen:
-            continue
-        if stripped.startswith("#"):
-            seen.add(stripped)
-        out.append(line)
-    return "\n".join(out)
-
-
-def _extract_json(text: str) -> dict:
-    """从可能含有markdown包裹的文本中提取JSON（统一走 prompt_guard 修复逻辑）。"""
-    return extract_json_object(text)
 
 
 async def build_world(
@@ -989,3 +339,54 @@ async def build_world(
     history.append({"iteration": "final", "score": final_score, "programmatic": prog_score})
     if progress_callback: progress_callback("生成完成", 100, "世界生成完成")
     return outline, final_score, history, ws
+
+
+# ── 再导出：既有调用方（世界/图鉴/测试）保持不变 ──
+from backend.config import settings  # noqa: E402
+
+# ── 输出预算自适应状态（进程级，唯一一份）──────────────────
+# 默认取 settings.LLM_MAX_OUTPUT_TOKENS（实测 DeepSeek 端点接受 65536）；
+# 不同 OpenAI 兼容网关上限不同，被拒绝时自动降级到 FALLBACK 并记住，避免每次都撞 400。
+# 放在编排模块里：world_llm._llm 惰性读写，测试/外部也能直接复位。
+_DEFAULT_OUTPUT_CAP = int(getattr(settings, "LLM_MAX_OUTPUT_TOKENS", 32768) or 32768)
+_OUTPUT_CAP_FALLBACK = int(getattr(settings, "LLM_MAX_OUTPUT_TOKENS_FALLBACK", 8192) or 8192)
+_output_cap = _DEFAULT_OUTPUT_CAP
+
+
+def _current_output_cap() -> int:
+    return _output_cap
+
+
+from backend.engine.world_creatures import (  # noqa: E402
+    _CN_NUM,
+    _derive_npc_stats,
+    _enrich_creature_from_bestiary,
+    _normalize_creature,
+    _parse_creature_count,
+)
+from backend.engine.world_prompts import (  # noqa: E402
+    EXTRACT_STATE_FALLBACK_PROMPT,
+    EXTRACT_STATE_PROMPT,
+    MERGE_PROMPT,
+    PLOT_FLAGS_ONLY_PROMPT,
+    REVISE_PROMPT,
+    STEP1_CONFLICT,
+    STEP2_PLOT,
+    STEP3_NPC,
+    STEP4_ENCOUNTERS,
+)
+from backend.engine.world_llm import (  # noqa: E402
+    _is_max_tokens_limit_error,
+    _llm,
+    _thinking_extra_body,
+    _with_knowledge,
+    _with_knowledge_async,
+)
+from backend.engine.world_state_extract import (  # noqa: E402
+    _dedupe_headings,
+    _extract_json,
+    _extract_plot_flags,
+    _needs_plot_flag_backfill,
+    _programmatic_score,
+    _validate_extracted_state,
+)

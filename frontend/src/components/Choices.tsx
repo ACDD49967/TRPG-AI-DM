@@ -45,7 +45,7 @@ export default function Choices() {
                   key={i}
                   onClick={() => click(c)}
                   className="group text-xs text-left px-3 py-2 rounded-xl border border-brand-200 bg-brand-50/70 text-brand-700
-                             hover:bg-brand-100 hover:border-brand-300 hover:text-brand-800 transition-all duration-150"
+                             min-h-[40px] hover:bg-brand-100 hover:border-brand-300 hover:text-brand-800 transition-all duration-150"
                 >
                   {c}
                 </button>

@@ -30,7 +30,7 @@ export default function CombatLogPanel() {
       <div className="flex items-center justify-between gap-2 px-4 py-1.5 mx-auto w-full max-w-3xl">
         <button
           onClick={() => setCollapsed((v) => !v)}
-          className="flex items-center gap-2 min-h-[28px] text-xs font-bold text-ink-600 hover:text-ink-900 transition-colors"
+          className="flex items-center gap-2 min-h-[40px] text-xs font-bold text-ink-600 hover:text-ink-900 transition-colors"
           aria-expanded={!collapsed}
         >
           <span aria-hidden>⚔️</span>
@@ -48,7 +48,7 @@ export default function CombatLogPanel() {
           </svg>
         </button>
         {combatLog.length > 0 && (
-          <button onClick={clearCombatLog} className="text-2xs text-ink-400 hover:text-red-700 transition-colors min-h-[28px] px-2 -my-1 rounded-lg hover:bg-ink-50">
+          <button onClick={clearCombatLog} className="text-2xs text-ink-400 hover:text-red-700 transition-colors min-h-[40px] px-2 rounded-lg hover:bg-ink-50">
             清空
           </button>
         )}

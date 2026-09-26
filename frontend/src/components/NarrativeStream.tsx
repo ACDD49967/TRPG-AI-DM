@@ -1,129 +1,15 @@
 /**
- * 叙事流 —— 阅读为主的正文区
+ * 叙事流：自动滚动到底、上滑时暂停跟随，并按消息类型渲染
+ * （叙事正文 / 骰子徽章 / 游戏事件 / 系统提示）。
  *
- * 优化点：
- *  - 正文按「阅读栏宽度」约束（max-w-3xl）并加大字号/行高，长段落不再贴边。
- *  - 主持人叙事与玩家发言视觉分离：DM 用带标记的段落，玩家用气泡。
- *  - 骰子/事件行改为紧凑横幅，保留数值过程但不打断叙事节奏。
- *  - 新增「回到底部」按钮：向上翻阅历史后自动出现，无需手动滚回。
- *  - 处理中状态提供可见反馈（思考中 / 打字光标），避免玩家以为卡死。
+ * 正文渲染与骰子徽章拆到 `narrative/`；这里只留滚动与列表编排。
  */
-
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '../store/gameStore';
+import DiceBadge from './narrative/DiceBadge';
+import NarrativeBlock from './narrative/NarrativeBlock';
 
-/** 轻量 Markdown 内联渲染：粗体/斜体/删除线 */
-function renderInline(text: string) {
-  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={i} className="font-semibold text-ink-900">{part.slice(2, -2)}</strong>;
-    }
-    if (part.startsWith('*') && part.endsWith('*')) {
-      return <em key={i} className="italic text-ink-700">{part.slice(1, -1)}</em>;
-    }
-    if (part.startsWith('~~') && part.endsWith('~~')) {
-      return <span key={i} className="line-through text-ink-400">{part.slice(2, -2)}</span>;
-    }
-    return <span key={i}>{part}</span>;
-  });
-}
-
-/** 渲染一段叙事文本，支持 Markdown 常见块级结构 */
-function NarrativeBlock({ text }: { text: string }) {
-  const paragraphs = text.replace(/\r\n/g, '\n').split(/\n\s*\n/).filter((p) => p.trim());
-  return (
-    <div className="narrative-prose">
-      {paragraphs.map((p, i) => {
-        const trimmed = p.trim();
-        if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
-          return <hr key={i} className="my-3 border-ink-200" />;
-        }
-        if (trimmed.startsWith('### ')) {
-          return <h4 key={i} className="text-sm font-bold text-ink-900 mt-1 mb-1.5">{renderInline(trimmed.slice(4))}</h4>;
-        }
-        if (trimmed.startsWith('## ')) {
-          return <h3 key={i} className="text-base font-bold text-ink-900 mt-1 mb-1.5">{renderInline(trimmed.slice(3))}</h3>;
-        }
-        if (trimmed.startsWith('# ')) {
-          return <h2 key={i} className="text-lg font-bold text-ink-900 mt-1 mb-2">{renderInline(trimmed.slice(2))}</h2>;
-        }
-        const lines = trimmed.split('\n');
-
-        // 引用块
-        if (lines.every((l) => /^\s*>\s?/.test(l))) {
-          return (
-            <blockquote
-              key={i}
-              className="border-l-[3px] border-brand-300 bg-brand-50/60 rounded-r-xl px-3.5 py-2.5 text-ink-600 text-sm leading-relaxed mb-3"
-            >
-              {lines.map((l, j) => (
-                <p key={j} className={j > 0 ? 'mt-1' : ''}>{renderInline(l.replace(/^\s*>\s?/, ''))}</p>
-              ))}
-            </blockquote>
-          );
-        }
-
-        // 无序列表
-        if (lines.every((l) => /^\s*[-*+]\s+/.test(l))) {
-          return (
-            <ul key={i} className="space-y-1 pl-5 list-disc marker:text-ink-400 mb-3">
-              {lines.map((l, j) => (
-                <li key={j} className="text-ink-700 text-sm leading-relaxed">{renderInline(l.replace(/^\s*[-*+]\s+/, ''))}</li>
-              ))}
-            </ul>
-          );
-        }
-
-        // 有序列表
-        if (lines.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
-          return (
-            <ol key={i} className="space-y-1 pl-5 list-decimal marker:text-ink-400 mb-3">
-              {lines.map((l, j) => (
-                <li key={j} className="text-ink-700 text-sm leading-relaxed">{renderInline(l.replace(/^\s*\d+[.)]\s+/, ''))}</li>
-              ))}
-            </ol>
-          );
-        }
-
-        // 简易表格：至少两行，且第二行是分隔行
-        const tableLines = lines.filter((l) => l.includes('|'));
-        if (tableLines.length >= 2 && /^\s*\|?[\s:|-]+\|?\s*$/.test(tableLines[1])) {
-          const parseRow = (row: string) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
-          const head = parseRow(tableLines[0]);
-          const body = tableLines.slice(2);
-          return (
-            <div key={i} className="mb-3 overflow-x-auto border border-ink-200 rounded-xl">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-ink-50">
-                  <tr>
-                    {head.map((h, j) => (
-                      <th key={j} className="px-2.5 py-2 font-semibold text-ink-700 border-b border-ink-200 whitespace-nowrap">{renderInline(h)}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {body.map((row, r) => (
-                    <tr key={r} className="even:bg-ink-50/40">
-                      {parseRow(row).map((c, j) => (
-                        <td key={j} className="px-2.5 py-2 text-ink-600 border-b border-ink-100 last:border-0">{renderInline(c)}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
-        }
-
-        return (
-          <p key={i} className="mb-3 last:mb-0 whitespace-pre-line">{renderInline(trimmed)}</p>
-        );
-      })}
-    </div>
-  );
-}
 
 export default function NarrativeStream() {
   const { narrative, currentTokenBuffer, isProcessing } = useGameStore();
@@ -248,28 +134,6 @@ export default function NarrativeStream() {
           </motion.button>
         )}
       </AnimatePresence>
-    </div>
-  );
-}
-
-function DiceBadge({ data }: { data: { skill: string; dc: number; roll: number; modifier: number; result: string } }) {
-  const ok = ['成功', '大成功', '困难成功', '极限成功', '复活'].includes(data.result);
-  const isCrit = ['大成功', '大失败'].includes(data.result) || data.result === '复活';
-  const badgeCls = isCrit
-    ? ok
-      ? 'bg-amber-100 text-amber-700 border-amber-300'
-      : 'bg-red-100 text-red-700 border-red-300'
-    : ok
-      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-      : 'bg-ink-100 text-ink-500 border-ink-200';
-  return (
-    <div className="flex items-center gap-2.5 flex-wrap w-fit max-w-full rounded-xl border border-brand-200/70 bg-brand-50/70 px-3.5 py-2.5">
-      <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full border ${badgeCls}`}>{data.result}</span>
-      <span className="text-xs text-ink-600">
-        {data.skill}：<span className="font-mono font-bold text-ink-800">d20={data.roll}</span>
-        {data.modifier !== 0 && <span className="font-mono"> {data.modifier > 0 ? `+${data.modifier}` : data.modifier}</span>}
-        <span className="text-ink-500"> vs DC{data.dc}</span>
-      </span>
     </div>
   );
 }

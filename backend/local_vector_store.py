@@ -141,6 +141,42 @@ def load_vector(
     return dense, sparse
 
 
+def load_vectors_by_hashes(
+    provider: str,
+    hashes: list[str],
+) -> dict[str, tuple[list[float] | None, dict[str, float] | None]]:
+    """按内容指纹批量取向量。
+
+    逐块调用 load_vector 会为每个分块新建一次 SQLite 连接（10k 分块约 12 秒），
+    这里改为一次连接、分批 IN 查询。相同内容的多条记录取任意一条即可。
+    """
+    result: dict[str, tuple[list[float] | None, dict[str, float] | None]] = {}
+    unique = [h for h in dict.fromkeys(hashes) if h]
+    if not unique:
+        return result
+    with _LOCK:
+        conn = _conn()
+        try:
+            for start in range(0, len(unique), 400):
+                batch = unique[start:start + 400]
+                placeholders = ",".join("?" * len(batch))
+                rows = conn.execute(
+                    f"""SELECT content_md5, dense, sparse FROM document_vectors
+                        WHERE provider=? AND content_md5 IN ({placeholders})""",
+                    (provider, *batch),
+                ).fetchall()
+                for md5, dense_raw, sparse_raw in rows:
+                    if md5 in result:
+                        continue
+                    result[md5] = (
+                        json.loads(dense_raw) if dense_raw else None,
+                        json.loads(sparse_raw) if sparse_raw else None,
+                    )
+        finally:
+            conn.close()
+    return result
+
+
 def delete_doc_vectors(doc_id: str) -> int:
     with _LOCK:
         conn = _conn()

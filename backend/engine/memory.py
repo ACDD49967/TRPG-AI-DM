@@ -5,10 +5,14 @@
   第2层 — 摘要缓冲区：由旧轮次压缩而成的叙事摘要
   第3层 — 向量长期记忆：关键事实（Phase 3 实现）
 
-记忆系统将三层信息拼接为一个上下文块，注入每次 LLM 调用的 System Prompt。
+本模块只留 DialogueTurn、记忆字段与"轮次写入/压缩"；剧情记忆层（世界事实/大事件/
+暗线/人物影响）在 `memory_plot`，上下文渲染在 `memory_context`，由 MemorySystem 组合。
 """
 
 from dataclasses import dataclass, field
+
+from backend.engine.memory_context import MemoryContextMixin
+from backend.engine.memory_plot import PlotMemoryMixin
 
 
 @dataclass
@@ -20,7 +24,7 @@ class DialogueTurn:
 
 
 @dataclass
-class MemorySystem:
+class MemorySystem(PlotMemoryMixin, MemoryContextMixin):
     """管理单个游戏会话的三层记忆。
 
     属性:
@@ -87,229 +91,3 @@ class MemorySystem:
                 self.summary = self.summary + "\n" + new_summary
             else:
                 self.summary = new_summary
-
-    def add_world_fact(self, fact: str):
-        """记录一条重要的世界事实（去重）。"""
-        if fact not in self.world_facts:
-            self.world_facts.append(fact)
-
-    def add_major_event(
-        self,
-        title: str,
-        description: str = "",
-        impact: str = "",
-        turn: int = 0,
-        npcs: list | None = None,
-        locations: list | None = None,
-    ):
-        """记录大事件：标题、简述、对世界/人物的影响。按标题去重。"""
-        title = (title or "").strip()
-        if not title:
-            return
-        entry = {
-            "turn": int(turn or 0),
-            "title": title,
-            "description": (description or "").strip(),
-            "impact": (impact or "").strip(),
-            "npcs": list(npcs or []),
-            "locations": list(locations or []),
-        }
-        for ev in self.major_events:
-            if ev.get("title") == title:
-                ev.update(entry)
-                return
-        self.major_events.append(entry)
-        # 防止无限增长：只保留最近 60 条
-        if len(self.major_events) > 60:
-            self.major_events = self.major_events[-60:]
-
-    def add_hidden_thread(
-        self,
-        key: str,
-        description: str = "",
-        status: str = "未触发",
-        related_npcs: list | None = None,
-        related_locations: list | None = None,
-        progress: str = "",
-        turn: int = 0,
-    ):
-        """记录/更新一条剧情暗线。key 相同视为同一条暗线。"""
-        key = (key or "").strip()
-        if not key:
-            return
-        entry = {
-            "key": key,
-            "description": (description or "").strip(),
-            "status": status if status in ("未触发", "进行中", "已完成", "已失败") else "未触发",
-            "progress": (progress or "").strip(),
-            "related_npcs": list(related_npcs or []),
-            "related_locations": list(related_locations or []),
-            "turn": int(turn or 0),
-        }
-        for ht in self.hidden_threads:
-            if ht.get("key") == key:
-                ht.update({k: v for k, v in entry.items() if v or k in ("status",)})
-                return
-        self.hidden_threads.append(entry)
-        if len(self.hidden_threads) > 40:
-            self.hidden_threads = self.hidden_threads[-40:]
-
-    def update_hidden_thread(
-        self,
-        key: str,
-        status: str | None = None,
-        progress: str = "",
-        turn: int = 0,
-    ):
-        """推进已有暗线；不存在时以最小信息创建一条。"""
-        key = (key or "").strip()
-        if not key:
-            return
-        for ht in self.hidden_threads:
-            if ht.get("key") == key:
-                if status and status in ("未触发", "进行中", "已完成", "已失败"):
-                    ht["status"] = status
-                if progress:
-                    ht["progress"] = progress
-                if turn:
-                    ht["turn"] = int(turn)
-                return
-        self.add_hidden_thread(key=key, status=status or "未触发", progress=progress, turn=turn)
-
-    def add_character_impact(
-        self,
-        name: str,
-        impact: str,
-        event: str = "",
-        turn: int = 0,
-    ):
-        """记录重要人物受到的/造成的影响。"""
-        name = (name or "").strip()
-        impact = (impact or "").strip()
-        if not name or not impact:
-            return
-        entry = {
-            "name": name,
-            "impact": impact,
-            "event": (event or "").strip(),
-            "turn": int(turn or 0),
-        }
-        # 同一个人 + 同一条影响原文视为重复
-        for c in self.character_impacts:
-            if c.get("name") == name and c.get("impact") == impact:
-                c.update(entry)
-                return
-        self.character_impacts.append(entry)
-        if len(self.character_impacts) > 60:
-            self.character_impacts = self.character_impacts[-60:]
-
-    def build_essential_context(self) -> str:
-        """构建不包含“最近发生的事”的核心记忆上下文。
-
-        用于模块化 DM 回合：
-        - 保留摘要、大事件、暗线、人物影响与世界事实；
-        - 不重复注入最近对话（这些已经作为 messages 注入）；
-        - 在显著减少 tokens 的同时避免剧情记忆缺失。
-        """
-        parts: list[str] = []
-
-        if self.summary:
-            parts.append(f"## 之前的故事摘要\n{self.summary}")
-
-        if self.major_events:
-            parts.append("## 大事件记忆")
-            for ev in self.major_events[-8:]:
-                line = f"- [第{ev.get('turn', 0)}轮] {ev.get('title', '')}"
-                if ev.get("description"):
-                    line += f"：{ev['description']}"
-                if ev.get("impact"):
-                    line += f"（影响：{ev['impact']}）"
-                parts.append(line)
-
-        active_threads = [h for h in self.hidden_threads
-                          if h.get("status") in ("未触发", "进行中")]
-        if active_threads:
-            parts.append("## 暗线进度")
-            for h in active_threads[-6:]:
-                line = f"- {h.get('key', '')} [{h.get('status', '未触发')}]"
-                if h.get("description"):
-                    line += f"：{h['description']}"
-                if h.get("progress"):
-                    line += f"（最近：{h['progress']}）"
-                parts.append(line)
-
-        if self.character_impacts:
-            parts.append("## 重要人物影响")
-            for c in self.character_impacts[-10:]:
-                line = f"- {c.get('name', '')}"
-                if c.get("impact"):
-                    line += f"：{c['impact']}"
-                if c.get("event"):
-                    line += f"（事件：{c['event']}）"
-                parts.append(line)
-
-        if self.world_facts:
-            parts.append("## 重要世界事实\n" + "\n".join(f"- {f}" for f in self.world_facts))
-
-        return "\n".join(parts)
-
-    def build_context(self) -> str:
-        """拼接完整的记忆上下文，用于注入 System Prompt。"""
-        parts: list[str] = []
-
-        # 摘要缓冲区
-        if self.summary:
-            parts.append(f"## 之前的故事摘要\n{self.summary}")
-
-        # 大事件记忆（含影响）
-        if self.major_events:
-            parts.append("## 大事件记忆")
-            for ev in self.major_events[-8:]:
-                line = f"- [第{ev.get('turn', 0)}轮] {ev.get('title', '')}"
-                if ev.get("description"):
-                    line += f"：{ev['description']}"
-                if ev.get("impact"):
-                    line += f"（影响：{ev['impact']}）"
-                parts.append(line)
-
-        # 剧情暗线进度（只列未完成/进行中的暗线，控制 token）
-        active_threads = [h for h in self.hidden_threads
-                          if h.get("status") in ("未触发", "进行中")]
-        if active_threads:
-            parts.append("## 暗线进度")
-            for h in active_threads[-6:]:
-                line = f"- {h.get('key', '')} [{h.get('status', '未触发')}]"
-                if h.get("description"):
-                    line += f"：{h['description']}"
-                if h.get("progress"):
-                    line += f"（最近：{h['progress']}）"
-                parts.append(line)
-
-        # 重要人物影响
-        if self.character_impacts:
-            parts.append("## 重要人物影响")
-            for c in self.character_impacts[-10:]:
-                line = f"- {c.get('name', '')}"
-                if c.get("impact"):
-                    line += f"：{c['impact']}"
-                if c.get("event"):
-                    line += f"（事件：{c['event']}）"
-                parts.append(line)
-
-        # 世界事实
-        if self.world_facts:
-            parts.append("## 重要世界事实\n" + "\n".join(f"- {f}" for f in self.world_facts))
-
-        # 活跃对话
-        if self.turns:
-            parts.append("## 最近发生的事")
-            for i, turn in enumerate(self.turns[-self.max_active_turns:], 1):
-                parts.append(f"第{i}轮:")
-                parts.append(f"  玩家: {turn.player_input}")
-                # 截断过长的 DM 回复，避免上下文溢出
-                parts.append(f"  DM: {turn.dm_response[:200]}...")
-                if turn.events:
-                    parts.append(f"  事件: {', '.join(turn.events)}")
-                parts.append("")
-
-        return "\n".join(parts)

@@ -4,7 +4,7 @@ description: TRPG 规则裁决专家。判断玩家行动阶段，给出应调�
 role: 规则裁决顾问
 version: 1
 tags: [advisor, rules]
-allowed-tools: [dice_roll, update_state, get_character_state, adjust_resource, cast_spell, learn_spell, forget_spell, take_rest, death_saving_throw, equip_item, search_knowledge, search_bestiary, search_npcs]
+allowed-tools: [dice_roll, update_state, get_character_state, adjust_resource, cast_spell, learn_spell, forget_spell, take_rest, death_saving_throw, equip_item, save_damage, search_knowledge, search_bestiary, search_npcs]
 ---
 # 规则裁决专家工作说明
 
@@ -12,6 +12,7 @@ allowed-tools: [dice_roll, update_state, get_character_state, adjust_resource, c
    - 侦查/观察/确认状态 → search_npcs / search_bestiary / dice_roll（Perception、Insight 等）
    - 实际攻击 → combat_round
    - 施法 → cast_spell
+   - 范围/过豁免的伤害（火球、燃烧之手、龙息、毒云、陷阱等）→ save_damage
    - 移动/环境交互 → 对应技能检定或 update_scene
 2. 给出规则结论：技能名、属性、DC、加值依据。
 3. 没有权威依据时写“需查询工具”，禁止凭空编造数值。

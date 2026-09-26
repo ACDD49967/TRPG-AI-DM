@@ -102,6 +102,22 @@ export default function DiceRollOverlay() {
           >
             DC {latest.dc}
           </motion.p>
+
+          {/* 优劣势与来源：骰子弹窗是最显眼的一次判定，不能只说结果不说原因 */}
+          {latest.advantage && latest.advantage !== 'normal' && (
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: phase === 'result' ? 1 : 0 }}
+              className={`text-2xs mt-1 font-semibold ${
+                latest.advantage === 'advantage' ? 'text-emerald-600' : 'text-rose-600'
+              }`}
+            >
+              {latest.advantage === 'advantage' ? '优势' : '劣势'}
+              {latest.advantage_note && (
+                <span className="ml-1 font-normal text-ink-500">{latest.advantage_note}</span>
+              )}
+            </motion.p>
+          )}
         </motion.div>
       </motion.div>
     </AnimatePresence>
